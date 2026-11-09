@@ -3,6 +3,16 @@ local K=C.K
 local M={globalKeys=C.globalRuntimeKeys}
 -- Réglages apparus avec la Beta 1.2 (temps delta, DRS par les règles, erreurs de pilotage).
 local keys12={'zoneDeltaPct','fcyDeltaPct','vscDeltaPct','redDeltaPct','deltaTolerance','deltaBeeps','rulesDrs','rulesDrsLaps','aiDrs','mistakesEnabled','mistakeRate'}
+-- Beta 1.52 (relecture) : réglages apparus avec la Beta 1.42 (stratégie, pannes, aspiration cassée, fin de course,
+-- sanctions des IA, air sale, tour de sortie, blocages et usure), absents des préréglages de révision 13 et avant.
+local keys142={'dirtyAirEnabled','dirtyAirGap','dirtyAirLiftPct','outLapEnabled','outLapLevelPct','lockWearEnabled','lockWearGain','lockFlatSpotKm'}
+for key in pairs(C.raceKeys) do keys142[#keys142+1]=key end
+for key in pairs(C.sanctionKeys) do keys142[#keys142+1]=key end
+-- Réglages apparus après la Beta 1.42 dans la révision 14 (premier tour attentif en 1.47, tours lancés et
+-- refroidissements en 1.51) : un préréglage de révision 14 ne dit pas s'il les avait.
+local keys147={'firstLapCare','qualiTraffic','qualiCoolLaps'}
+-- Révision des préréglages enregistrés (Beta 1.52 : 15 ; 14 de la Beta 1.42 à la 1.51).
+M.revision=15
 -- skip : clés ignorées (règles de championnat pour reconnaître un préréglage de session).
 function M.signature(profile,p,g,values,skip)
  values=values or {}; local count=1; values[count]=profile
@@ -28,9 +38,7 @@ function M.decode(store)
  for key in pairs(C.defaults(profile)) do p[key]=store['p_'..key] end
  for key,value in pairs(C.globalDefaults) do g[key]=value end
  for _,key in ipairs(M.globalKeys) do
-  local value=store['g_'..key]
-  if key=='debugLog' and value==nil then value=false end -- Programmes antérieurs à rc.4.
-  g[key]=value
+  g[key]=store['g_'..key]
  end
  local revision=tonumber(store.revision) or 0
  -- Préréglage antérieur à la Beta 1.24 : radar avant activé, comme le nouveau défaut.
@@ -54,9 +62,20 @@ function M.decode(store)
   if not C.solo(profile) then
    local track=C.defaults('J'); track.mistakesEnabled=false; track.mistakeRate=0.5; local absent=true -- valeurs de la Beta 1.2, figées
    for _,key in ipairs(keys12) do if checked[key]~=track[key] then absent=false; break end end
-   if absent then local defaults=C.defaults(profile); for _,key in ipairs(keys12) do checked[key]=defaults[key] end end
+   if absent then local base=C.defaults(profile); for _,key in ipairs(keys12) do checked[key]=base[key] end end
   end
   C.migrateRules(profile,checked)
+ end
+ -- Beta 1.52 (relecture) : préréglage antérieur à la Beta 1.42 (révision 13 et avant) : ses clés de la 1.42, absentes,
+ -- ont été lues avec le défaut de la disposition (journée circuit) ; elles prennent le défaut du profil.
+ local defaults=C.defaults(profile)
+ if revision<14 then for _,key in ipairs(keys142) do checked[key]=defaults[key] end end
+ -- Beta 1.52 (relecture) : premier tour attentif, tours lancés et refroidissements (révision 14 et avant) : une valeur
+ -- égale au défaut de la disposition (journée circuit) est prise pour une clé absente et prend le défaut du profil.
+ -- Heuristique assumée : un choix du pilote égal à ce défaut (case décochée en course, par exemple) est perdu une fois.
+ if revision<15 then
+  local track=C.defaults('J')
+  for _,key in ipairs(keys147) do if checked[key]==track[key] then checked[key]=defaults[key] end end
  end
  -- Préréglages enregistrés avant la Beta 1.12 : migrations par profil des révisions 5 à 7 (révision 4 jusqu'à la
  -- Beta 1.8, 6 jusqu'à la Beta 1.11).
@@ -66,7 +85,10 @@ function M.decode(store)
  -- Beta 1.29 : préréglage des Beta 1.24 à 1.28 (révision 12) : appels de phares restés aux anciens défauts.
  elseif revision<13 then C.migrateProfile(profile,checked,16,true)
  -- Beta 1.42 : préréglage des Beta 1.29 à 1.41 (révision 13) : stratégie et sanctions des IA (révision 19 des données).
- elseif revision<14 then C.migrateProfile(profile,checked,18,true) end
+ elseif revision<14 then C.migrateProfile(profile,checked,18,true)
+ -- Beta 1.52 (relecture) : préréglage des Beta 1.42 à 1.51 (révision 14) : usure des pneus et attente au départ restées
+ -- aux anciens défauts (révisions 20 et 21 des données).
+ elseif revision<15 then C.migrateProfile(profile,checked,19,true) end
  local globals,globalErrors=C.validateGlobals(g)
  return {name=store.name,profile=profile,p=checked,g=globals},errors+globalErrors
 end
@@ -77,7 +99,7 @@ function M.capture(name,profile,p,g)
  return {name=name,profile=profile,p=C.validate(profile,p),g=C.validateGlobals(g)}
 end
 function M.encode(entry)
- local out=M.layout(); out.name=entry.name; out.profile=entry.profile; out.revision=14
+ local out=M.layout(); out.name=entry.name; out.profile=entry.profile; out.revision=M.revision
  for key,value in pairs(entry.p) do out['p_'..key]=value end
  for _,key in ipairs(M.globalKeys) do out['g_'..key]=entry.g[key] end
  return out

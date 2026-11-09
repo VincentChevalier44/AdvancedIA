@@ -1,255 +1,367 @@
-# J0 — Local API, HumanAI engine in AdvancedIA
-
-Installation inspected: CSP 0.3.0-preview675, build 4210, 19 October 2026.
-Local source: `extension/internal/lua-sdk/ac_apps/lib.lua` and `README.md`, generated and shipped with CSP. No separate `ac_physics_ai.lua` is provided in this installation: its definitions are built into `lib.lua`.
-
-## Signatures checked before the behaviour code
-
-| Function/field | Contract actually documented | Decision |
-|---|---|---|
-| `physics.setAISplineOffset(index, offset, overrideAiAwareness?)` | Normalised −1 left, +1 right; limited by the track width; boolean third argument, false by default. Lines 15230–15235. | Use the normalised value, never metres. Calibration before the automatic manoeuvres. |
-| `physics.setAISplineAbsoluteOffset(index, offsetMeters, overrideAiAwareness?)` | Value in metres; negative left. | Not used. |
-| `physics.setAILevel(index, level)` | Setter range **0–2**, line 15130; the `aiLevel` field states 0–1, line 5043. | The SDK does not prove read-back beyond 1. Native probe at 1.05, deferred read-back, restoration; otherwise cap at 1. No invented runtime result. |
-| `physics.setAIAggression(index, aggression)` | 0–1; 100% in the launcher corresponds to 0.95. | Cap applied: 0.95. |
-| `physics.setAICaution(index, caution)` | 0–16, default 1, experimental. | Command values bounded 0.5–16. No getter for the initial caution. |
-| `physics.setAIBrakeHint(index, value)` | Replaces `ai.ini/[PEDALS]/BRAKE_HINT`, default 1; line 15207. | This is not a braking distance/zone contract. Do not present this hint as a native zone function. D7 emulation. |
-| `physics.setExtraAIGrip(index, value)` | **1 = normal grip**, “120% by default”, lines 15251–15254. | Ratio unit confirmed by the SDK, not by experiment. Bonus disabled by default; documented base 1.2 if explicitly enabled. |
-| `ac.overrideCarControls(index)` | Returns `ac.CarControlsInput?`, line 15783. Final `brake` = maximum of the native and the imposed brake; line 18269. | Extra braking only, option disabled by default. No throttle imposed. |
-| `physics.preventAIFromRetiring(index)` | It has to be repeated to prevent retirement durably. | Non-critical option, disabled by default. |
-| `physics.allowed()` | Access boolean; function exposed as **callable cdata** in a real session of this installation. | Accept C functions and non-null function pointers; do not treat every `cdata` as a function. |
-| `ac.getCar(index)` | 0-based; the player is normally 0 in single player. | Also exclude **all** `isUserControlled` vehicles; detect a player at a non-zero index. Never any command to the player, to a remote car or to a vehicle without local physics. |
-| `position`, `look`, `side`, `velocity`, `aabbSize` | Vectors; position in metres, velocity in m/s; `side` is only described as “sideways”. | Do not assume that `side` means left. Canonical left basis derived from the heading, check of its sign and relative calibration on a safe pair. |
-| `speedKmh`, `splinePosition`, `lapCount` | km/h; progress 0–1; laps completed. | Conversion to m/s, numeric validation; lapped-car logic disabled if laps/length are unavailable; no lap gained by a car that has not completed any (grid before the line: crossing the line at the start does not complete one). |
-| `gas`, `brake` | 0–1, lines 5003–5004. | Direct reading validated. |
-| `isInPit`, `isInPitlane`, `wheelsOutside` | Booleans and number of wheels outside the limits. | No command or target in the pits; off track, not driven. |
-| `highBeams` | **High beams on or headlight flash**, line 5089. | First documented candidate. Learning through real transitions; no false availability if no signal is observed. |
-| `headlightsActive`, `lowBeams`, `hornActive`, `flashingLightsActive` | Documented on lines 5069–5089; `lowBeams` represents the switch, not necessarily a pulse. | Calibration candidates; horn optional. |
-| `ac.getSim()` | `carsCount`, `raceSessionType`, `isOnlineRace`, `isPaused`, `isReplayActive`, `isReplayOnlyMode`. | Inert online, including alt-online, according to the PDR. |
-| `timeToSessionStart`, `currentSessionTime`, `sessionTimeLeft` | **Milliseconds**, not seconds. | Conversion /1000 in snapshot only. |
-| `trackLengthM` | Metres, from the AI spline. | Zero length: no lateral manoeuvre; short geometry available for a cautious diagnosis. |
-| `isSessionFinished`, `isRaceFinished` | Session finished / car finished. | New manoeuvres stopped. |
-| `rainIntensity`, `rainWetness`, `rainWater`, `timeHours` | Documented SimState fields. | Optional weather adaptation, validated data, no dependency on Pure. |
-| `ac.getTrackAISplineSides(progress)` | Returns `vec2`, x left, y right, distances in metres. | Width and safety bound; protected read. |
-| `ac.storage(layout, prefix)` | Native persistence, prefix available. | Prefixes `humanai:g:` and `humanai:p:<profile>:`; grouped writes, not during a replay. |
-| `ac.onRelease(callback)`, `ac.onSessionStart(callback)` | Unload / session change callback. | Single registration, protected callbacks. |
-
-## Manifest checked
-
-The local apps and the SDK use `[CORE] LAZY`, `[WINDOW_...] FUNCTION_MAIN` and allow `[SIM_CALLBACKS] UPDATE`. The names refer to **methods of the CSP `script` table**, not free Lua globals. Since rc.3, the automatic `script.update` callback is the only update entry point; the manifest declares no SIM_CALLBACKS; since Beta 1.25, only `[UI_CALLBACKS] IN_GAME=HUMANAI__HUD` draws the in-game overlay (a `ui.transparentWindow` window, like SuperHUD), without updating the engine. AC's session box: `ac.disableExtraHUDElements('sessionTime')`, given back on unload; AC's messages: `ac.onMessage`, optional hiding with `ac.blockSystemMessages('.')`; CSP Disposables are functions to be called. The windows keep their `script.HUMANAI__...` methods; only the authorised global table `HUMANAI` is added. The AdvancedIA name and folder are kept in line with Vincent's explicit choice; the engine and the modules follow the HumanAI PDR.
-
-## Runtime results and no invented signatures
-
-- Already observed in game on the original Spa: `physics.allowed()` callable cdata, access true without modifying `surfaces.ini`.
-- Level >100%, offset sign, headlight fields and extra braking: **not declared validated in driving**. They are probed/calibrated with safeguards and shown as “pending” as long as the necessary conditions are not met.
-- There is no documented getter for the current offset or the current grip. It would be wrong to claim to probe them without risk: initial offset assumed to be 0 only when the app takes over alone; grip not probed by writing as long as its option is not enabled.
-- Sign calibration requires a pair outside the pits, travelling in the same direction, isolated, and a straight; it is abandoned if a side becomes occupied. No test movement in the pits or near the player.
-- The level is probe-tested with a current value before the deferred 1.05 attempt; it immediately returns to the initial value if the attempt fails.
-- Unconfirmed capabilities remain disabled, with their reason. Speed/throttle limits are not used as the main mechanism.
-
-## Cautious resolutions of the PDR's contradictions
-
-1. D2: the core never touches CSP. `snapshot` reads, `applier` writes and hosts the lifecycle/storage ports; `caps` only receives these ports, never the `ac`/`physics` globals.
-2. D12 takes precedence over the generic IDLE transition: on entering the pits, no offset command, not even a reset to zero. A pending reset to zero is carried out at the controllable exit. Beta 1.41 exception: the pit exit hold through the native stop counter (see *Beta 1.41: pit exit merge*).
-3. D18 and §10.13: zones use a table parser **without code execution**, without `load`/`loadstring`. Only a bounded local read of a data file from the `tracks` subfolder, via the snapshot port; no disk writes, no network access.
-4. D7 and §14.1: zone shown with its mode; in emulation mode the control carries the requested explanation. No fake native function is created.
-5. Calibrations: if the observation is inconclusive, no behavioural lateral offset; the available longitudinal modulators remain usable.
-
-## J0 review
-
-Defects avoided: confusion between metres and normalised offset; start time in seconds instead of ms; `side` assumed to be left; grip 120 instead of 1.2; `BRAKE_HINT` wrongly presented as a distance; native cdata function rejected; command to an alternative player or in the pits. The presence of the signatures is established locally; the dynamic validations remain honestly shown by the CSP capabilities panel.
-
-## Additions checked during J1–J8
-
-- The [official CSP wiki, Lua apps](https://github.com/ac-custom-shaders-patch/acc-lua-sdk/wiki/Lua-apps) confirms `[SIM_CALLBACKS] UPDATE=fn` → `script.fn(dt)` and the automatic `script.update` callback, even with no window open. Since rc.3, only the latter calls `HUMANAI__UPDATE`; no SIM_CALLBACKS/UI_CALLBACKS callback is registered. Integration checks a single timer step per frame and opening in setup without a HUD.
-- `ac.readDataFile(filename)` (SDK line 3189) reads a text; it is used only for the internal path `tracks/<trackId>.lua`, with a filtered identifier. The text is rejected beyond 64 KiB, then parsed without execution. The limit is checked after this API returns: the SDK offers no partial read without using the I/O APIs forbidden by the PDR.
-- `ac.getPatchVersion()` and `ac.getPatchVersionCode()` are documented on lines 3041–3045; the version string is shown in the debug panel.
-- `ac.Disposable` is a **function to be called**, line 5609, and not an object with a supposed `dispose` method. Callbacks are therefore unsubscribed with `pcall(token)` if they are callable.
-- `ac.perfBegin/End` exist, lines 3353–3363, and feed Lua App Debug, without returning a duration to the script. For the figures shown in the app's own window, the adapter optionally probes `QueryPerformanceCounter/Frequency` via the FFI already provided by LuaJIT. [Windows QPC contract](https://learn.microsoft.com/en-us/windows/win32/api/profileapi/nf-profileapi-queryperformancecounter). Read-only counter, reused int64 buffer, no DLL loading and no `os.*` access. Three failures suspend this measurement. The branch works on the Windows bench; its availability in the CSP sandbox will be shown in game.
-- `ui.sameLine`, `ui.newLine`, `ui.availableSpaceX` (line 13125) and `ui.measureText` (13934) make the requested **horizontal** bar possible. Wrapping depends on the real width; a three-column fallback exists if the measurements are not exposed.
-- The signs are measured in the frame of the **reference car**, so that counter-steering by the moved car cannot invert the result. Start only on a straight and in the DRIVE state; monitored hold, safe abandonment and deferred reset to zero if necessary.
-- A model/driver identity is encoded in bounded hexadecimal for recovery; no string is executed. A replaced identity never inherits a restoration intended for the previous one.
-
-## Further resolutions recorded
-
-- The D14 occupancy priority also prevails during a stop, an error and a calibration. A dangerous reset to zero waits; it is never forced through a vehicle. Likewise, no command is sent online/in replay to attempt a restoration: it waits for a controllable local context to return.
-- Zone sizes reduce a **target**; if a new limit is below the current lateral offset, the return stays ramped and subject to occupancy. A newly reduced bound does not cause a lateral jump.
-- The PDR gives two forms of zones. The normative form `return { zones = {...} }` and the direct list are both accepted; the export produces the normative form.
-- The braking slider remains usable in explicitly “emulated” mode, in accordance with D7; no native distance function is simulated in the panel. This favours D7 over the contradictory request in §14.1 to grey out that same slider.
-- Class mappings are edited as eight rows and stored as validated text (`pattern:class`). This primitive representation suits `ac.storage` and avoids any serialisation of Lua code.
-- In Track day, even with the Endurance layer, the explicit §10.17 rule excluding lap-based ranking is kept; classes and stints remain active.
-- A known app window does not prove that its controller is active. The banner therefore reports the detection with “check what it does”, rather than as a certain detection of competing writes.
-
-The real observations of this new version remain separate from the simulated tests. The assessment and the criteria not met are in `VALIDATION.md` and `tests/soak-results.json`.
-
-
-## Adaptive interface and observed loading
-
-`ui.selectable(label, selected, flags, size)` expects a size (SDK line 14169), not just a width. The numeric size sent initially produced squares, seen on the user's screenshot of 19 October at 17:25. The tabs now pass a **vec2**, obtained through `ui.measureText`, with `x = text width + 16` and `y = 0` to keep the native height of one line. They have a native selected state and wrap according to the available space. The UI function probes accept Lua functions and `cdata` C functions; their initial rejection could force the three-column fallback despite the space available. The bench covers these native calls, three widths and a doubled font scale.
-
-No tab title uses `ui.checkbox`. Since rc.2, the checkbox below the title controls the real activation of the section and the display of its settings. `ui.setNextItemWidth(-1)` and the `##` slider identifiers allow separate labels and the full available width; `ui.textWrapped` adapts long texts.
-
-The local CSP log consulted on 19 October 2026 confirms the loading of the app, two declared windows and several successful reloads. This observation does not validate the physical movements or the native probes.
-
-## rc.2 extension requested by the user
-
-- `ac.INIConfig.raceConfig()` is documented on line 7099: read-only configuration, without password or online GUID. The app reads only `SESSION_<currentSessionIndex>/TYPE` with `config:get(..., 0)`, protected by `pcall`, at the metadata rate and immediately on a session change. If the type is valid, it takes precedence over `raceSessionType` to choose J/Q/C; otherwise fallback to CSP. The free-text session name is not used. Re-enabling automatic cancels the manual lock; clicking one of the three buttons disables automatic.
-- `physics.setAITopSpeed(index, limit)` is documented on line 15223 in **km/h**; `1e9` removes the limit. No getter for the initial cap: another app imposing a cap cannot be restored identically. The `speed` capability is optional and follows the same stop after three failures as the other setters.
-- Spacing is opt-in and limited to J. Count of the AI cars present/on track, target bounded by length/field size then varied by hash, recalculated every 0.5 s. The speed reduction is progressive, at most 4 km/h/s, with restoration when the behaviour ends. Cars are not teleported. The `ac.store` recovery adds a modified-cap flag; old records without this flag remain readable.
-- The rc.3 windows use `SETUP`, `GROUP=SETTINGS` and the setup background. Their opening is synchronised from `script.update` with `isPaused`/`isInMainMenu`; the content also checks the context before drawing. This fixes the missing panel in setup with the old UI callback and SETUP_HIDDEN. `ac.setWindowOpen` and `ac.isWindowOpen` are protected. A button in the panel opens the diagnostics. The engine continues regardless of visibility. The user confirmed the display after this fix.
-- The schema version moves to 2. The primitive keys `section_<group>` are all false on first load; a migration keeps the values but initialises these keys to false. The calculation builds effective parameters without overwriting the prepared values. General disabled uses the known native references; inactive movement settings use the internal safety bounds for the manoeuvres of the sections still active. If all sections are inactive, the core returns `nosections` before any command, probe or calibration.
-- The 16 custom presets are kept in separate bounded `ac.storage` spaces. Names non-empty, without control characters, 64 bytes maximum; profile and fields validated with the same schema. The last write validates the name. No code parser, Lua loading or writing to a track. The calibration options and the recovery data are not preset settings.
-
-Since rc.3, explicitly loading a built-in preset enables its recommended sections and their sub-options. Profile creation stays neutral; custom presets restore their exact checkboxes. BUILTIN_PRESET_ACTIVATIONS and integration check this distinction, the checkboxes shown and the highlighting.
-
-## rc.4 review
-
-The [official `ui.combo` code](https://github.com/ac-custom-shaders-patch/acc-lua-sdk/blob/main/common/ac_ui.lua) uses the indices of the Lua array provided directly. The subtraction/addition of 1 has been removed; the app's lists start at 1. The bench checks each choice and its preview, including the last entry, Automatic. False booleans are preserved by `C.effective` thanks to an explicit branch. The controls use distinct `###setting_<key>` identifiers. The new temporary identities and the failed restorations are described in [AUDIT_RC4.md](AUDIT_RC4.md).
-
-## V1: weather API and call cost
-
-Flags (1.5.0): `ac.FlagType.SessionSuspended` (red flag) is documented as “does not work yet”; the flag panel is an app window (`[WINDOW_2]`, FLAGS=MAIN,NO_BACKGROUND) drawn with `ui.drawRectFilled`, `ui.textColored` and `ui.pushFont(ui.Font.Title)`, without DirectWrite. `ac.setWindowOpen('flags', true)` opens it when a flag appears. Recovery of stranded cars under the red flag uses `physics.teleportCarTo(index, 'PIT')`, already used for the Safety Car.
-
-Local SDK `ac_apps/lib.lua`: `setAIRainTyres(carIndex, boolean)` line 15285; `setAIPitStopRequest(carIndex, boolean)` line 15259; `setAITyres(carIndex, compoundIndex)` line 15269. The latter also resets tyre damage: called only in the pits (when stopped, and since 1.7.0 also while driving in the pit lane), and since 1.4.0 when stopped on the grid before the start (session not started or countdown in progress) or in the first 15 seconds of a session, to correct a compound unsuited to the conditions. `setTyresCompound` is not used. Catalogue through `getTyresName`/`getTyresLongName`, 0-based indices, at most 32 entries and two new catalogues per frame. `compoundIndex` and `isAIUsingRainTyres` are documented on lines 5148 and 5046.
-
-The weather compensation does not stack with a confirmed native wet tyre. The grip setter is centralised to combine, if they are allowed, the >100% bonus and the weather compensation. The recovery fields include the original rain state and the pit requests, with reading compatible with the old formats. No driving setter is allowed in the pits; only the explicitly requested weather service operations are an exception.
-
-Numeric and boolean setters receive two arguments; only the offset receives the documented third boolean. NATIVE_SETTER_ARITY checks this distinction with real C FFI functions. The core draws no GPU content; the windows remain limited to the menus. The native counter times the update and the adapters, excluding UI drawing.
-
-## 1.1.0: contracts re-checked
-
-- `physics.setAISplineOffset`: −1 full left, +1 full right (line 15233). In AC, +X is the left of a car looking towards +Z: `DRIVEREYES.x > 0` on the installed left-hand-drive cars. The internal lateral basis `(-look.z, look.x)` therefore points right there, and the calibration measures `offsetSign = −1`. Occupancy remains expressed in this internal basis, which keeps it consistent with the calibrated sign. Only the sides chosen in the interface are converted from the SDK convention. The test host exists in a left-handed frame and in a right-handed frame.
-- `physics.setAIPitStopRequest(index, false)` also blocks the pits for a while since 0.3.0-preview147 (line 15256). The weather request therefore stays true in the pit lane, and `false` is only sent outside it, except on unload.
-- `physics.setAIRainTyres` overrides the default behaviour (line 15282). It is only called if the native `isAIUsingRainTyres` state differs from the decision or if the app has already taken over.
-- `ac.CarControlsInput` (line 18245): `steer = math.huge` keeps the steering; `gas`, `brake` and `handbrake` take the maximum with the original value; `clutch` takes the minimum. `requestedGearIndex = 0` and `mguhMode = −1` keep the existing state. The app writes these neutral values with every extra-braking command.
-- `ac.SimState.isPaused` (5346) and `isInMainMenu` (5347) are distinct. The setup/garage menu does not stop the session: it opens the windows without freezing the engine.
-- `ac.onSessionStart(callback)` (3818) also reports a restart at the same index. The tracked writes are then resynchronised.
-- `ac.INIConfig.raceConfig()` (7099): `race.ini` is re-read on session change, or after a read failure. `SESSION_<n>/TYPE` values: 1 practice, 2 qualifying, 3 race, 4 hotlap, 5 time attack, 6 drift, 7 drag, as in `ac.SessionType`.
-
-## 1.2.0: Content Manager modes
-
-- The `race.ini` files from the installation's CSP crash archives (78 launches) give three signatures: Track day = one session `NAME=Track Day`, `TYPE=1` (49); Practice = one session `NAME=Practice`, `TYPE=1` (7); Weekend = `Practice`/1, `Qualifying`/2, `Race`/3 (22). The Content Manager logs confirm `Mode=TrackdayProperties` and “Track Day” sessions.
-- `snapshot` therefore reads `SESSION_<n>/NAME` in addition to `TYPE`, once per session. A name containing `trackday` (case and punctuation ignored) designates Track day; any other declared practice session uses the Practice profile. Without a readable `race.ini`, the CSP type alone keeps the old Track day choice for practice.
-
-## 1.3.0: accidents, rules, Safety Car
-
-All these functions are in the local SDK (CSP 0.3.0-preview675); none has been observed in game yet.
-
-- `ac.StateSim.raceFlagType` / `raceFlagCause`: the player's native flag. `physics.overrideRacingFlag(ac.FlagType.Caution)` imposes it, `ac.FlagType.None` hands control back to AC. The app only imposes it when there is no native flag or over its own, and gives it back on every exit (stop, panic, session, unload, resumption after a reload through the `;F` header of the resume point).
-- `physics.setAIStopCounter(index, s)`: “makes the AI brake for a given time, the mechanism AC uses after an incident”; 1.5 s pulses renewed every 0.5 s, then 0 to release. If the app cuts out, the car is therefore released by itself.
-- `physics.setAITopSpeed`: yellow zone, FCY, VSC and the queue behind the Safety Car, combined with Spacing (minimum of the two) in the applier.
-- `ac.overrideCarControls(index).headlightsFlash`: an AI car's headlight flash (one frame); all the other fields receive the documented neutral values (`combineAxis=true`, `steer=math.huge`, pedals 0/1, gear 0, MGU-H −1, KERS −1).
-- `ac.setTurningLights(mode)` has no car index: in an app, it acts on the player's car; `ac.CarControlsInput` has no indicator field. The AI cars' indicators cannot be controlled.
-- `physics.setAINoInput(index, true)` parks the Safety Car (“parked”), `physics.teleportCarTo(index, 'PIT')` brings it back to its pit box once if it is on track.
-- `io.scanDir(ac.getFolder(ac.FolderID.ContentCars), '*', callback)` lists the car database; the attributes are an FFI structure (`isDirectory`), not a Lua table.
-- `ac.StateSim.pitWindowStartTime` / `pitWindowEndTime` (declared window), `time`, `leaderLapCount`, and `ac.getSession(i).laps` / `durationMinutes` / `isTimedRace` give the progress of the race. `ac.StateCar.collidedWith` (≥ 0 when in contact) is used to recognise an accident.
-- The `ac.getSim()` and `ac.getCar()` structures are cdata: reading an undeclared member throws an error in the game, invisible with the test host's Lua tables. The fields read are therefore checked by the lint against `tests/sdk-fields.json`, extracted from the installed SDK, and new reads have their own `pcall`.
-
-## Beta 1.2 to 1.4: DRS, driving mistakes, Safety Car, compiler
-
-- `physics.allowCarDRS(index, disable)` (`true` = DRS forbidden; marked deprecated in the SDK, with no documented replacement) disables DRS according to the racing rules, player included, and gives it back: at the end of the rule, tab unticked, app disabled with no car tracked, unload, and on reload after an abrupt stop (`;D` marker of the resume data). `physics.setCarDRS(index, active)` opens or closes an AI car's DRS (one opening per second at most, closing immediately under braking).
-- `physics.setAIBrakeMistake(index, duration)` and `physics.setAITractionMistake(index, duration, severity)`: AI driving mistakes, written once per decision, to an AI car on track whether it is commanded or not (nothing to give back).
-- `ac.getCarSkinID(index)` (livery folder), `ac.findNodes('carRoot:'..index):applySkin(folder)` (since CSP 0.3.0): “safety” livery applied to the Safety Car when it does not already wear it, original livery reapplied when it stops being the Safety Car and on unload.
-- `ac.StateCar.racePosition` (1 = first, 0 if unknown): pit exit order at the resumption after a red flag.
-- `jit.opt.start('maxtrace=8000','maxmcode=16384')` in the entry file: enlarged JIT compiler cache (with the default 1,000 traces and 512 KB, the engine recompiled all its code every one to two minutes). No effect on decisions; if it is refused, the app drives the cars one by one as before and the log says so.
-
-## Beta 1.35: update staged outside the app folder
-
-- CSP reloads an app when a file of its folder changes, so nothing is written there before the final copy. Work folder: `ac.getFolder(ac.FolderID.ExtCfgState)` (25, `Documents/Assetto Corsa/cfg/extension/state`, no live reload), subfolder `AdvancedIA-update` (`next`, `current`, `backup`, `installing.txt`, `updated.txt`).
-- `io.extractFromZipAsync(data, folder, {crucial = 'apps/lua/AdvancedIA/manifest.ini'}, callback)` unpacks into `next`; `io.scanDir(folder, '*', callback(name, attributes))` lists files (`attributes.isDirectory`).
-- `io.copyFile(existing, new, false)` copies (overwrite allowed). `io.move` is MoveFileEx without copy: it fails between drives (Steam on D:, Documents on C:), hence copies for everything that crosses into the app folder.
-- `ac.pauseFilesWatching(true)` suspends CSP's file watching for a few seconds; the final copy runs synchronously in one frame, re-asserts the pause before each changed file and resumes watching at the end.
-- `io.deleteDir` removes an empty folder only; the updater empties a folder, then removes its sub-folders deepest first, then the folder itself, so that `io.move` of a whole folder (the kept version) never meets an existing, empty destination (Beta 1.36).
-- A module whose loading failed cannot be required again (LuaJIT: *loop or previous error loading module*); the main script stores its stand-in for `src/update` in `package.loaded`, so the interface's own `require` gets it (Beta 1.36).
-- The recovery runs at the very top of `AdvancedIA.lua`, under `pcall`, before any other module is required; when it copied files it asks one `ac.restartApp()` on the first frame, before the engine drives anything.
-- GitHub answers 403 or 429 when the unauthenticated request limit (60 per hour) is reached.
-- Atomic replacement: each file is copied to `<destination>.new` in the destination folder, then `io.move(tmp, destination, true)` renames it (same volume, so a rename). Kept versions are swapped by renaming folders.
-- Boot sentinel `boot.txt` (version, tries) in the work folder: written by a fresh install, counted at each start before the other modules load, removed after the first successful `script.update`; two failed starts roll back to `backup`.
-- Settings: a store whose `schemaVersion` is newer than the app's is no longer replaced by the defaults; each known key is validated and the higher version is kept on save, so a roll back keeps them.
-
-## Beta 1.34: standing restarts, AC's start flag, capability failures
-
-- `ac.StateSim.raceFlagType` can stay at `ac.FlagType.Start` (1) for a long time (the whole session in hotlap; observed by the app's own panel code). Beta 1.32 only wrote `physics.overrideRacingFlag` over 0 or AC's yellow, so a held start flag blocked the track light panels without a trace. The start flag now counts as free; blue (12), white (14), chequered (13), black (5) and penalty (8) are still never covered.
-- `pcall` returns CSP's error text on a failed call: the capability layer keeps it (160 characters) and the log shows the first failure of each function and its disabling after three failures.
-- Grid slots: `ac.findNodes('AC_START_<k>')` (local SDK, line 10789), `SceneReference:size()` (10008), `:getWorldTransformationRaw()` (10289, `nil` without a node) and its `.position`, then `ac.worldCoordinateToTrack(v)` (3135): X is the normalised lateral position (-1 left, +1 right), Z the track progress. Read once per track under `pcall`; any failure falls back to computed slots.
-- Standing start actuators, all already used by the app: `physics.setAIStopCounter` pulses (hold), `physics.setAITopSpeed` (approach cap), `ac.overrideCarControls(i).brake` (assist brake, final brake = max(native, imposed)), `physics.setAISplineOffset` (column), `physics.awakeCar` and `physics.setAITimeToStart(i,0)` at lights out. No teleport (`physics.teleportCarTo` with `START` would use each car's original slot and its timing behaviour is unknown). The gantry lights cannot be driven: no track condition input exists for them, so the lights are drawn by the overlay.
-
-## Beta 1.33: update from GitHub
-
-- Network: `web.get(url, headers, callback(err, response))` (local SDK, line 8018), at most two requests at once, default timeouts 30 s; `response.status`, `response.body` (binary-safe). No progress callback: the size shown comes from the release's asset size. `api.github.com` needs a `User-Agent` header; `releases/latest` answers 404 while nothing is published (shown as *No release published yet*). `browser_download_url` redirects to GitHub's storage; the redirect is followed.
-- `JSON.parse(text)` (line 8201) decodes the release; `ac.checksumSHA256(data)` (line 3290) gives the digest as text (32 raw bytes also accepted).
-- Zips: `io.scanZip(data)` lists entries, `io.loadFromZip(data, entry)` reads the package manifest, `io.createZipAsync(filename, entries, callback)` writes the backup (entries `{filename = …}`), `io.extractFromZipAsync(data or filename, destination, {crucial = …}, callback)` unpacks (since 0.2.10 the crucial entry is extracted last under a temporary name and its absence is an error).
-- Files: all writes stay in the app folder, `ac.getFolder(ac.FolderID.ScriptOrigin)` (1024). The package is unpacked into `backup/next`, then `io.move(from, to, true)` (line 4375) replaces each changed file, `manifest.ini` last; `io.createFileDir` creates new folders. A copied app folder holding `manifest.ini` would be loaded by CSP as a second app, hence a zip for the backup.
-- `ac.restartApp()` (line 16244) reloads the app on the next frame; the app releases everything first (the same full release as on unload). `os.openURL(url)` (line 4669) opens the release page (https only).
-
-## Beta 1.32: track light panels and the player's FIA signals
-
-- Track configurations (the track's `extension/ext_config.ini`, CSP's `extension/config/tracks/loaded/<track>.ini`) define conditions `[CONDITION_…] NAME=… INPUT=FLAG_TYPE` with a LUT from the flag value to a colour. The usual LUT: 1 green, 2 yellow, 3 orange, 4 orange-red, 5 red, 6 grey-white, 12 blue, 13 off or red, 14 white. Materials and light series light up through `CONDITION=<name>`. CSP's shared `common/conditions.ini` defines `RACING_FLAG` on `FLAG_TYPE`, so a track that includes it may light sections with `CONDITION=RACING_FLAG` only (Sepang, Vallelunga).
-- `FLAG_TYPE` is the player's flag. `physics.overrideRacingFlag(flag)` (local SDK, line 15002) overrides it until `ac.FlagType.None`; the SDK note on `ui.drawRaceFlag` says it "would also affect track conditions". `ac.FlagType` 3, 4, 6, 7, 9, 10, 11, 15 and 16 are marked *does not work yet* (AC's own display); 5 (`Stop`) is AC's black flag there.
-- `ac.StateSim.raceFlagType` returns the overridden value: the main loop marks the frame (`flagOwned`) and the panel never reads its own value as an AC flag; AC penalties (`currentPenaltyType`) are still read.
-- Files: `ac.getFolder(ac.FolderID.ContentTracks)` (15), `ac.FolderID.ExtCfgSys` (17), `ac.getTrackID()`, `ac.getTrackLayout()` (line 3208, empty without a layout), `io.load`. Track identifiers with `..` or other characters are not read.
-- Player damage (black flag with an orange disc): `ac.StateCar.damage` (five zones, km/h of impact), `suspensionDamage` (0–1), `engineLifeLeft` (1000 new, breaks at 0), `gearboxDamage` (0–1), `wheels[i].isBlown`, `ac.StateSim.mechanicalDamageRate` (0: damage off). Read once a second under protection, apart from the AI's (read only at their pit box).
-
-## 1.6.0 to 1.8.0: penalties, DRS, sanctions
-
-- `physics.setCarPenalty(type, parameter)`: `ac.PenaltyType.SlowDown` (3, throttle cut for the given number of seconds; only with race settings that allow it), `BlackFlag` (4, no parameter), `ReleaseBlackFlag` (5, no parameter): the black flag is lifted on unload, on deactivation and on session change, and imposed again after an app reload.
-- `ac.AudioEvent.fromFile({filename, use3D=false, loop=false}, false)` plays the DRS beep; `cameraInteriorMultiplier` is 0.25 by default (app sound reduced in cockpit view): the three camera multipliers are set to 1, `volume` follows the setting (25 to 400%) and `setVolumeChannel(ac.AudioChannel.Main)` ties it to the master volume. The previous event is released (`dispose`) at each beep and on unload.
-- `ac.StateCar.drsPresent`, `drsAvailable`, `drsActive`: AC's DRS, read for the beep and the panel badge (and, since Beta 1.2, for the DRS rules and the AI DRS, below).
-- `physics.teleportCarTo(index, 'PIT')` (`ac.SpawnSet.Pits`) without `preserveDamage`: the car brought back to its pit box is repaired (stranded AI car recovered, disqualified AI car, Safety Car).
-- Deliberate deviation from the PDR: contact detection through a yaw jump (additional criterion) was removed in 1.8.0; on a smoothed yaw, it could not trigger. Contact is still recognised by the sharp loss of speed near a car.
-
-## Beta 1.40: CSP display options (gui.ini)
-
-- `ac.blockSystemMessages('.')` does not hide AC's own top banner (*CUT DETECTED: LAP WILL NOT COUNT*): it was still drawn in Beta 1.39 while `ac.onMessage` received it. CSP's `[HIDE] HIDE_SYSTEM_MESSAGES` (*Hide system messages (like ABS)*, `extension/config/gui.ini`) is the switch for that display; `HIDE_RACE_FLAGS` hides AC's flags.
-- User file: `ac.getFolder(ac.FolderID.ExtCfgUser)` + `gui.ini` (written by Content Manager; absent until something is changed). Applied values: `ac.INIConfig.cspModule(ac.CSPModuleID.GUI):get('HIDE', key, false)`. `ac.onCSPConfigChanged(ac.CSPModuleID.GUI, fn)` reports a re-read. Whether CSP applies a changed `[HIDE]` key live is **not confirmed** on CSP 0.3.2-preview2: the app handles both cases.
-- Between the app's write and a re-read by CSP, the applied value is the one read at the first app start of the game process (kept in `ac.store('humanai:cspgui')`, which survives app reloads but not a game restart), never the file's.
-- State file outside the update work folder: `ac.FolderID.ExtCfgState` + `ACAdvancedIA-cspgui.ini`. It holds `v1`, one line per held key (`KEY=original` or `KEY` when absent), then `original <bytes>` and `written <bytes>` blocks (`-` when the file did not exist). The updater's clean-up only touches `AdvancedIA-update/`.
-- Writes use `io.save(path, data, true)`; the `.bak` CSP's safe replacement leaves is deleted after each write, as for `new_behaviour.ini`.
-
-## Beta 1.41: AC's cut and penalty banners
-
-- With CSP's `[HIDE] HIDE_SYSTEM_MESSAGES=1` applied (re-read live) and `ac.blockSystemMessages('.')` active, AC still draws its red banners *CUT DETECTED* / *LAP WILL NOT COUNT* and *PENALTY, SLOW DOWN FOR n SECONDS OR SLOW DOWN TO 35 KMH* / *BEFORE THE END OF CURRENT LAP* (Beta 1.40 sessions, 3 November), and they also reach `ac.onMessage`. No documented CSP option or function hides them (gui.ini defaults, `lib.lua`).
-- AC's own texts (UTF-16 strings in `acs.exe`): `CUT DETECTED`, `LAP WILL NOT COUNT`, `PENALTY, SLOW DOWN FOR`, `OR SLOW DOWN TO`, `BEFORE THE END OF CURRENT LAP`, `DRIVE THROUGH PENALTY`, `Jump-start: Drive-through`, `DISQUALIFIED`, `You have been disqualified for not clearing the … penalty`. The app matches them in upper case (`Config.acDrawnMessages`) on the title or the description, whatever the message kind, and never shows them on the overlay; other messages are unaffected.
-
-## Beta 1.41: included track configuration files
-
-- CSP track configurations include other files with `[INCLUDE: file]` section headers or `INCLUDE = a, b` keys. The F1 2026 layouts (Melbourne, Monza, Silverstone…) use `[INCLUDE: ../../common/…]`, `[INCLUDE: ../../extension/ext_config.ini]` and `[INCLUDE: extension/config/tracks/loaded/<track>.ini]`.
-- The app resolves an include from the folder of the including file with `.` and `..` segments resolved; `common/…` in `extension/config/tracks/common`; `extension/…` also from the Assetto Corsa folder (`ac.FolderID.Root` when present, else derived from `content/tracks` or `extension/config`). A resolved path is read only inside `content/tracks/<track>/` or `extension/config/`; absolute paths, drive letters and escapes are refused. Paths are compared without case.
-- At most 64 files (`K.lightsFiles`), 4 MB each (`K.lightsBytes`) and 8 MB in all (`K.lightsTotalBytes`), once per track, and reading stops at the first match.
-
-## Beta 1.41: pit exit merge (D12 exception) and frame clock
-
-- Rule D12 (pits and off-track cars never driven) has one exception since Beta 1.41, in track day only. An AI driving out of the pit lane (at least 5 km/h when the hold begins, at least 15 m past its own pit box of this visit), 80 m to 5 m before the learned merge point, is held while a car on track, the player included, reaches the merge within 3 s plus its own time to get there (5 s at most), or is past it by less than 15 m. The hold lasts 10 s at most, once per exit, never for the player or the Safety Car, never under a red flag, and only while the native stop counter works (`host.caps.stop.available`, `engine.stopCap`). A car driving to its own pit box is never held.
-- It uses the same native stop counter as the pit-box hold (`physics.setAIStopCounter`, `cmd.mergeHold` in the applier's `hold()`). No offset, speed, brake or level command is written in the pit lane; pit stop requests (`physics.setAIPitStopRequest`) stay active there until the stop, as before.
-- Pit lane state: `ac.StateCar.isInPitlane` or `isInPit` (frame field `pit`), `isInPit` alone for the pit box (`inPitBox`). The merge point is learned from cars leaving the pit lane while driving (at least 5 s in the lane, at most 120 km/h, never a teleport): a moving average, replaced after three exits in a row more than 200 m away. Nothing is read from the track files.
-- Pit-lane cars from 100 m before to 50 m after the merge, unless held, are listed by perception for the cars on track (forward radar, obstacle, pass) when they move at 15 km/h or more, or at 3 km/h or more within 30 m of the merge; never in lateral occupancy or the corridor. A stopped car (a queue, the waiting player) stays invisible.
-- `physics.teleportCarTo(index, 'PIT')` without `preserveDamage` repairs the car it moves: a slow damaged AI recovered in track day, practice or qualifying arrives repaired (log `IA lente et endommagee depannee a son stand, reparee par le deplacement`).
-- Yield top-speed cut: released as soon as the yield ends. In track day with the Traffic tab, the next speed limit starts from the last cut and rises at `K.trafficAccelKmh` per second, a short carry-over by design.
-- Frame cost clock: `QueryPerformanceCounter` through `ffi` when CSP allows it, else `os.preciseClock` if it advances within a short probe loop at launch, else `os.clock` (1 ms steps: the mean stays right, the maximum is rounded). The source is logged once (`cout par image mesure par: …`).
-
-## Beta 1.26: CSP AI flood and AI placement
-
-- `io.save(path, data, true)` goes through `io.replaceFile` when the file exists, which keeps the old content as `<path>.bak` (CSP's safe replacement). The updater deletes that `.bak` right after each write and on each deletion (Beta 1.37); `boot.txt`, rewritten at the launch that counts the start, was the source of the `boot.txt.bak` left by Beta 1.36.
-- User setting: `ac.getFolder(ac.FolderID.ExtCfgUser)` (`Documents/Assetto Corsa/cfg/extension`), file `new_behaviour.ini`, absent as long as nothing has been changed; defaults: `ac.FolderID.ExtCfgSys` (`extension/config/new_behaviour.ini`, `[AI_FLOOD] ENABLED=1`, `MIN_TRACK_LENGTH=7000`). Read with `io.load`, written with `io.save(path, text, true)` (temporary file, then replacement); only the `ENABLED` and `SPAWN_*` keys of `[AI_FLOOD]` change. Checked in game: CSP reads it at launch, not when a session restarts.
-- Placement: `physics.setCarPosition(index, position, nil)` (nil: CSP aligns the car with the AI line), position given by `ac.trackProgressToWorldCoordinate`, native wait cancelled first (`setAITimeToStart(index, 0)`). The `physics.setCarVelocity` launch is only given once the position jump has been seen, along the car's axis: a computed direction and a speed set together sent all 30 AI cars sliding on the first attempt.
-- The pit indicators (`isInPit`, `isInPitlane`) are false for a short moment at the start of a session, and sometimes no car is loaded yet on the first frame: the distribution waits for the AI cars and 0.5 s, then counts an AI car as placed only if it is within 100 m of its spot.
-- `ac.blockSystemMessages('.')`: a test message (`ac.setMessage`, 0.1 s) checks that the `ac.onMessage` listener still receives the hidden messages.
-
-## 1.3.2: session log
-
-- `ac.getFolder(ac.FolderID.Logs)` gives `Documents/Assetto Corsa/logs`. The app writes there with `io.open(path, 'a')` every two seconds (small appends, never a complete rewrite), after an `io.fileExists` / `io.move` rotation on the first cycle of a game launch (since 1.8.0, a marker in `ac.store` makes it continue the same file after an app reload). `os.date` timestamps the lines. If `io.open` is missing or fails three times, the log switches off with no effect on the engine.
-- The CSP and AC logs are truncated when they exceed their maximum size, often as soon as a 30-car grid is loaded: they then do not cover the race. The app's log is independent of this limit.
-
-## Beta 1.46: companion-app bridge (`ac.connect`)
-
-- `ac.connect(layout)` (`common/ac_extras_connect.lua`) creates a shared structure between Lua scripts of the session; both sides must pass exactly the same layout. The layout lives in `src/bridge_layout.lua`, byte-identical in AdvancedIA and SpotterEnginer; a field named `key` holds `ac.StructItem.key(...)` to avoid collisions; types used: `boolean`, `int32`, `uint32`, `float`, `double`, `string(capacity)`, and an `array(struct(...), 61)` for the cars.
-- Opened by `Applier.bridgeOpen` only when `Applier.companionInstalled('SpotterEnginer')` finds `apps/lua/SpotterEnginer/manifest.ini` (`ac.getFolder(ac.FolderID.ACAppsLua)` and `io.fileExists`, once at launch, inside `pcall`). Without it, `ac.connect` is never called.
-- Publishing (`src/bridge.lua`) is pure Lua, read only, run once per frame after `update()` inside `pcall`; strings are written only when they change, cut at their capacity on a UTF-8 boundary.
-
-## Beta 1.42: AI strategy and sanctions
-
-- `physics.setAIThrottleLimit(index, limit)` (0 to 1): the throttle cut of a sanction, dirty air and failures. The app lowers it gradually (never below 0.3), writes it once per change, returns exactly 1 when the limit comes back above 0.99, and gives it back when the car is not driven (pits, off track, release). After a reload on error, every recovered car gets its throttle back.
-- `physics.setTyresVirtualKM(index, wheel, km)`: the flat spot of a lock-up on the more worn front tyre, one event at a time, bounded per stint.
-- Read for the AI: `car.wheels[i].tyreWear` (0 new to 1 worn per the SDK, still to confirm in game), `tyreVirtualKM`, core and optimum temperatures, `car.fuel`, `car.maxFuel`, `car.fuelPerLap` (AC's estimate), `car.wheelsOutside`, `car.isLapValid`, `car.currentSector`, `sim.pitsSpeedLimit` (ignored below 40 km/h).
-- Not possible with CSP: AC's penalties (`physics.setCarPenalty`) apply to the player only, and AC's results cannot be changed; `markLapAsSpoiled` works only in a race for an AI, so invalidated AI laps in practice and qualifying stay in the app. An AI drive-through is a pit request without service (AC's AI stops briefly at its box).
-- The `isInPitlane` flag can drop for a frame: a pit-lane exit is confirmed after 1 s out of the lane (the exit point and the pit junction are taken from the first frame out).
-
+# CSP API notes
+
+This page lists the Custom Shaders Patch Lua API that AdvancedIA uses today, and how it behaves in game. Release history is in [CHANGELOG.md](../CHANGELOG.md).
+
+- **Reference version.** The app was developed and checked against **CSP 0.3.0-preview675 (build 4210)**.
+  - Its SDK lives in `extension/internal/lua-sdk/ac_apps/lib.lua`. There is no separate `ac_physics_ai.lua`: the `physics.*` functions are defined in `lib.lua`.
+  - The test installation now runs CSP 0.3.2-preview2. A note says so when a behaviour was observed on that version.
+- **No line numbers.** SDK line numbers move between CSP builds, so this page names functions only.
+- **Sources.** "SDK" means the comments in `lib.lua`. "Observed" means seen in game, in the app's session log or in CSP's log.
+
+## Contents
+
+- [General rules](#general-rules)
+- [Manifest and entry points](#manifest-and-entry-points)
+- [Reading the simulation state](#reading-the-simulation-state)
+- [AI commands and their restoration](#ai-commands-and-their-restoration)
+- [Flags and track light panels](#flags-and-track-light-panels)
+- [Pits and Quick Pitstop](#pits-and-quick-pitstop)
+- [Session memory and storage](#session-memory-and-storage)
+- [Files and updates](#files-and-updates)
+- [CSP gui.ini options](#csp-guiini-options)
+- [Windows and drawing](#windows-and-drawing)
+- [Companion-app bridge](#companion-app-bridge)
+- [Pitfalls observed in game](#pitfalls-observed-in-game)
+
+## General rules
+
+- **Every CSP call is probed and protected.**
+  - A function counts as present only if it is a Lua function or a callable cdata.
+  - Not every `cdata` is a function. `physics.allowed()` itself is exposed as a callable cdata in a real session.
+  - Calls run under `pcall`. CSP returns its error text, and the capability layer keeps the first 160 characters.
+  - After three failures (`K.capabilityFailures`) a capability is switched off. The log shows its first failure and when it was switched off.
+  - The **DIAGNOSTICS** tab lists every capability and why it is unavailable.
+- **`physics.allowed()`** gives access to the `physics.*` setters. Observed: it returns true on the original Spa without changing `surfaces.ini`.
+- **Online and replay.**
+  - No command is sent online: `isOnlineRace` or `isAltOnlineRace`.
+  - No command is sent during a replay: `isReplayActive` or `isReplayOnlyMode`.
+  - No AI command (setters, offset, controls) goes to the player (`isUserControlled`, at any index, not only 0) or to a remote car (`isRemote`). The exceptions are the player-only flag and penalty, and the DRS rule.
+  - Cars without local physics (`physicsAvailable == false`) and cars that are not AI-controlled (`isAIControlled`) are skipped too.
+- **Argument count.** Setters receive `(index, value)`. The only exceptions are those whose SDK documents a further argument:
+  - `setAISplineOffset` (`overrideAiAwareness`);
+  - `setCarPosition` (`dir`);
+  - `setAITractionMistake` (`severity`);
+  - `overrideAIRequestedFuel` (`lapsToComplete`);
+  - `setTyresVirtualKM` (`wheels`);
+  - `setSuspensionDamage` (`wheels`, passed as `nil`).
+
+  `physics.overrideRacingFlag(flag)` and `physics.setCarPenalty(type, parameter)` take no car index.
+- **`ac.Disposable` is a function.** It is not an object with a `dispose` method. Subscriptions such as `ac.onMessage`, `ac.onCSPConfigChanged` and `ac.blockSystemMessages` are released with `pcall(token)`.
+
+## Manifest and entry points
+
+- `manifest.ini` declares:
+  - `[CORE] LAZY=NONE`;
+  - one window, `[WINDOW_0] ID=main` with `FUNCTION_MAIN=HUMANAI__MAIN`, `FLAGS=MAIN,SETUP,NO_TITLE_BAR,NO_BACKGROUND,NO_SCROLLBAR,NO_SCROLL_WITH_MOUSE` and `GROUP=SETTINGS`;
+  - `[UI_CALLBACKS] IN_GAME=HUMANAI__HUD`.
+
+  There is no `[SIM_CALLBACKS]` section and no minimum CSP version.
+- **Manifest names are methods of CSP's `script` table**, not free Lua globals.
+- **The engine runs from `script.update(dt)`**, which calls `script.HUMANAI__UPDATE`.
+  - CSP calls `script.update` every frame, even with no window open ([Lua apps wiki](https://github.com/ac-custom-shaders-patch/acc-lua-sdk/wiki/Lua-apps)) and while the setup menu is shown.
+  - It is the only update entry point.
+- **The overlay draws without updating.** `HUMANAI__HUD` (IN_GAME) draws the in-game overlay and never updates the engine.
+- **One global.** The app adds a single global table, `HUMANAI`. When the app is reloaded, the previous instance's `HUMANAI.release` runs first.
+- **Lifecycle callbacks.**
+  - `ac.onRelease(callback)` runs on unload; `ac.onSessionStart(callback)` on a session change. Each is registered once, and its callback is protected.
+  - `ac.onSessionStart` also reports a restart of the same session index. The tracked writes are then resynchronised.
+- **`ac.restartApp()`** reloads the app on the next frame. The app first releases everything, as on unload.
+- **JIT cache.** `jit.opt.start('maxtrace=8000','maxmcode=16384')` runs at the top of `AdvancedIA.lua`, through `rawget(_G, 'jit')`.
+  - With the default 1,000 traces and 512 KB, the engine recompiled all its code every one to two minutes.
+  - If the call is refused, the engine drives the cars one protected call at a time instead of in one batch.
+
+## Reading the simulation state
+
+- **`ac.getSim()` and `ac.getCar(index)` return cdata structures.**
+  - Reading an undeclared member throws in game, but not with the test host's Lua tables.
+  - The lint therefore checks every field read against `tests/sdk-fields.json`, which is extracted from the installed SDK.
+  - Reads of newly used fields get their own `pcall`.
+- **Indices.** `ac.getCar(index)` is 0-based. The player is usually index 0 offline, but the app checks `isUserControlled` on every car.
+- **Session fields:**
+  - `timeToSessionStart`, `currentSessionTime` and `sessionTimeLeft` are in **milliseconds**; so are `bestLapTimeMs` and `previousLapTimeMs`.
+  - `trackLengthM` comes from the AI spline, in metres. A length of 0 means no lateral manoeuvre.
+  - `isPaused` and `isInMainMenu` are distinct. The setup or garage menu does not stop the session: the engine keeps running.
+- **Session type.**
+  - `ac.INIConfig.raceConfig()` gives read-only `race.ini`, with no password or online GUID. `config:get('SESSION_<currentSessionIndex>', 'TYPE', 0)` and `'NAME'` are read once per session, and again after a read failure.
+  - TYPE values: 1 practice, 2 qualifying, 3 race, 4 hotlap, 5 time attack, 6 drift, 7 drag, as in `ac.SessionType`.
+  - Content Manager signatures, from the installation's crash archives:
+    - Track day: a single session, `NAME=Track Day`, `TYPE=1`;
+    - Practice: `NAME=Practice`, `TYPE=1`;
+    - Weekend: Practice/1, Qualifying/2, Race/3.
+  - A name containing `trackday` (case and punctuation ignored) means Track day.
+  - Without a readable `race.ini`, the app falls back to `raceSessionType`, and a practice session counts as a Track day.
+- **Race progress:**
+  - `pitWindowStartTime` and `pitWindowEndTime` (the declared window), `time`, `leaderLapCount`;
+  - `ac.getSession(i).laps`, `durationMinutes` and `isTimedRace`;
+  - `pitsSpeedLimit`, ignored below 40 km/h;
+  - `fuelConsumptionRate` (0: fuel use off);
+  - `mechanicalDamageRate` (0: damage off).
+- **Car geometry.**
+  - `position` is in metres, `velocity` in m/s and `speedKmh` in km/h; `look`, `side` and `aabbSize` are vectors.
+  - The SDK only describes `side` as "sideways", so it is never assumed to point left.
+  - In AC, +X is the left of a car looking towards +Z. The app's lateral basis `(-look.z, look.x)` therefore points right.
+- **`ac.getTrackAISplineSides(progress)`** returns a `vec2`: x is the distance to the left edge, y to the right edge, in metres.
+- **Car state:**
+  - `splinePosition` (0–1), `lapCount` (laps completed), `racePosition` (1 = first, 0 if unknown);
+  - `gas` and `brake` (0–1), `wheelsOutside`, `isLapValid`, `currentSector`;
+  - `collidedWith`: 0 or more while in contact.
+- **Pit state.**
+  - `isInPitlane` or `isInPit` means "in the pits".
+  - `isInPit` alone means "at its own pit box".
+- **Tyres and fuel:**
+  - `compoundIndex` (0-based) and `isAIUsingRainTyres`;
+  - `ac.getTyresName` and `ac.getTyresLongName`, read for up to 32 compounds, two new catalogues per frame;
+  - `wheels[i].tyreWear` (0 new to 1 worn per the SDK; not yet confirmed in game), `tyreVirtualKM`, core and optimum temperatures, `isBlown`;
+  - `fuel`, `maxFuel`, and `fuelPerLap` (AC's estimate).
+- **Damage:**
+  - `damage` gives five zones, in km/h of impact;
+  - `suspensionDamage` (0–1), `engineLifeLeft` (1000 new, broken at 0), `gearboxDamage` (0–1).
+  - The player's damage is read once a second. An AI car's damage is read only at its pit box, below 25 km/h (`K.damageReadSpeed`), or while it is watched as abnormal or slow.
+- **Lights and horn.**
+  - `highBeams` means "high beams on or headlight flash".
+  - `headlightsActive`, `lowBeams` (the switch, not a pulse), `flashingLightsActive` and `hornActive` are the other candidates.
+  - The player's flash signal is learned from real transitions. Nothing counts as available before a signal has been seen.
+- **DRS:** `drsPresent`, `drsAvailable`, `drsActive`.
+- **Weather:** `rainIntensity`, `rainWetness`, `rainWater`.
+- **Identity:**
+  - `ac.getCarID(i)`, `ac.getDriverName(i)` and `ac.getCarSkinID(i)` (the livery folder);
+  - `ac.getTrackID()`, `ac.getTrackName()` and `ac.getTrackLayout()` (empty without a layout);
+  - `ac.getPatchVersion()`, shown in the diagnostics.
+- **Other apps.** `ac.getAppWindows()` lists the open app windows (`name`, `title`).
+  - It is used to warn about apps that may also drive the AI.
+  - A known window does not prove that its app writes anything, so the banner says "check what it does".
+
+## AI commands and their restoration
+
+No CSP getter exists for the current offset, the extra grip, the caution or a top-speed cap. The app therefore restores the documented neutral values, not "the value before". Another app's cap cannot be restored identically.
+
+| Function | Contract (SDK) and use |
+|---|---|
+| `physics.setAISplineOffset(i, offset, overrideAiAwareness?)` | **Normalised**: −1 is full left and +1 full right, limited by the track width. It is never in metres; `setAISplineAbsoluteOffset` takes metres and is not used. The sign is calibrated; see [Pitfalls](#pitfalls-observed-in-game). |
+| `physics.setAILevel(i, level)` | Setter range 0–2; the `aiLevel` field is documented 0–1. The app probes 1.05 (`K.probeLevel`) with a deferred read-back and restores the initial value if that fails. In native mode commands go up to `K.nativeLevelMax` (1.1); otherwise they stop at 1 and the optional grip bonus stands in. |
+| `physics.setAIAggression(i, value)` | 0–1. 100% in the launcher is 0.95, so commands are capped at 0.95. |
+| `physics.setAICaution(i, value)` | 0–16, default 1, experimental. Commands stay between 0.5 and 16. |
+| `physics.setExtraAIGrip(i, value)` | **1 = normal grip**; "120% by default" means 1.2. Grip is written only when the grip bonus or the weather compensation is on. One setter combines both, and the weather factor is at most `K.weatherGripMax` (1.3). It never stacks with native wet tyres. |
+| `physics.setAITopSpeed(i, kmh)` | km/h; `1e9` removes the cap. Used for spacing, yellow zones, FCY, VSC, the Safety Car queue and standing-start approach. Two sources combine as their minimum. |
+| `physics.setAIThrottleLimit(i, limit)` | 0 to 1, where 1 removes the limit. Used for sanction throttle cuts, dirty air and failures. Lowered gradually, never below 0.3, and written once per change. The app writes exactly 1 once the limit comes back above 0.99, and also when the car is not driven (pits, off track, release). |
+| `physics.setAIStopCounter(i, seconds)` | "Makes the AI brake for a given time", the mechanism AC uses after an incident; 0 releases it. The app sends 1.5 s pulses renewed every 0.5 s, so a car is released by itself if the app stops. It also holds the pit box, the pit-exit merge and the standing-start grid. |
+| `ac.overrideCarControls(i)` | Returns `ac.CarControlsInput?`. The final `brake` is the maximum of native and imposed. Every write sets neutral values for the other fields: `combineAxis=true`, `steer=math.huge` (keep), `gas=0`, `handbrake=0`, `clutch=1`, `requestedGearIndex=0`, `mguhMode=-1`, `kers=-1`. `headlightsFlash=true` flashes for one frame. No throttle is ever imposed. |
+| `physics.setAIBrakeMistake(i, seconds)`, `physics.setAITractionMistake(i, seconds, severity)` | Driving mistakes. They are written once per decision, with nothing to give back. `severity` multiplies the throttle. |
+| `physics.setTyresVirtualKM(i, wheel, km)` | `wheels` is an `ac.Wheel` (0–3 is a single wheel). Used for the flat spot of a lock-up on the more worn front tyre, one event at a time and bounded per stint. |
+| `physics.allowCarDRS(i, disable)` | **`true` forbids DRS** (the argument was once `enable`, which was a bug). Marked deprecated in the SDK, with no documented replacement. It applies to the player as well. It is given back at the end of the rule, when the tab is unticked, on unload, and after an abrupt stop (the `;D` marker of the resume data). |
+| `physics.setCarDRS(i, active)` | Opens or closes an AI car's DRS when present and available: at most one opening per second, and it closes at once under braking. |
+| `physics.setAINoInput(i, true)` | Parks the Safety Car ("parked"). |
+| `physics.teleportCarTo(i, 'PIT')` | Without `preserveDamage`, **the moved car is repaired**. Used for the Safety Car, disqualified AI, and stranded or slow damaged AI, only when the car is not already at its pit box. |
+| `physics.setCarPosition(i, pos, nil)` | `nil` aligns the car with the AI spline (since 0.3.0-preview124). `pos` comes from `ac.trackProgressToWorldCoordinate(progress)`. Used to place AI around the track in a track day. |
+| `physics.setCarVelocity(i, v)` | The launch after a placement. It is sent only once the position jump has been seen, along the car's own axis. |
+| `physics.setAITimeToStart(i, s)`, `physics.awakeCar(i)` | Cancel the native wait (`0`) and wake the car: used at lights out, for placement, and to release held cars. |
+| `physics.setCarBodyDamage(i, vec4)`, `physics.setSuspensionDamage(i, wheels?, damage)`, `physics.setCarEngineLife(i, life)` | Pit-box repairs: body to `vec4(0,0,0,0)`; suspension with `wheels = nil` (all) and damage 0; engine to 1000 (new). |
+| `physics.setCarFuel(i, litres)` | Start fuel, once per car and session. |
+| `ac.findNodes('carRoot:'..i):applySkin(folder)` | The "safety" livery on the Safety Car. The original livery (`ac.getCarSkinID`) is put back afterwards and on unload. Available since CSP 0.3.0. |
+
+- **Grid slots.**
+  - Read from `ac.findNodes('AC_START_<k>')`, `SceneReference:size()` and `:getWorldTransformationRaw().position` (`nil` without a node).
+  - `ac.worldCoordinateToTrack(v)` then gives X, the normalised lateral position (−1 left, +1 right), and Z, the progress.
+  - Read once per track. Any failure falls back to computed slots.
+- **No teleport to `START`.** It would use each car's original slot, and its timing behaviour is unknown.
+- **AC's gantry lights cannot be driven.** They have no track condition input, so the overlay draws its own lights.
+- **Commands that CSP does not offer here:**
+  - AC's penalties (`physics.setCarPenalty`) apply to the user car only.
+  - `physics.markLapAsSpoiled` "works only during the race".
+  - AI sanctions and invalidated AI laps in practice and qualifying therefore stay inside the app. An AI drive-through is a pit request without service.
+- **Recovery after a reload.** `ac.store('humanai:recovery')` records, per owned car, the original level and aggression, the offset, and which of level, aggression, caution, grip, brake, top speed, rain tyres, pit request, stop counter, park and fuel request the app held. The header carries the player flag (`;F`) and DRS (`;D`). A reloaded instance gives all of these back, and always gives the throttle back.
+
+## Flags and track light panels
+
+- **`physics.overrideRacingFlag(flag)`** imposes the player's flag until `ac.FlagType.None`.
+  - The SDK note on `ui.drawRaceFlag` says it "would also affect track conditions".
+  - `ac.FlagType` values 3, 4, 6, 7, 9, 10, 11, 15 and 16 are marked *does not work yet* for AC's own display. `SessionSuspended` (the red flag) is one of them.
+  - Value 5 (`Stop`) shows as AC's black flag.
+- **`ac.getSim().raceFlagType`** returns the overridden value.
+  - Each frame is marked `flagOwned` when the value shown is the app's, so the app never reads back its own flag as one of AC's.
+  - AC's penalties (`currentPenaltyType`) are still read.
+- **Native flags that count as free:**
+  - "none" (0);
+  - AC's start flag (1), which AC can hold for the whole session, as in hotlap;
+  - AC's yellow, but only for the app's yellow or red.
+
+  Blue (12), white (14), chequered (13), black (5) and penalty (8) are never covered.
+- **Red (5) is written only while CSP hides AC's flags** (`[HIDE] HIDE_RACE_FLAGS`, read when writing). Otherwise the app writes yellow, so AC never shows a black flag for a red one.
+- **Track light panels.**
+  - Panels light up through `[CONDITION_…] INPUT=FLAG_TYPE` in the track configuration, with a LUT from the flag value to a colour.
+  - Usual LUT: 1 green, 2 yellow, 3 orange, 4 orange-red, 5 red, 6 grey-white, 12 blue, 13 off or red, 14 white.
+  - Configurations come from the track's `extension/ext_config.ini` or from CSP's `extension/config/tracks/loaded/<track>.ini`.
+  - CSP's shared `common/conditions.ini` defines `RACING_FLAG` on `FLAG_TYPE`, so a track may light panels with `CONDITION=RACING_FLAG` only (Sepang, Vallelunga).
+- **Includes.**
+  - Configurations include other files with `[INCLUDE: file]` section headers or `INCLUDE = a, b` keys. The F1 2026 layouts use `[INCLUDE: ../../common/…]`, `[INCLUDE: ../../extension/ext_config.ini]` and `[INCLUDE: extension/config/tracks/loaded/<track>.ini]`.
+  - An include resolves from the including file's folder, with `.` and `..` resolved. `common/…` resolves in `extension/config/tracks/common`, and `extension/…` also from the Assetto Corsa folder (`ac.FolderID.Root`).
+  - Only paths inside `content/tracks/<track>/` or `extension/config/` are read. Absolute paths, drive letters and escapes are refused, and comparisons ignore case.
+  - Limits: at most 64 files (`K.lightsFiles`), 4 MB each and 8 MB in all. Reading happens once per track and stops at the first match.
+  - Track identifiers containing `..` or other unexpected characters are never read.
+- **Player penalties.** `physics.setCarPenalty(type, parameter)` takes:
+  - `ac.PenaltyType.SlowDown` (3), a throttle cut for the given seconds, only with race settings that allow it;
+  - `BlackFlag` (4) and `ReleaseBlackFlag` (5), with no parameter.
+
+  The black flag is lifted on unload, on deactivation and on a session change. It is imposed again after an app reload.
+
+## Pits and Quick Pitstop
+
+- **`physics.setAIPitStopRequest(i, value)`.** Since 0.3.0-preview147, `false` also blocks the pits for a short time.
+  - A request therefore stays true in the pit lane, until the stop.
+  - `false` is sent only outside the pit lane, and on unload.
+- **`physics.setAIRainTyres(i, bool)`** overrides AC's choice. It is called only when the native `isAIUsingRainTyres` differs from the decision, or when the app already holds it.
+- **`physics.setAITyres(i, compoundIndex)`** sets the compound and **resets tyre damage**. It is called only:
+  - in the pits, stopped or driving in the pit lane;
+  - stopped on the grid before the start, or stopped in the first 15 seconds of a session.
+- **`ac.areTyresLegal(shortName)`** returns `false` for a compound that is illegal in this race; if every compound is illegal, all of them are legal.
+- **`physics.overrideAIRequestedFuel(i, litres, lapsToComplete?)`** sets the fuel requested at the next stop, never more than the tank holds. `math.huge` removes the override.
+- **Quick Pitstop.** `ac.getPitstopSpinners()` (CSP 0.2.7 and later) lists the menu entries (`name`, `type`, `min`, `max`, `value`, `values` per preset).
+  - `ac.getSim().currentQuickPitPreset` is the selected preset, 0-based.
+  - The app reads them every `K.pitPlanPeriod` s, never every frame, and never changes the player's preset.
+  - Value-to-compound mapping is assumed only when unambiguous; otherwise the log says so.
+- **Pit-lane exit.** `isInPitlane` can drop for one frame, so an exit is confirmed only after 1 s out of the lane (`K.sanLaneDebounce`). The exit point is taken from the first frame out.
+- **Pit state at session start.** `isInPit` and `isInPitlane` read false for a moment, and the first frame may hold no car yet. Placement waits for the AI cars plus 0.5 s. A car counts as placed only within 100 m of its spot.
+- **No live reload of `new_behaviour.ini`.**
+  - CSP's AI flood setting lives in `ac.FolderID.ExtCfgUser` + `new_behaviour.ini`, absent until something changes. Its defaults are in `ac.FolderID.ExtCfgSys` + `new_behaviour.ini` (`[AI_FLOOD] ENABLED=1`, `MIN_TRACK_LENGTH=7000`).
+  - The app changes only `ENABLED` and `SPAWN_*` in `[AI_FLOOD]`.
+  - Observed: CSP reads this file when the game is launched, not when a session restarts.
+
+## Session memory and storage
+
+- **`ac.store(key, value)` / `ac.load(key)`** are session-shared storage for Lua and Python. They survive an app reload but not a game restart.
+  - Keys starting with `.` are hidden from Lua Debug.
+  - The app uses `humanai:recovery`, `humanai:pits`, `humanai:penalties`, `humanai:strategy`, `humanai:sanctions`, `humanai:presetsession`, `humanai:cspgui` and the log marker `.AdvancedIA.journal`.
+  - Recovery text above 64 KiB (`K.storeMaxBytes`) is ignored on reading.
+- **`ac.storage(layout, prefix)`** is persistent. Writes are delayed by CSP and happen only when a value changes.
+  - Files: `Documents/Assetto Corsa/cfg/extension/state/lua/app/<app>.ini` (for example `AdvancedIA.ini`).
+  - Prefixes: `humanai:g:` for globals, `humanai:p:<profile>:` for profiles, `humanai:custom:<n>:` for the custom presets.
+  - Only primitive values are stored, with no Lua code. Writes are grouped and never happen during a replay.
+- **A newer schema survives a roll back.** When the stored `schemaVersion` is newer than the app's, it is no longer replaced by the defaults. Each known key is validated, and the higher version is kept on save.
+- **Renamed folder.** The settings of the old `ACAdvancedIA` folder (`ACAdvancedIA.ini`) are not copied: CSP reads and writes that file itself. The app only tells the driver what to do, with the game closed.
+
+## Files and updates
+
+- **Folders:**
+  - `ac.getFolder(ac.FolderID.ScriptOrigin)` is the app folder;
+  - `ExtCfgState` is `Documents/Assetto Corsa/cfg/extension/state`, never live-reloaded;
+  - `ExtCfgUser` is `cfg/extension`;
+  - `ExtCfgSys` is `extension/config`;
+  - `ContentTracks` and `ContentCars` are the content folders;
+  - `ACAppsLua` is `apps/lua`;
+  - `Logs` is `Documents/Assetto Corsa/logs`.
+- **`ac.readDataFile(path)`** reads `tracks/<trackId>.lua`, the zones file, as text. The identifier is filtered and text above 64 KiB is refused. The zones are parsed as a table, without `load` or `loadstring`.
+- **`io.scanDir(folder, '*', callback(name, attributes))`** lists files. `attributes` is an FFI structure (`isDirectory`), not a Lua table. It is used for the car database (`ContentCars`) and the update folders.
+- **`io.save(path, data, true)`** writes to a temporary file, then replaces the target.
+  - When the file exists, the replacement goes through `io.replaceFile`, which keeps the old content as `<path>.bak`.
+  - The app deletes that `.bak` after each write and each deletion: `boot.txt`, `gui.ini`, `new_behaviour.ini`.
+- **`io.copyFile(from, to, false)`** copies, and `false` (`failIfExists`) allows overwriting.
+- **`io.move(from, to, true)`** is MoveFileEx without a copy. It fails between drives (Steam on D:, Documents on C:), so anything crossing into the app folder is copied.
+- **`io.deleteDir`** removes an empty folder only. A folder is emptied first, then its sub-folders are removed deepest first, then the folder itself.
+- **Session log.**
+  - `io.open(path, 'a')` appends to `Logs/AdvancedIA.log` every two seconds (three previous files kept); the file is never rewritten. `os.date` stamps the lines.
+  - On the first cycle of a game launch, `io.fileExists` and `io.move` rotate the old files. The `.AdvancedIA.journal` marker continues the same file after an app reload.
+  - After three failures the log switches off; the engine is unaffected.
+- **CSP and AC logs** are truncated when they exceed their maximum size, often as soon as a 30-car grid loads. The app's log does not depend on that limit.
+- **`ac.pauseFilesWatching(true)`** suspends CSP's live reload for a few seconds. CSP reloads an app when a file in its folder changes, so the app writes nothing there before the final copy.
+
+### Update from GitHub
+
+- **Network.** `web.get(url, headers, callback(err, response))` returns `response.status` and `response.body` (binary-safe).
+  - At most two requests run at once, with 30 s default timeouts and no progress callback. The size shown comes from the release asset.
+  - `api.github.com` needs a `User-Agent` header.
+  - `releases/latest` answers 404 while nothing is published. GitHub answers 403 or 429 when the unauthenticated limit (60 requests per hour) is reached.
+  - `browser_download_url` redirects to GitHub's storage, and the redirect is followed.
+- **Decoding.** `JSON.parse(text)` decodes the release. `ac.checksumSHA256(data)` returns the digest as text; 32 raw bytes are accepted as well.
+- **Zips.**
+  - `io.scanZip(data)` lists the entries and `io.loadFromZip(data, entry)` reads the package manifest.
+  - `io.extractFromZipAsync(data, folder, {crucial = 'apps/lua/AdvancedIA/manifest.ini'}, callback)` unpacks. Since 0.2.10, the crucial entry is extracted last under a temporary name, and its absence is an error.
+- **Work folder.** The work folder is `ExtCfgState/AdvancedIA-update/`:
+  - `next/` holds the unpacked package;
+  - `current/` holds the files about to be replaced;
+  - `backup/` holds the previous version;
+  - `installing.txt`, `updated.txt`, `boot.txt` and `failed.txt` are its markers.
+- **Final copy.** It runs synchronously in one frame.
+  - Each file is copied to `<destination>.new` next to its target, then renamed with `io.move(tmp, destination, true)`. Both are on the same drive, so the move is a rename.
+  - File watching is paused again before each file and resumed at the end.
+  - Order: `src/` first, then the other files, then `AdvancedIA.lua`, and `manifest.ini` last. `io.createFileDir` creates new folders.
+- **Recovery** runs at the very top of `AdvancedIA.lua`, under `pcall`, before any other module is required. When it copied files, it asks for one `ac.restartApp()` on the first frame.
+- **Boot sentinel.** `boot.txt` is written by a fresh install and counted at each start. It is removed once the engine and the interface have run without error. Two failed starts roll back to `backup/`.
+- **A failed module cannot be required again**: LuaJIT raises *loop or previous error loading module*. If `src/update` fails to load, the entry file stores its stand-in in `package.loaded['src/update']`.
+- **`os.openURL(url)`** opens the release page, https only.
+
+## CSP gui.ini options
+
+- **`ac.blockSystemMessages('.')`** hides AC's messages, and `ac.onMessage(callback)` still receives them.
+  - A test message (`ac.setMessage(title, '', nil, 0.1)`) checks that the listener still receives hidden messages.
+  - It does **not** hide AC's own top banner. That banner is controlled by CSP's `[HIDE] HIDE_SYSTEM_MESSAGES` ("Hide system messages (like ABS)"). `HIDE_RACE_FLAGS` hides AC's flags.
+- **Where the values live.**
+  - User file: `ac.FolderID.ExtCfgUser` + `gui.ini`, written by Content Manager and absent until something changes.
+  - Applied values: `ac.INIConfig.cspModule(ac.CSPModuleID.GUI):get('HIDE', key, false)`.
+  - `ac.onCSPConfigChanged(ac.CSPModuleID.GUI, fn)` reports a re-read.
+  - Observed on CSP 0.3.2-preview2 (3 November): `HIDE_SYSTEM_MESSAGES=1` written by the app was re-read live. The app still handles a re-read that only happens at launch.
+- **Between the app's write and CSP's re-read**, the applied value is the one read at the app's first start in this game process (`ac.store('humanai:cspgui')`), never the file's.
+- **State file.** `ExtCfgState` + `ACAdvancedIA-cspgui.ini` keeps the original values, which survive a crash:
+  - `v1`;
+  - one line per held key (`KEY=original`, or `KEY` when absent);
+  - `original <bytes>` and `written <bytes>` blocks (`-` when the file did not exist).
+- **AC's session box.** `ac.disableExtraHUDElements('sessionTime', hide)` hides it while the overlay shows the session; it is given back on unload.
+
+## Windows and drawing
+
+- **The settings window `main` follows the menu.**
+  - It opens with `ac.setWindowOpen('main', visible)` when menu visibility changes.
+  - Outside the menus, `ac.isWindowOpen('main')` is checked at most every second (`K.windowCheckPeriod`), and the window is closed if it is open.
+- **`ac.accessAppWindow(name)`** returns an `ac.AppWindowAccessor?`.
+  - The app uses the names `IMGUI_LUA_AdvancedIA_main` (its own window, made compact once with `:size()` and `:resize()`) and `IMGUI_LUA_SpotterEnginer_main` (opened with `:setVisible(true)`).
+  - This name pattern is the convention the code relies on; it is not documented in the SDK.
+- **Overlay.** `ui.transparentWindow(id, pos, size, noPadding, inputs, content)` draws the overlay, like SuperHUD.
+  - `inputs` is on while the overlay is unlocked or not click-through.
+  - The screen size comes from `ac.getUI().windowSize`.
+- **Custom drawing.** The interface is drawn by the app: `ui.drawRectFilled`, `ui.drawQuadFilled`, `ui.drawTriangleFilled`, `ui.drawCircleFilled`, `ui.drawImage`, `ui.invisibleButton`, `ui.itemHovered`/`itemActive`, mouse functions, `ui.pushClipRect`, `ui.inputText` and `ui.setNextItemWidth`.
+  - If any required function is missing, the window shows only a message asking for a newer CSP.
+- **Text** uses DirectWrite: `ui.pushDWriteFont`/`popDWriteFont`, `ui.dwriteDrawText`, `ui.dwriteDrawTextClipped` and `ui.measureDWriteText`.
+  - Fonts ship in `fonts/` and are named relative to the app, for example `'Barlow:fonts/barlow;Weight=Regular'`.
+  - If a font file is missing, the app falls back to Segoe UI and Consolas.
+- **Sounds.** `ac.AudioEvent.fromFile({filename = …, use3D = false, loop = false}, false)` plays the DRS and delta beeps.
+  - `cameraInteriorMultiplier` defaults to 0.25, so the three camera multipliers are set to 1. `volume` follows the setting.
+  - `setVolumeChannel(ac.AudioChannel.Main)` ties the sound to the master volume.
+  - The previous event is disposed of before each beep and on unload.
+- **Clipboard.** `ac.setClipboardText` copies exports.
+
+## Companion-app bridge
+
+- **`ac.connect(layout)`** (`common/ac_extras_connect.lua`) creates a structure shared between the session's Lua scripts. Both sides must pass exactly the same layout.
+  - The layout lives in `src/bridge_layout.lua`, byte-identical in AdvancedIA and SpotterEnginer.
+  - A `key` field holds `ac.StructItem.key(...)` to avoid collisions.
+  - Types used: `boolean`, `int32`, `uint32`, `float`, `double`, `string(capacity)` and `array(struct(...), 61)` for the cars.
+- **When it opens.** `Applier.bridgeOpen` runs only if `Applier.companionInstalled('SpotterEnginer')` finds `ACAppsLua/SpotterEnginer/manifest.ini` (via `io.fileExists`). The check runs once at launch, inside `pcall`. Without the companion app, `ac.connect` is never called.
+- **Publishing** (`src/bridge.lua`) is pure Lua and reads only.
+  - It runs once per frame after the engine update, inside `pcall`. An error closes the bridge only.
+  - Strings are written only when they change, cut at their capacity on a UTF-8 boundary.
+- **`SpotterEnginer.update`** (read since Beta 1.52) is a session-memory key that SpotterEnginer writes itself.
+  - AdvancedIA reads it with `ac.load` every `K.companionUpdatePeriod` (10 s), only when SpotterEnginer is installed.
+  - Contract v1: `v=1;installed=…;latest=…;state=…[;needs=…]`, at most 200 bytes, with unknown fields ignored.
+    - `state` is one of `available`, `uptodate`, `checking`, `error` or `incompatible`.
+    - Versions are at most 32 bytes and use letters, digits, `.`, `-`, `?` and spaces.
+  - Anything else counts as absent.
+  - AdvancedIA only shows the state and opens SpotterEnginer's window. It never downloads or installs anything for it.
+
+## Pitfalls observed in game
+
+- **Offset sign.**
+  - The app's lateral basis `(-look.z, look.x)` points right. On this installation the calibration measures `offsetSign = −1`: a positive offset moves the car against that basis. Only the sides chosen in the interface are converted from the SDK convention.
+  - The sign is stored in the settings. **`offsetSign = 0` means no lateral command at all**: from 26 to 30 October no AI moved sideways.
+  - A migration puts −1 back, and the calibration confirms or corrects it.
+  - The calibration needs an isolated AI pair outside the pits, in the same direction, on a straight. It measures in the reference car's frame and gives up if a side becomes occupied.
+- **AC's flag can stay on.** After `overrideRacingFlag(None)`, CSP can keep showing the app's last flag, as seen at Monza and at Spa on 4 November.
+  - While the value shown equals the app's last one, the release is sent again every `K.flagLeftoverDelay` s.
+  - After the last try, the app writes AC's start flag and then releases it, so no red or black flag is left on screen.
+- **AC's red banners.** AC draws *CUT DETECTED* / *LAP WILL NOT COUNT* and *PENALTY, SLOW DOWN FOR n SECONDS…*, even with `HIDE_SYSTEM_MESSAGES=1` applied and `ac.blockSystemMessages('.')` active.
+  - No CSP option or function hides them, and they reach `ac.onMessage` too.
+  - The app recognises AC's own texts (`Config.acDrawnMessages`, taken from `acs.exe`) and never repeats them on the overlay.
+- **Cars sent sliding.** A position and a computed velocity set in the same frame sent all 30 AI cars sliding on the first attempt. The launch now waits until the position jump has been seen.
+- **Clocks.** Observed on 3 November: CSP did not expose the Windows counter, so every cost read "not measured".
+  - Frame cost uses `QueryPerformanceCounter` through `ffi` when allowed.
+  - Otherwise it uses `os.preciseClock`, if a short probe loop at launch shows it advancing.
+  - Otherwise it falls back to `os.clock`, in 1 ms steps: the mean stays right but the maximum is rounded.
+  - The source is logged once.

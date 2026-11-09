@@ -1,8 +1,14 @@
-# Python packages installed for the test suites: python -m pip install --target tests/_vendor -r tests/requirements.txt
+# Python packages of the test bench, when installed locally: python -m pip install --target tests/_vendor -r tests/requirements.txt
 tests/_vendor/
 __pycache__/
 *.pyc
-# Older release packages (each release replaces the previous one in dist/)
+# Results written by each run of the test suites (the references golden-results.txt and golden142-results.txt stay tracked)
+tests/results.json
+tests/integration-results.json
+tests/lint-results.json
+tests/soak-results.json
+tests/performance-current-results.json
+# Temporary files in dist/ (package.py keeps only the current release package there)
 dist/*.tmp
 # In-app update data (backup of the previous version, staging, markers), local to each installation
 backup/

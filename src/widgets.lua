@@ -6,6 +6,8 @@
 -- sans elles, Segoe UI et Consolas. Canevas virtuel : 900 px de large au minimum (réduit à l'échelle en dessous), plus
 -- large ensuite (les colonnes s'élargissent, le texte garde sa taille). Une seule infobulle par image, la plus précise
 -- l'emporte ; zones qui défilent découpées, à la molette ; aucun texte reconstruit d'une image à l'autre sans changement.
+-- Beta 1.52 (relecture) : plafonds des mémoires et tolérance du curseur dans K (src/config).
+local K=require('src/config').K
 local W={}
 -- active : dernier état allumé de chaque commande dessinée (surbrillance vérifiable).
 local f={ox=0,oy=0,s=1,w=900,h=700,tip=nil,tipPriority=-1,fontDepth=0,clip=nil,id='aai',active={}}
@@ -83,7 +85,7 @@ function W.upper(str)
  local hit=uppers[str]
  if hit then return hit end
  local out=str:upper():gsub('[\195\197][\128-\191]',upperMap)
- upperCount=upperCount+1; if upperCount>1000 then uppers={}; upperCount=0 end
+ upperCount=upperCount+1; if upperCount>K.uiUpperCache then uppers={}; upperCount=0 end
  uppers[str]=out
  return out
 end
@@ -161,7 +163,7 @@ function W.text(str,x,y,size,col,r)
  use(role(r))
  ui.dwriteDrawText(str,(size or 12)*f.s,point(x,y),col or W.colors().text)
 end
-local function count() cacheCount=cacheCount+1; if cacheCount>6000 then forget() end end
+local function count() cacheCount=cacheCount+1; if cacheCount>K.uiDrawCache then forget() end end
 local function width(str,size,r)
  r=role(r)
  local t=level(level(widths,r),size)
@@ -538,7 +540,7 @@ function W.slider(id,x,y,w,value,lo,hi,step,tip,default)
   -- Extrémités atteintes exactement, même quand la plage n'est pas un multiple du pas.
   if t>=1 then v=hi elseif t<=0 then v=lo end
   v=math.max(lo,math.min(hi,v))
-  if math.abs(v-value)>1e-9 then result=v end
+  if math.abs(v-value)>K.uiEpsilon then result=v end
  end
  local ratio=hi>lo and math.max(0,math.min(1,(value-lo)/(hi-lo))) or 0
  W.rect(x,y+6,w,4,c.rule)

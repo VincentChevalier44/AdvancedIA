@@ -65,16 +65,16 @@ local function globalTips()
 end
 -- Vues de l'onglet Règles de course (Beta 1.19) : les arrêts aux stands et la voiture de sécurité n'apparaissent que
 -- sous le titre de leur interrupteur ; « Règles de course actives » montre tout le reste des règles.
-local ruleViews={stops={pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true},
+-- Beta 1.51 : arrêt obligatoire oui ou non, réglé par son seul interrupteur (vue « switch », jamais affichée).
+local ruleViews={switch={mandatoryStops=true},stops={pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true},
  safety={safetyCarSpeedKmh=true,safetyCarEscalation=true,restartOvertake=true}}
--- Interrupteurs indépendants des jeux de règles (Beta 1.19) : le jeu choisi reste surligné quand on les change.
-local switchKeys={mandatoryStops=true,safetyCarEscalation=true}
+-- Interrupteurs indépendants des jeux de règles (Beta 1.19, C.switchKeys) : le jeu choisi reste surligné quand on les change.
 local function ruleView(key) for name,keys in pairs(ruleViews) do if keys[key] then return name end end return 'all' end
 -- Jeu de règles du profil visé (en-tête, onglet Règles de course, bloc des règles) : refait seulement après une
 -- modification (révision du moteur, édition de la fenêtre) ou pour un autre profil visé, jamais à chaque image.
 local function ruleCategoryOf(v,e)
  local target=C.solo(v.view) and 'C' or v.view
- if v.ruleEdits~=v.edits or v.ruleRevision~=e.revision or v.ruleTarget~=target then v.ruleEdits=v.edits; v.ruleRevision=e.revision; v.ruleTarget=target; v.ruleCategory=C.ruleCategory(target,e.profiles[target],switchKeys) end
+ if v.ruleEdits~=v.edits or v.ruleRevision~=e.revision or v.ruleTarget~=target then v.ruleEdits=v.edits; v.ruleRevision=e.revision; v.ruleTarget=target; v.ruleCategory=C.ruleCategory(target,e.profiles[target],C.switchKeys) end
  return v.ruleCategory,target
 end
 -- Textes de la fenêtre dans la langue en cours (Beta 1.16) : infobulles, libellés des choix, des motifs et des
@@ -107,6 +107,10 @@ local function texts(v)
  -- Infobulles du diagnostic (Beta 1.39) : état de la calibration, zone de freinage émulée ; coupées une fois.
  v.calibrationTips={}; for phase,text in pairs(L.calibration) do v.calibrationTips[phase]=wrap(text) end
  v.brakeTip=wrap(L.brakeEmulation)
+ -- Beta 1.52 (relecture) : textes qui citent une constante (longueur d'un nom, taille de la bibliothèque, durée de
+ -- l'apprentissage des appels de phares), formatés une fois par langue depuis K.
+ v.invalidNameText=string.format(L.invalidPresetName,K.presetNameBytes); v.saveFailedText=string.format(L.presetSaveFailed,K.maxPresets)
+ v.learnText=string.format(L.learnShort,K.flashLearnTime); v.learningText=string.format(L.learning,K.flashLearnTime)
  v.updateLine=nil; v.loadedFor=nil; v.carFilterBuilt=nil; v.panelVersion=nil; v.infrFor=nil; v.updateCodeFor=nil; v.deltaHundredths=nil; v.giveBackName=nil; v.blueTenths=nil; v.presetMessage=''
  -- Textes et mesures de la fenêtre refaits à la prochaine image (Beta 1.35) : textes mémorisés (v.memo), ligne des
  -- panneaux lumineux du diagnostic, place à rejoindre de l'overlay.
@@ -128,9 +132,9 @@ function M.new(e,host,calibration,dirty)
  end
  v.tab='home'; v.statusLines={}; v.warnings={}; v.scrolls={}; v.contentHeights={}; v.loadedName=''; v.debugRows={}; v.customActive={}
  v.splits={}; v.warningKinds={}
- v.rulesView='all'; v.ruleLists={all={},stops={},safety={}}
+ v.rulesView='all'; v.ruleLists={all={},stops={},safety={},switch={}}
  for _,control in ipairs(v.controls.rules) do local list=v.ruleLists[ruleView(control.schema.key)]; list[#list+1]=control end
- v.edits=0; v.entrySigs=setmetatable({},{__mode='k'}); v.entryTexts=setmetatable({},{__mode='k'}); v.builtinMemo={}
+ v.edits=0; v.modifiedMemo={}; v.entrySigs=setmetatable({},{__mode='k'}); v.entryTexts=setmetatable({},{__mode='k'}); v.builtinMemo={}
  local save=v.dirty
  v.dirty=function() v.edits=(v.edits+1)%K.counterMax; save() end
  texts(v)
@@ -291,7 +295,7 @@ local function shortLabel(s) return L.shortLabels[s.key] or s.label end
 -- Réglage modifié : différent de la valeur par défaut du profil affiché.
 local function modified(s,value,view)
  local d=s.defaults[view]
- if type(value)=='number' and type(d)=='number' then return math.abs(value-d)>1e-6 end
+ if type(value)=='number' and type(d)=='number' then return math.abs(value-d)>K.uiEpsilon end
  return value~=d
 end
 local function segmentFits(control,w)
@@ -306,7 +310,7 @@ end
 -- Une commande de réglage (.st / .r) dans une colonne de largeur w ; renvoie sa hauteur. Clic droit : valeur par
 -- défaut du profil affiché.
 -- Pastilles des couleurs de la section Panneaux lumineux (valeur ac.FlagType de chaque réglage).
-local lightSwatch={lightsYellow=2,lightsRed=5,lightsBlue=12,lightsWhite=6,lightsOrange=3,lightsGreen=1}
+local lightSwatch={lightsYellow=K.flagCaution,lightsRed=K.flagStop,lightsBlue=K.flagFasterCar,lightsWhite=K.flagSlowVehicle,lightsOrange=K.flagSlippery,lightsGreen=K.flagStart}
 local function toggleOpts(v,key,value)
  local sw=lightSwatch[key]
  if not sw then return nil end
@@ -398,9 +402,12 @@ local function hiddenNote(view,key,shown)
  if key=='enduranceOverlay' then return 'endurance' end
  if key=='spawnMode' then return 'spawn' end
  if key=='floodRangeKm' and not C.hidden(view,'spawnMode') then return 'flood' end
+ -- Beta 1.51 : tours lancés (essais et qualifications), refroidissements des IA (qualifications).
+ if key=='qualiTraffic' then return 'quali' end
+ if key=='qualiCoolLaps' then return not C.hidden(view,'qualiTraffic') and 'qualiQ' or not shown.quali and 'quali' or nil end
  return nil
 end
-local noteTexts={race='raceOnlySetting',penalties='penaltiesTrackDay',endurance='enduranceNotAvailable',spawn='spawnNotAvailable',flood='floodNotAvailable'}
+local noteTexts={quali='qualiOnlySetting',qualiQ='qualifyingOnlySetting',race='raceOnlySetting',penalties='penaltiesTrackDay',endurance='enduranceNotAvailable',spawn='spawnNotAvailable',flood='floodNotAvailable'}
 -- Hauteur estimée d'un sous-groupe (répartition des deux colonnes) : titre 30, curseur 44, choix 46, interrupteur 28.
 local heightShown={}
 local function groupHeight(group,view)
@@ -510,7 +517,7 @@ local function ruleBlock(v,e,x,y,w)
  if W.visible(y,28) then
   -- Jeu de règles le plus proche : refait seulement après une modification ou pour un autre profil visé.
   if v.closestEdits~=v.edits or v.closestRevision~=e.revision or v.closestTarget~=target then
-   v.closestEdits=v.edits; v.closestRevision=e.revision; v.closestTarget=target; v.closestName=C.closestRuleCategory(target,e.profiles[target],switchKeys)
+   v.closestEdits=v.edits; v.closestRevision=e.revision; v.closestTarget=target; v.closestName=C.closestRuleCategory(target,e.profiles[target],C.switchKeys)
   end
   local name=v.closestName
   if v.rulesResetFor~=name then v.rulesResetFor=name; v.rulesResetText=string.format(L.rulesResetTo,L.ruleNames[name]) end
@@ -689,7 +696,7 @@ end
 local function globalSlider(v,g,id,key,label,valueLabel,x,y,w,step,tip)
  local c=W.colors(); local bounds=C.globalBounds[key]
  if W.visible(y,44) then
-  local mod=math.abs((g[key] or 0)-(C.globalDefaults[key] or 0))>1e-9
+  local mod=math.abs((g[key] or 0)-(C.globalDefaults[key] or 0))>K.uiEpsilon
   local lx=x; if mod then W.marker(lx,y+9); lx=lx+12 end
   local vw=W.width(valueLabel,11,'mono')
   W.cell(label,lx,y+5,w-vw-14-(lx-x),12,c.body)
@@ -759,7 +766,7 @@ local function globalBlock(v,e,x,y,w)
   W.cell(L.seed,x,py+4,w-140,12,c.body); W.help(tips.seed,x,py,w-140,46,4)
   if v.seedFor~=g.seed then v.seedFor=g.seed; v.seedText=string.format('%.0f',g.seed) end
   W.text(v.seedText,x,py+22,18,c.text,'mono')
-  if W.button('reroll',L.reroll,x+w-130,py+10,130,28,false,v.tips.ui.reroll,'primary') then g.seed=math.floor(U.unit(g.seed,1,1)*2147483647); mark(v) end
+  if W.button('reroll',L.reroll,x+w-130,py+10,130,28,false,v.tips.ui.reroll,'primary') then g.seed=math.floor(U.unit(g.seed,1,1)*C.globalBounds.seed[2]); mark(v) end
  end
  py=py+52
  py=py+W.paragraph(L.rerollNote,x,py,w,12,c.label)+8
@@ -804,7 +811,7 @@ local overlayBehaviourKeys={'overlayClickThrough','overlayHideReplay','overlayHi
 local overlayResetKeys={'overlayX','overlayY','overlayScale','overlayLocked','overlayBackground','overlayContent','panelOpacity','panelShow','panelInfoTime',
  'overlaySession','overlayExplain','overlayRecap','overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags','cspMessagesLost',
  'overlayClickThrough','overlayHideReplay','overlayHidePits'}
-local backgroundKeys={'solid','ghost','transparent'}
+local backgroundKeys=C.globalChoices.overlayBackground
 local function switchList(v,g,keys,titles,x,y,w)
  if W.visible(y,24) then W.heading(titles[1],x,y,w,titles[2]) end
  y=y+30
@@ -837,7 +844,7 @@ local function overlayBlock(v,e,x,y,w)
  if W.visible(yl,24) then W.heading(L.subgroups.overlaySize[1],x,yl,cw,L.subgroups.overlaySize[2]) end
  yl=yl+30
  if v.scaleFor~=g.overlayScale then v.scaleFor=g.overlayScale; v.scaleText=number(g.overlayScale)..'×' end
- yl=yl+globalSlider(v,g,'overlay_scale','overlayScale',L.overlayScale,v.scaleText,x,yl,cw,0.05,tips.overlayScale)
+ yl=yl+globalSlider(v,g,'overlay_scale','overlayScale',L.overlayScale,v.scaleText,x,yl,cw,K.overlayScaleStep,tips.overlayScale)
  if W.visible(yl,46) then
   choiceHead(L.overlayBackground,v.backgroundDefault,x,yl,cw); W.help(tips.overlayBackground,x,yl,cw,20,4)
   local at=1; for i,k in ipairs(backgroundKeys) do if k==g.overlayBackground then at=i end end
@@ -851,9 +858,9 @@ local function overlayBlock(v,e,x,y,w)
  if W.visible(yl,24) then W.heading(L.subgroups.overlayLook[1],x,yl,cw,L.subgroups.overlayLook[2]) end
  yl=yl+30
  if v.opacityFor~=g.panelOpacity then v.opacityFor=g.panelOpacity; v.opacityText=string.format('%.0f',g.panelOpacity) end
- yl=yl+globalSlider(v,g,'panel_opacity','panelOpacity',L.overlayOpacity,v.opacityText,x,yl,cw,5,tips.panelOpacity)
+ yl=yl+globalSlider(v,g,'panel_opacity','panelOpacity',L.overlayOpacity,v.opacityText,x,yl,cw,K.panelOpacityStep,tips.panelOpacity)
  if v.contentFor~=g.overlayContent then v.contentFor=g.overlayContent; v.contentText=string.format('%.0f',g.overlayContent) end
- yl=yl+globalSlider(v,g,'overlay_content','overlayContent',L.overlayContent,v.contentText,x,yl,cw,5,tips.overlayContent)
+ yl=yl+globalSlider(v,g,'overlay_content','overlayContent',L.overlayContent,v.contentText,x,yl,cw,K.overlayContentStep,tips.overlayContent)
  if W.visible(yl,46) then
   choiceHead(L.overlayShow,v.showDefault,x,yl,cw); W.help(tips.panelShow,x,yl,cw,20,4)
   local at=g.panelShow=='always' and 2 or 1
@@ -864,7 +871,7 @@ local function overlayBlock(v,e,x,y,w)
  end
  yl=yl+46
  if v.infoFor~=g.panelInfoTime then v.infoFor=g.panelInfoTime; v.infoText=g.panelInfoTime>0 and string.format('%.0f',g.panelInfoTime) or L.overlayInfoAlways end
- yl=yl+globalSlider(v,g,'panel_info_time','panelInfoTime',L.overlayInfoTime,v.infoText,x,yl,cw,1,tips.panelInfoTime)
+ yl=yl+globalSlider(v,g,'panel_info_time','panelInfoTime',L.overlayInfoTime,v.infoText,x,yl,cw,K.panelInfoStep,tips.panelInfoTime)
  -- Contenu, affichages d'AC, comportement (seconde colonne).
  local rx=two and x+cw+18 or x
  if not two then yr=yl+8 end
@@ -888,7 +895,7 @@ end
 local phaseTexts={vsc='lightsPhaseVsc',fcy='lightsPhaseFcy',sc='lightsPhaseSc'}
 local function lightsPhase(e,value)
  local t=e.incidents
- local key=value==2 and t.neutral and phaseTexts[t.neutralMode]
+ local key=value==K.flagCaution and t.neutral and phaseTexts[t.neutralMode]
  return key and L[key] or ''
 end
 -- Section Panneaux lumineux (Beta 1.37) : état du circuit en tête (lecture de sa configuration, couleur en cours).
@@ -956,12 +963,11 @@ local function lightsLegend(v,p,x,y,w)
 end
 -- « Active pour : » et une puce par profil (cyan : section cochée dans ce profil) ; un clic coche ou décoche la section
 -- de ce profil, comme son interrupteur.
-local activeProfiles={'J','P','Q','C','H'}
 local function activeFor(v,e,x,y,w)
  if W.visible(y,20) then
   local lx=x
   W.label(L.lightsActiveFor,lx,y+3); lx=lx+W.labelWidth(L.lightsActiveFor)+8
-  for _,profile in ipairs(activeProfiles) do
+  for _,profile in ipairs(C.profiles) do
    local cw=W.chipWidth(L.shortProfiles[profile])
    if lx+cw>x+w then break end
    local target=e.profiles[profile]
@@ -996,11 +1002,18 @@ end
 -- Sections actives du profil et nombre de sections (l'overlay à part) : même compte pour l'accueil et la liste des
 -- réglages (« / 14 » de la maquette).
 local function sectionsOn(p) local on=0; for _,group in ipairs(C.sections) do if C.on(p,group) then on=on+1 end end; return on,#C.sections end
--- Nombre de réglages modifiés d'une section (différents du défaut du profil affiché).
+-- Nombre de réglages modifiés d'une section (différents du défaut du profil affiché). Beta 1.52 (relecture) : compte
+-- mémorisé par section, refait seulement après une modification (édition de la fenêtre, révision du moteur) ou pour un
+-- autre profil affiché, jamais à chaque image.
 local function modifiedCount(v,group,view,p)
- local n=0
- for _,control in ipairs(v.controls[group] or {}) do local s=control.schema; if not C.hidden(view,s.key) and modified(s,p[s.key],view) then n=n+1 end end
- return n
+ local m=v.modifiedMemo[group]
+ if not m then m={}; v.modifiedMemo[group]=m end
+ if m.edits~=v.edits or m.revision~=v.e.revision or m.view~=view or m.p~=p then
+  local n=0
+  for _,control in ipairs(v.controls[group] or {}) do local s=control.schema; if not C.hidden(view,s.key) and modified(s,p[s.key],view) then n=n+1 end end
+  m.edits=v.edits; m.revision=v.e.revision; m.view=view; m.p=p; m.count=n
+ end
+ return m.count
 end
 -- Contenu défilant de la section choisie : état, blocs propres (overlay, options globales, voiture de sécurité, motifs),
 -- puis les sous-groupes de réglages.
@@ -1386,10 +1399,12 @@ local function entrySignature(v,entry)
  return s
 end
 -- Points à vérifier (Beta 1.10) : texte, lien vers la section concernée.
-local warnTargets={signs={'diagnostic'},endurance={'settings','endurance'},weather={'settings','weather'},tabs={'settings','accidents'},lights={'settings','lights'}}
+-- spotter : fenêtre de SpotterEnginer (Beta 1.52), ouverte par l'hôte.
+local warnTargets={spotter={},signs={'diagnostic'},endurance={'settings','endurance'},weather={'settings','weather'},tabs={'settings','accidents'},lights={'settings','lights'}}
 local function openTarget(v,kind)
  local t=warnTargets[kind]
  if not t then return end
+ if kind=='spotter' then if v.host and v.host.openCompanion then v.host.openCompanion() end return end
  v.tab=t[1]; if t[2] then v.category=t[2] end
 end
 -- Tuile de chiffre (État en direct) : libellé, valeur (mono, ou texte avec pastille de couleur).
@@ -1499,7 +1514,11 @@ local function homeTab(v,e,host)
  if W.visible(sy,lh) then
   W.rect(x+12,sy,w-24,lh,c.block)
   W.message(line,x+22,sy+(lh-W.lineHeight(12)*#W.lines(line,w-24-rw-33,12))/2,w-24-rw-22,lineKind)
-  if W.button('restore',restore,x+w-12-rw-8,sy+(lh-26)/2,rw,26,false,v.tips.ui.restore,'outline') then C.restore(view,p); C.setMark(e.g,view,''); touch(v,p) end
+  if W.button('restore',restore,x+w-12-rw-8,sy+(lh-26)/2,rw,26,false,v.tips.ui.restore,'outline') then
+   -- Beta 1.52 (relecture) : préréglage chargé dans ce profil oublié aussi (marque et dernier préréglage chargé).
+   local here=e.g.loadedPreset~='' and loadedHere(v,e,view)
+   C.restore(view,p); C.setMark(e.g,view,''); if here then e.g.loadedPreset='' end; touch(v,p)
+  end
  end
  y=y+ph+GAP
  W.clip(); v.contentHeights.homeLeft=y+offset-top
@@ -1543,6 +1562,16 @@ local function homeTab(v,e,host)
   addWarning(v,fmt(v,'upgraded','%s%s',L.upgraded,v.upgradedList))
  end
  if host.trackLights==true and C.on(e.p,'lights') and e.p.lightsRed~=false and host.raceFlagsHidden==false then addWarning(v,flagsNext(host) and L.lightsRedNext or L.lightsRedWarning,'lights') end
+ -- Beta 1.52 : SpotterEnginer signale sa propre mise à jour (jamais installée d'ici) : lien vers sa fenêtre. Texte refait
+ -- seulement quand l'état relu change (une table neuve toutes les K.companionUpdatePeriod s au plus).
+ local cu=host.companionUpdate
+ if cu and (cu.state=='available' and cu.latest or cu.state=='incompatible') then
+  if v.companionFor~=cu then
+   v.companionFor=cu
+   v.companionText=cu.state=='available' and string.format(L.companionAvailable,cu.latest,cu.installed) or cu.needs and cu.needs~='?' and string.format(L.companionNeeds,cu.needs) or L.companionNeedsUnknown
+  end
+  addWarning(v,v.companionText,'spotter')
+ end
  -- Mise à jour (Beta 1.33) : nouvelle version (bouton d'un clic) ou compte rendu de la dernière opération.
  local u=host.updater; local offered=u~=nil and host.updatePort~=nil and host.updatePort.ready and Update.offered(u)
  local report=u~=nil and u.updated~=nil and not offered
@@ -1614,13 +1643,14 @@ local function homeTab(v,e,host)
  y=py+40
  local sw=110
  -- Nom refusé : cadre rouge (Beta 1.38, maquette).
- v.presetName=input('preset_name',x+12,y,w-24-sw-6,v.presetName,v.tips.ui.presetName,v.presetMessage==L.invalidPresetName) or v.presetName
+ v.presetName=input('preset_name',x+12,y,w-24-sw-6,v.presetName,v.tips.ui.presetName,v.presetMessage==v.invalidNameText) or v.presetName
  if W.visible(y,28) and W.button('save_preset',L.savePresetShort,x+w-12-sw,y,sw,28,false,v.tips.ui.savePreset,'primary') then
   local entry=Presets.capture(v.presetName,view,p,e.g)
-  if not entry then v.presetMessage=L.invalidPresetName
+  if not entry then v.presetMessage=v.invalidNameText
   elseif Adapter.savePreset(host,entry) then
-   e.g.loadedPreset='custom:'..entry.name; e.g.presetsUsed=true; v.presetMessage=L.presetSaved; v.dirty()
-  else v.presetMessage=L.presetSaveFailed end
+   -- Beta 1.52 (relecture) : préréglage personnel enregistré depuis ce profil : marque « Perso », comme à son chargement.
+   e.g.loadedPreset='custom:'..entry.name; e.g.presetsUsed=true; C.setMark(e.g,view,C.personalMark); v.presetMessage=L.presetSaved; v.dirty()
+  else v.presetMessage=v.saveFailedText end
  end
  y=y+34
  local bytes=#(v.presetName or '')
@@ -1630,7 +1660,7 @@ local function homeTab(v,e,host)
  if W.visible(y,16) then W.right(v.bytesText,x+w-12,y+1,11,bytes>K.presetNameBytes and c.danger or c.label,'mono') end
  y=y+W.paragraph(v.noteText,x+12,y,w-24-bw2-10,12,c.label)+6
  if v.presetMessage~='' then
-  local kind=(v.presetMessage==L.invalidPresetName or v.presetMessage==L.presetSaveFailed or v.presetMessage==L.presetDeleteFailed) and 'er' or 'ok'
+  local kind=(v.presetMessage==v.invalidNameText or v.presetMessage==v.saveFailedText or v.presetMessage==L.presetDeleteFailed) and 'er' or 'ok'
   y=y+W.message(v.presetMessage,x+12,y,w-24,kind)+6
  end
  local any=false
@@ -1660,7 +1690,8 @@ local function homeTab(v,e,host)
     W.rect(x+w-12-28,y,28,30,c.block)
     if W.icon(idOf('custom_delete_',i),'trash',x+w-12-28,y+1,v.tips.ui.deletePreset) then
      if Adapter.deletePreset(host,i) then
-      if e.g.loadedPreset==id then e.g.loadedPreset='' end
+      -- Beta 1.52 (relecture) : préréglage chargé supprimé : sa marque « Perso » aussi, dans le profil de son entrée.
+      if e.g.loadedPreset==id then e.g.loadedPreset=''; if C.mark(e.g,entry.profile)==C.personalMark then C.setMark(e.g,entry.profile,'') end end
       if v.presetName==entry.name then v.presetName='' end
       v.presetMessage=L.presetDeleted..entry.name; v.dirty()
      else v.presetMessage=L.presetDeleteFailed end
@@ -1950,8 +1981,8 @@ local function diagnosticTab(v,e,host)
   W.cell(v.flashText,x+10,y+42,half,12,e.g.flashField~='' and c.soft or c.warn)
   -- Dernier événement des phares (Beta 1.39) : en infobulle du champ.
   W.help(v.flashEventText,x+10,y+40,half,18,4)
-  if W.button('learn',L.learnShort,x+10,y+62,half,26,e.flash.learnUntil>e.time,v.tips.ui.learn,'outline') then Flash.learn(e.flash,e.time) end
-  if e.flash.learnUntil>e.time then W.cell(L.learning,x+10,y+92,half,11,c.cyanText) end
+  if W.button('learn',v.learnText,x+10,y+62,half,26,e.flash.learnUntil>e.time,v.tips.ui.learn,'outline') then Flash.learn(e.flash,e.time) end
+  if e.flash.learnUntil>e.time then W.cell(v.learningText,x+10,y+92,half,11,c.cyanText) end
   local zx=x+22+half; local zw=(half-4)/2
   if frame then
    if W.button('mark_start',L.markStartShort,zx,y+40,zw,26,e.zoneStart>=0,v.tips.ui.markStart) and frame.player>0 then e.zoneStart=frame.cars[frame.player].spline end
@@ -2181,7 +2212,7 @@ local function windowSetup(v)
  v.diagCols={{L.colCar,0,0},{L.colState,0,0},{L.colOffset,0,0},{L.colNAP,0,0},{L.colGap,0,0}}
  v.perfItems={{L.perfLabels[1],''},{L.perfLabels[2],''},{L.perfLabels[3],''},{L.perfLabels[4],''}}
  v.classLabels={}; for i=1,K.classPatternClassMax do v.classLabels[i]=intText(i) end
- v.lightColors={[1]=c.ok,[2]=c.flagYellow,[3]=c.orangeDot,[5]=c.flagRed,[6]=c.flagWhite,[12]=c.flagBlue}
+ v.lightColors={[K.flagStart]=c.ok,[K.flagCaution]=c.flagYellow,[K.flagSlippery]=c.orangeDot,[K.flagStop]=c.flagRed,[K.flagSlowVehicle]=c.flagWhite,[K.flagFasterCar]=c.flagBlue}
  v.legendColors={c.ok,c.flagYellow,c.flagRed,c.flagWhite,c.orangeDot,c.flagBlue}
  -- Noms courts des capacités (maquette, Beta 1.38) ; les états longs restent dans l'infobulle.
  v.capLabels={}; v.capLong={}; v.capTips={}
@@ -2291,7 +2322,7 @@ local function font(role,on)
  ui.pushDWriteFont(name); overlayDepth=overlayDepth+1; overlayFont=name
 end
 local function fontRelease() while overlayDepth>0 do ui.popDWriteFont(); overlayDepth=overlayDepth-1 end; overlayFont=nil end
--- Largeurs mesurées par police poussée, taille et texte : mémorisées (vidées au-delà de 3000), comme celles du kit.
+-- Largeurs mesurées par police poussée, taille et texte : mémorisées (vidées au-delà de K.uiMeasureCache), comme celles du kit.
 local measured,measuredCount={},0
 local function textWidth(text,size)
  local key=overlayFont or ''
@@ -2304,7 +2335,7 @@ local function textWidth(text,size)
  local width=#text*size*0.55
  if callable(ui.measureDWriteText) then local ok,s=pcall(ui.measureDWriteText,text,size); if ok and s and s.x then width=s.x end end
  measuredCount=measuredCount+1
- if measuredCount>3000 then measured={}; measuredCount=0 end
+ if measuredCount>K.uiMeasureCache then measured={}; measuredCount=0 end
  bySize[text]=width
  return width
 end
@@ -2647,8 +2678,8 @@ local function flags(v,force)
  local boxed=delta~=nil or place or blueSide~=nil
  v.flagBoxes=v.flagBoxes or {}
  local l=M.flagLayout(w,y+K.hudBandH*u,y,boxed,false,top,3*u,v.flagBoxes)
- -- Clignotement à 2 Hz : rouge et bleu tout le temps, tout nouveau drapeau quelques secondes.
- local blink=(now*2)%1<0.5
+ -- Clignotement à K.hudBlinkHz Hz : rouge et bleu tout le temps, tout nouveau drapeau quelques secondes.
+ local blink=(now*K.hudBlinkHz)%1<0.5
  local flashing=not idle and (kind=='red' or kind=='blue' or kind=='jump' or now-(kind=='ai' and hud.aiAt or panel.changedAt)<K.flagBlinkTime)
  local flagColor=kind=='drs' and colors.text or kind=='clear' and colors.dim or colors[flagColors[kind] or 'yellow']
  local shown=flashing and not blink and back or flagColor

@@ -19,7 +19,7 @@ M.sections={
   {'yieldHold',{'yieldHoldMin','yieldHoldAfterMin','yieldHoldAfterMax','yieldMaxHold'}},
   {'yieldSlow',{'yieldSlowdownPct','inviteSlowdownPct'}},
   {'yieldPressure',{'pressureEnabled','pressureGap','pressureTime'}},
-  {'yieldQuali',{'qualiTraffic'}}},
+  {'yieldQuali',{'qualiTraffic','qualiCoolLaps'}}},
  blue={{'blueFlags',{'blueFlagEnabled','blueFlagRange','blueFlagSide'}}},
  flash={{'flashPlayer',{'flashMode','flashRange','flashMinAdvantage','flashCloseAdvantage','flashRequestTTL'}},
   {'flashAI',{'flashObliviousPct','flashMaxReactors','hornEnabled','aiFlashEnabled'}}},
@@ -61,7 +61,9 @@ M.sections={
   {'rulesDrs',{'drsAssist','rulesDrs','rulesDrsLaps','aiDrs','drsBeepVolume'}},
   {'rulesGT',{'bopEnabled','bopStrengthPct','proAmEnabled'}},
   {'rulesEndurance',{'predictableSlowClass'}}},
- rules_stops={{'stopsWindow',{'mandatoryStops','pitWindowOpenPct','pitWindowClosePct','pitMessage'}},
+ -- Beta 1.52 (relecture) : arrêt obligatoire réglé par son seul interrupteur (vue « switch » de src/ui.lua, jamais
+ -- affichée), plus cité ici.
+ rules_stops={{'stopsWindow',{'pitWindowOpenPct','pitWindowClosePct','pitMessage'}},
   {'stopsEach',{'pitTyres','pitRepair','pitCompoundChange','minPitTime','maxStintMin'}},
   {'stopsFuel',{'pitFuel','pitsClosed'}}},
  rules_safety={{'safetyOut',{'safetyCarEscalation','safetyCarSpeedKmh','restartOvertake'}}}}

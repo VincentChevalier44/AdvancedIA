@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 1.51',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 1.52',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -45,7 +45,9 @@ M.rulePresets={
  F1_2026={neutralization='vsc',mandatoryStops=1,pitWindowOpenPct=20,pitWindowClosePct=95,pitCompoundChange=true,redFlagWork=true,overtakeMode=true,rulesDrsLaps=0,pitFuel='plan',redRestart='standing'},
  GT={neutralization='fcy',fcyDeltaPct=150,mandatoryStops=1,pitWindowOpenPct=42,pitWindowClosePct=58,bopEnabled=true,proAmEnabled=true,pitFuel='plan'},
  Endurance={neutralization='fcy',fcyDeltaPct=150,slowZoneKmh=80,yellowSpeedKmh=80,maxStintMin=50,pitsClosed='pitFcySc',bopEnabled=true,proAmEnabled=true,predictableSlowClass=true,pitFuel='refuel',pitTyres=true,pitRepair=true}}
--- Préréglage intégré appliqué une fois à un profil jamais réglé, lorsque la détection l'active.
+-- Préréglage intégré recommandé de chaque profil. Beta 1.52 (relecture) : appliqué à chaque nouvelle session détectée
+-- (préréglage de la session, Beta 1.51, M.sessionPreset) ; préréglage de la session coupé : une seule fois, à un profil
+-- jamais réglé, lorsque la détection l'active.
 M.recommended={J='Nordschleife',P='Essais',Q='Qualifications',C='Course'}
 -- Réglages qui comptent quelque chose (réactions, voitures, arrêts) : valeurs entières.
 M.integerKeys={flashMaxReactors=true,redFlagCars=true,mandatoryStops=true,penaltySeconds=true,penaltyDisqualify=true,rulesDrsLaps=true,sanTrackWarnings=true,sanServeLaps=true,finalLaps=true}
@@ -57,7 +59,8 @@ M.overlayKeys={enduranceOverlay=true,stintLevelSwing=true,stintDegradationPct=tr
 -- Sessions hors week-end de course (journée circuit, hotlap) : ni pénalités, ni règles de championnat.
 function M.solo(profile) return profile=='J' or profile=='H' end
 -- Répartition des IA (Beta 1.26) : ni en course ni en hotlap ; portée d'AI flood de CSP en journée circuit seulement.
-M.spawnKeys={spawnMode=true,spawnMinCars=true,spawnPitPct=true,spawnGapVariation=true,floodRangeKm=true}
+-- Beta 1.52 (relecture) : sorties des stands étalées comprises (src/traffic.lua, M.mode : jamais en course ni en hotlap).
+M.spawnKeys={pitExitSpread=true,spawnMode=true,spawnMinCars=true,spawnPitPct=true,spawnGapVariation=true,floodRangeKm=true}
 -- Beta 1.42 (demande du pilote) : stratégie et pannes des IA, aspiration cassée et urgence des derniers tours en course
 -- seulement ; sanctions des IA en essais, qualifications et course (hors course : tours invalidés et contresens seuls).
 M.raceKeys={strategyEnabled=true,strategyTyreWearPct=true,strategyFuelMarginLaps=true,strategyUndercut=true,strategyRiskPct=true,strategySpreadPct=true,
@@ -70,7 +73,7 @@ M.sanctionRaceKeys={sanTrackWarnings=true,sanCutPenalty=true,sanCutSeconds=true,
  sanServeLaps=true,sanStopGoSeconds=true,sanTimeSeconds=true,sanUnservedTime=true,sanGiveBack=true,sanGiveBackSeconds=true}
 -- Interrupteurs des sanctions : tous coupés quand la section est décochée.
 M.sanctionSwitches={'sanTrackLimits','sanCutPenalty','sanJumpStart','sanPitSpeed','sanPitExit','sanWrongWay','sanUnservedTime','sanGiveBack','sanMessages'}
-function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or false end
+function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or key=='qualiCoolLaps' and profile~='Q' or false end
 -- Préférences du pilote (panneau, messages, drapeau du HUD, DRS) : conservées au chargement d'un préréglage intégré.
 M.preferenceKeys={'flagPanel','yellowHud','yellowMessage','pitMessage','drsAssist','drsBeepVolume','deltaBeeps'}
 -- Clés ajoutées depuis la 1.3.0 (préréglages personnels antérieurs et préréglages intégrés 1.2.0).
@@ -117,6 +120,9 @@ n('yield','inviteSlowdownPct','Invitation supplémentaire (%)',0,25,10,10,10)
 n('yield','yieldMaxHold','Durée maximale de cession (s)',8,60,25,25,25)
 -- Beta 1.51 (demande du pilote) : essais et qualifications, priorité aux voitures en tour lancé (src/quali.lua).
 b('yield','qualiTraffic','Essais et qualifications : priorité aux tours lancés',false,true,false)
+-- Beta 1.51 : qualifications, tours de refroidissement des IA entre deux séries de tours lancés (comme en F1).
+b('yield','qualiCoolLaps','Qualifications : tours de refroidissement des IA',false,true,false)
+M.schema[#M.schema].defaults.P=false
 b('yield','pressureEnabled','Réaction à la pression',true,true,false)
 n('yield','pressureGap','Distance de pression (m)',5,30,15,15,15)
 n('yield','pressureTime','Durée de pression (s)',1,15,4,3,4)
@@ -295,6 +301,8 @@ n('weather','lockFlatSpotKm','Méplat : usure ajoutée par blocage (km)',0,5,1,1
 newKeys.open=nil
 -- Panneaux lumineux du circuit (Beta 1.37, section propre, demande du pilote) : couleurs envoyées aux panneaux (le jaune
 -- toujours), durée du vert, tenue avant une couleur moins importante. Les défauts redonnent la Beta 1.36 à l'identique.
+-- Beta 1.52 (relecture) : lightsYellow est purement visuel, une case figée (toujours vraie, M.validate) qui montre que le
+-- jaune est toujours envoyé ; gardée dans le schéma, déjà enregistrée dans les préréglages et leurs signatures.
 newKeys.open=true
 b('lights','lightsYellow','Jaune · drapeau jaune, voiture de sécurité, VSC, FCY',true,true,true)
 b('lights','lightsRed','Rouge · drapeau rouge',true,true,true)
@@ -395,19 +403,19 @@ M.K={maxCars=61,paceBins=400,logLines=200,logRate=20,logDedup=5,maxZones=64,maxZ
  trafficDecelKmh=4,trafficAccelKmh=8,trafficMinSpeed=30,trafficLogDelay=60,trafficFasterMargin=0.03,targetLostGrace=1,spreadDelay=1,spreadPlanDelay=0.5,spreadReport=8,spreadPlayerGap=300,spreadSpeed=50,spreadLaunchWait=0.5,spreadCheck=3,spreadTroubleKmh=10,spreadRetry=2,spreadReached=100,spreadTroubleLines=6,slowRatio=0.6,slowMinPaceKmh=60,slowMinKmh=15,slowFollowGap=60,slowLogTime=20,slowEnd=8,slowSettle=10,spreadMinGap=15,spreadWindow=60,spreadMaxKmh=30,trackDayExitSpeed=40,trackDayExitMaxTotal=600,floodPeriod=2,floodMinLength=7000,floodRound=50,messageProbe='AdvancedIA',probeFrames=90,probeTime=0.1,parkReturnPeriod=10,blueCloseGap=40,blueSlack=5,radarLatMargin=0.4,radarWarnTTC=2.5,radarCaution=1.4,radarTTC=1.2,radarMinBrake=0.08,radarBrakeMax=0.45,radarApply=1.5,radarRelease=0.8,radarLogPeriod=15,contactLogPeriod=10,contactLogBudget=3,towWindow=3,blueLogTime=3,pitExitWindow=60,pitExitSalt=7717,pitExitJitter=0.6,pitExitMaxTotal=180,pitExitSessionShare=0.25,pitExitMinGap=2,
  repairBase=3,repairBodyMin=5,repairBodyRate=0.1,repairSuspensionMin=0.02,repairSuspensionRate=40,repairEngineMin=990,repairEngineTime=30,repairMax=60,engineLifeNew=1000,trafficArmSpeed=60,trafficEpisode=6,trafficCycle=18,unlimitedSpeed=1e9,
  wrongWaySpeed=10,wrongWayTime=2,spinSpeed=15,spinTime=0.6,incidentClear=2,incidentMaxAge=120,crashSettle=4,rejoinWaitMax=10,rejoinSpeed=30,crashSalt=60000,stopPulse=1.5,stopPulsePeriod=0.5,
- yellowApproach=800,yellowNoPass=150,playerFlagLead=150,playerFlagLeadMax=800,flagLeadTime=1.25,gridGrace=6,gridMax=120,gridFirst=6,gridPitch=8,gridSlotRadius=4,gridApproachDecel=1.5,gridBrakeFrom=25,gridHoldDistance=1.5,gridColumn=0.35,gridColumnFrom=200,gridStillKmh=2,gridCrawlKmh=8,gridApproachKmh=80,gridBrakeMargin=3,gridBrakeScale=30,gridBrakeMin=0.1,gridNodeRange=400,gridLights=5,lightStep=1,lightsOutMin=0.2,lightsOutMax=3,jumpDistance=1,jumpSpeed=3,goShow=2,jumpShow=8,gridOvershoot=25,gridPassedShow=500,gridSideBySide=0.5,gridFormFrom=500,relaunchTravel=0.5,jumpServeDistance=150,jumpServeMax=30,slowGrace=10,flagsHiddenRead=5,cspLiveWait=15,cspWritesMax=8,cspReloadRelease=2,slowLogGap=10,flagNone=0,flagCaution=2,flagStart=1,flagStop=5,flagReturnToPits=8,flagFasterCar=12,flagSlippery=3,flagSlowVehicle=6,flagFinished=13,flagOneLapLeft=14,penaltyMandatoryPits=1,penaltyTeleportToPits=2,
+ yellowApproach=800,yellowNoPass=150,playerFlagLead=150,playerFlagLeadMax=800,flagLeadTime=1.25,gridGrace=6,gridMax=120,gridFirst=6,gridPitch=8,gridSlotRadius=4,gridApproachDecel=1.5,gridBrakeFrom=25,gridHoldDistance=1.5,gridColumn=0.35,gridColumnFrom=200,gridStillKmh=2,gridCrawlKmh=8,gridApproachKmh=80,gridBrakeMargin=3,gridBrakeScale=30,gridBrakeMin=0.1,gridNodeRange=400,gridLights=5,lightStep=1,lightsOutMin=0.2,lightsOutMax=3,jumpDistance=1,jumpSpeed=3,goShow=2,jumpShow=8,gridOvershoot=25,gridPassedShow=500,gridSideBySide=0.5,gridFormFrom=500,relaunchTravel=0.5,jumpServeDistance=150,jumpServeMax=30,slowGrace=10,flagsHiddenRead=5,cspLiveWait=15,cspWritesMax=8,slowLogGap=10,flagNone=0,flagCaution=2,flagStart=1,flagStop=5,flagReturnToPits=8,flagFasterCar=12,flagSlippery=3,flagSlowVehicle=6,flagFinished=13,flagOneLapLeft=14,penaltyMandatoryPits=1,penaltyTeleportToPits=2,
  ruleBrake=0.2,aiFlashGap=40,aiFlashCooldown=8,aiFlashPulses=2,aiFlashInterval=0.4,overtakeDetect=0.95,vscEnding=12,restartMax=600,redReleaseFirst=5,redReleaseGap=2,scClosedLaps=3,
  journalPeriod=2,journalSummary=60,journalKeep=3,journalMaxBytes=4194304,
  -- Mise à jour depuis GitHub (Beta 1.33) : vérification une fois par lancement, après updateDelay s de jeu ; lignes des
  -- notes de version montrées ; information de l'overlay aux stands, updateNotice s, une fois par lancement.
  updateDelay=10,bootFrames=10,bootUIFrames=3,updateNotes=8,updateNotice=6,
- queueGap=15,pillFontMin=11,deltaBoxMin=12,deltaStart=1,laneMin=0.5,laneBias=0.3,laneRelease=1,deltaCap=3,deltaJump=150,deltaMinKmh=30,miniSectorLength=250,miniSectorsMin=8,miniSectorsMax=60,fleetBinsPerFrame=4,scMergeMargin=30,singleYellowPct=15,passGiveBack=10,giveBackMin=5,giveBackDrop=25,queueKeep=15,queueClose=0.5,aiDeltaMarginMin=0.02,aiDeltaMarginMax=0.06,slipperyShow=30,slipperyGrace=30,lightsHold=1.5,lightsFiles=64,lightsBytes=4194304,slowVehicleRange=300,slowVehicleBehind=10,slowVehicleTime=3,slowVehicleRatio=0.5,meatballShow=20,meatballBody=100,meatballSuspension=0.2,meatballEngine=600,meatballGearbox=0.4,playerDamagePeriod=1,warningShow=10,safetySkinPattern='safety',drsLateLoad=60,drsLapsMax=99,drsAiBrake=0.2,drsAiCorner=0.5,drsAiKmh=80,drsAiRetry=1,drsAiCloseRetry=0.1,mistakeCheck=1,mistakeStartMin=60,mistakeArm=15,mistakeCooldown=180,mistakeGap=20,mistakeCalm=180,mistakeLapse=4,mistakeWet=2,mistakeWetCause=0.3,mistakeSkill=5,mistakeSkillMin=0.5,mistakeSkillMax=3,mistakeWeak=0.95,mistakePlayerGap=40,mistakeMinKmh=50,mistakeBrakePedal=0.6,mistakeBrakeKmh=120,mistakeGasPedal=0.8,mistakeCorner=0.6,mistakeTractionKmh=180,mistakeSeverity=1.4,mistakeSalt=80000,mistakeBrakeMin=0.4,mistakeBrakeMax=0.9,mistakeTractionMin=0.3,mistakeTractionMax=0.7,deltaBeepFile='sounds/delta-beep.wav',deltaBeepNegative=0.15,deltaBeepNear=0.2,deltaBeepFast=0.3,deltaBeepMid=0.5,deltaBeepMedium=0.6,deltaBeepFar=1,deltaBeepSlow=1.2,slipperyStripes=6,flagBlinkTime=5,pitRemindTime=15,pitCompoundGrace=3,pitNoticeCounted=4,pitNoticeSame=8,pitPlanPeriod=2,pitPlanNotice=8,heldMessageMax=5,pitHintTime=20,pitHintMinSpeed=15,pitHintSector=0.67,pitEntryMinKmh=40,pitRemindLate=0.2,aiPenaltyDecel=3,inviteLatMax=6,inviteCurve=0.001,passArmMax=20,carNameMax=96,passStallSa=2,passStallTime=8,pullOutTargetLat=1,pitGuardTime=15,pitGuardGap=80,pitGuardMin=12,pitGuardAllowance=15,pitGuardBack=5,pitGuardCaution=1.5,inviteLat=2,inviteGap=40,inviteTime=0.6,inviteSa=3,inviteClear=60,inviteRespite=20,aiPenaltyFactor=0.7,penaltyBlackFlag=4,penaltyReleaseBlackFlag=5,journalMarker='.AdvancedIA.journal',drsBeepFile='sounds/drs-available-beep.wav',penaltyBrakeMargin=2.5,incidentStopSpeed=10,obstacleClosing=15,penaltyCooldown=20,passWatch=40,noticeTime=8,penaltySlowDown=3,avoidClearMargin=10,avoidRecheck=1,crashWindow=30,neutralMax=600,neutralRecoverTime=20,stuckRecoverTime=30,trackRecoverTime=8,brokenRecoverTime=3,ruleDecision=5,calibrationRetry=60,laneMaxOffset=0.7,hudMessageTime=5,hudMessageMin=2,hudMessageMax=10,recapPassGap=40,recapPeriod=0.1,hudStripPeriod=0.25,hudFuelWarn=2,hudLapTime=5,hudWidth=600,hudTop=0.07,hudStripH=26,hudBandH=82,hudExplainLine=16,hudPillH=24,hudPad=8,hudHandle=18,hudGhost=0.5,scKickPeriod=2,startCorner=0.9,startCareRise=4,startCareFall=0.6,radarLaunchTTC=0.8,brokenSuspension=0.5,brokenEngine=50,brokenGearbox=0.9,damageReadSpeed=25,
+ queueGap=15,pillFontMin=11,deltaBoxMin=12,deltaStart=1,laneMin=0.5,laneBias=0.3,laneRelease=1,deltaCap=3,deltaJump=150,deltaMinKmh=30,miniSectorLength=250,miniSectorsMin=8,miniSectorsMax=60,fleetBinsPerFrame=4,scMergeMargin=30,singleYellowPct=15,passGiveBack=10,giveBackMin=5,giveBackDrop=25,queueKeep=15,queueClose=0.5,aiDeltaMarginMin=0.02,aiDeltaMarginMax=0.06,slipperyShow=30,slipperyGrace=30,lightsHold=1.5,lightsFiles=64,lightsBytes=4194304,slowVehicleRange=300,slowVehicleBehind=10,slowVehicleTime=3,slowVehicleRatio=0.5,meatballShow=20,meatballBody=100,meatballSuspension=0.2,meatballEngine=600,meatballGearbox=0.4,playerDamagePeriod=1,warningShow=10,safetySkinPattern='safety',drsLateLoad=60,drsLapsMax=99,drsAiBrake=0.2,drsAiCorner=0.5,drsAiKmh=80,drsAiRetry=1,drsAiCloseRetry=0.1,mistakeCheck=1,mistakeStartMin=60,mistakeArm=15,mistakeCooldown=180,mistakeGap=20,mistakeCalm=180,mistakeLapse=4,mistakeWet=2,mistakeWetCause=0.3,mistakeSkill=5,mistakeSkillMin=0.5,mistakeSkillMax=3,mistakeWeak=0.95,mistakePlayerGap=40,mistakeMinKmh=50,mistakeBrakePedal=0.6,mistakeBrakeKmh=120,mistakeGasPedal=0.8,mistakeCorner=0.6,mistakeTractionKmh=180,mistakeSeverity=1.4,mistakeSalt=80000,mistakeBrakeMin=0.4,mistakeBrakeMax=0.9,mistakeTractionMin=0.3,mistakeTractionMax=0.7,deltaBeepFile='sounds/delta-beep.wav',deltaBeepNegative=0.15,deltaBeepNear=0.2,deltaBeepFast=0.3,deltaBeepMid=0.5,deltaBeepMedium=0.6,deltaBeepFar=1,deltaBeepSlow=1.2,slipperyStripes=6,flagBlinkTime=5,pitRemindTime=15,pitCompoundGrace=3,pitNoticeCounted=4,pitNoticeSame=8,pitPlanPeriod=2,pitPlanNotice=8,heldMessageMax=5,pitHintTime=20,pitHintMinSpeed=15,pitHintSector=0.67,pitEntryMinKmh=40,pitRemindLate=0.2,aiPenaltyDecel=3,inviteLatMax=6,inviteCurve=0.001,passArmMax=20,carNameMax=96,passStallSa=2,passStallTime=8,pullOutTargetLat=1,pitGuardTime=15,pitGuardGap=80,pitGuardMin=12,pitGuardAllowance=15,pitGuardBack=5,pitGuardCaution=1.5,inviteLat=2,inviteGap=40,inviteTime=0.6,inviteSa=3,inviteClear=60,inviteRespite=20,aiPenaltyFactor=0.7,penaltyBlackFlag=4,penaltyReleaseBlackFlag=5,journalMarker='.AdvancedIA.journal',drsBeepFile='sounds/drs-available-beep.wav',penaltyBrakeMargin=2.5,incidentStopSpeed=10,obstacleClosing=15,penaltyCooldown=20,passWatch=40,noticeTime=8,penaltySlowDown=3,avoidClearMargin=10,avoidRecheck=1,crashWindow=30,neutralMax=600,neutralRecoverTime=20,stuckRecoverTime=30,trackRecoverTime=8,brokenRecoverTime=3,ruleDecision=5,calibrationRetry=60,laneMaxOffset=0.7,hudMessageTime=5,hudMessageMin=2,hudMessageMax=10,recapPassGap=40,recapPeriod=0.1,hudStripPeriod=0.25,hudFuelWarn=2,hudLapTime=5,hudWidth=600,hudTop=0.07,hudStripH=26,hudBandH=82,hudExplainLine=16,hudPillH=24,hudPad=8,hudHandle=18,hudGhost=0.5,scKickPeriod=2,startCareRise=4,startCareFall=0.6,radarLaunchTTC=0.8,brokenSuspension=0.5,brokenEngine=50,brokenGearbox=0.9,damageReadSpeed=25,
  redFlagMax=300,compactWidth=900,compactHeight=700,fuelReserveLaps=0.6,fuelMargin=1.03,fuelAlpha=0.3,fuelLapShare=0.5,fuelLapTimeMin=20,fuelStep=1,redFlagMaxCap=1800,redLapFactor=1.25,redPitMargin=60,redRecoverTime=8,redStopSpeed=5,redStopTime=5,greenShow=5,greenZoneShow=3,panelPeriod=0.25,panelWrap=58,
- bopGain=0.5,bopPeriod=60,scCatchUp=40,scQueueGap=60,scCallTime=10,scEscalateCars=2,scEscalateTime=30,scMinOut=60,scExitMax=90,scStuckTime=20,scInMax=300,scPlaceJunction=200,scPlaceFirstOut=250,scPlaceOnTrack=30,scPlaceLeader=200,scPlaceFree=80,scPlaceStep=50,scPlaceSteps=8,scPlaceMax=15,scLeadKmh=80,scLeadGap=120,scParkingMax=90,redExitWait=20,redExitWaitPlayer=45,redExitClear=10,restartRetakeRange=300,scPlaceReach=100,parkPeriod=2,maxCarList=4000,carReadMax=24,carReadBudget=0.004,uiSlowFrame=0.05,uiSlowFirst=0.5,uiSlowLogs=8,pitSpread=0.85,pitSalt=80000,pitConcurrent=3,pitLastStint=0.95,gradeSalt=70000,gradeLevel={1,0.99,0.975,0.96},gradeCaution={1,1,1.05,1.1},
+ bopGain=0.5,bopPeriod=60,scCatchUp=40,scQueueGap=60,scCallTime=10,scEscalateCars=2,scEscalateTime=30,scMinOut=60,scExitMax=90,scStuckTime=20,scInMax=300,scPlaceJunction=200,scPlaceFirstOut=250,scPlaceOnTrack=30,scPlaceLeader=200,scPlaceFree=80,scPlaceStep=50,scPlaceSteps=8,scPlaceMax=15,scLeadKmh=80,scLeadGap=120,scParkingMax=90,redExitWait=20,redExitWaitPlayer=45,redExitClear=10,restartRetakeRange=300,scPlaceReach=100,parkPeriod=2,maxCarList=4000,carReadMax=24,carReadBudget=0.004,uiSlowFrame=0.05,uiSlowFirst=0.5,uiSlowLogs=8,pitSpread=0.85,pitSalt=8152,pitConcurrent=3,pitLastStint=0.95,gradeSalt=70000,gradeLevel={1,0.99,0.975,0.96},gradeCaution={1,1,1.05,1.1},
  weatherPeriod=1,weatherConfirm=15,weatherWetOn=0.12,weatherWetOff=0.05,weatherRainOn=0.1,weatherRainOff=0.02,weatherWaterOn=0.03,weatherWaterOff=0.01,weatherHeavy=0.6,maxTyreCompounds=32,tyreCatalogBudget=2,tyreStopSpeed=1,tyreSalt=90000,spawnWindow=15,enduranceSuggestionSeconds=3600}
 M.timerFields={'since','aiFlashAt','stintStart','pitExitUntil','pitCautionUntil','pitGuardUntil','pendingUntil','holdUntil','ignoreUntil','restUntil','nextPerception',
  'defendUntil','defendCooldown','calmUntil','speedWindowStart','lastContact','lapseAt','errorUntil','lastDirectionAt','driveUntil','yieldStart'}
-M.optionalTimerFields={'pendingAt','lapseUntil'}
+M.optionalTimerFields={'pendingAt','lapseUntil','slowTeleportAt'}
 -- Beta 1.41 (journées circuit du 3 novembre : île de Man, Nordschleife) : trafic des IA. Table à part, versée dans K.
 local traffic141={
  -- Chronomètre du coût par image : boucle d'essai de os.preciseClock au lancement.
@@ -469,8 +477,53 @@ for key,value in pairs(k150) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- qualiYieldTime s au plus, qui se rapproche d'au moins qualiYieldSa km/h (ou à moins de qualiYieldNear m). Avis au
 -- joueur : IA lancée à qualiWarnTime s au plus derrière lui, au plus une fois toutes les qualiWarnRepeat s par IA.
 local k151={qualiOutGrace=30,qualiCoolRatio=0.75,qualiCoolPaceMin=0.85,qualiCoolTime=4,qualiCoolMinKmh=30,qualiYieldTime=3,qualiYieldSa=5,qualiYieldNear=30,
- qualiYieldRange=1.5,qualiWarnTime=3,qualiWarnSa=5,qualiWarnRepeat=30,qualiLogGap=20}
+ qualiYieldRange=1.5,qualiWarnTime=3,qualiWarnSa=5,qualiWarnRepeat=30,qualiLogGap=20,
+ -- Tours de refroidissement des IA (qualifications) : après qualiPushMin à qualiPushMax tours lancés de suite (tiré par
+ -- IA), un tour au niveau abaissé de qualiCoolLevel, atteint en qualiCoolRamp s, rendu en qualiCoolRelease s après la
+ -- ligne ; jamais quand il reste moins de qualiCoolLate tours (temps de la session restant, dernier tour de l'IA, au
+ -- moins qualiCoolLapMin s par tour) : le dernier essai compte.
+ qualiCoolLevel=0.12,qualiCoolRamp=4,qualiCoolRelease=3,qualiPushMin=1,qualiPushMax=2,qualiCoolLate=2.5,qualiCoolLapMin=60,qualiCoolSalt=7151}
 for key,value in pairs(k151) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.52 (relecture du pilotage des IA) : valeurs en dur nommées. Lancement du départ tant que la prudence de départ
+-- (0 à 1) reste sous launchCare ; bornes des commandes de niveau et de prudence : nativeLevelMax et minCaution (bloc k152c) ;
+-- attente du drapeau bleu oubliée au-delà de blueForgetMult fois la portée du drapeau bleu ; côté de dépassement par
+-- défaut (deux côtés occupés) : droite au-dessus de passSideAssert d'assurance ; jonction des stands déplacée après
+-- mergeOutlierCount sorties de suite loin d'elle.
+local k152a={launchCare=0.5,blueForgetMult=2,passSideAssert=0.5,mergeOutlierCount=3}
+for key,value in pairs(k152a) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.52 : instants des états des IA jamais décalés jusqu'ici au recalage du temps (nil et infinis laissés tels quels).
+for _,key in ipairs({'passedByPlayerAt','qualiLogAt','lastPassAt','passStartAt','maneuverAt','laneSeen','laneAt','straightHoldAt','defendLogAt','startLiftAt','radarLogAt'}) do M.timerFields[#M.timerFields+1]=key end
+-- Relecture 1.52, domaine B : clé du préréglage de la session (octets au plus, place gardée pour les profils servis),
+-- sel du tirage de l'extinction des feux, distance du joueur à sa place (au mètre sous gridGapFine m, puis par
+-- gridGapStep m), marge de vitesse d'une file d'attente au-dessus de l'allure d'obstacle (km/h), vitesse minimale (m/s)
+-- de l'écart en temps entre rivaux de la stratégie.
+local k152b={presetSessionKeyMax=256,presetSessionProfilesMax=8,lightsOutSalt=9134,gridGapFine=20,gridGapStep=10,queueSpeedMargin=5,strategyRivalMinSpeed=10}
+for key,value in pairs(k152b) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.52 (relecture, réglages et interface) : longueurs des options globales en texte (copie de la configuration
+-- d'AI flood, marques des préréglages, préfixe « builtin: » ou « custom: » du dernier préréglage chargé, octets) ;
+-- plafonds des mémoires de l'interface (largeurs mesurées par l'overlay, majuscules et mesures du kit de dessin,
+-- entrées) ; clignotement des drapeaux de l'overlay (Hz) ; pas des curseurs de l'overlay (échelle, opacité et contenu
+-- en %, durée des informations en s) ; tolérance unique d'un réglage modifié ou d'un curseur déplacé.
+local k152d={floodBackupBytes=512,builtinMarksBytes=128,loadedPresetPrefix=16,
+ uiMeasureCache=3000,uiUpperCache=1000,uiDrawCache=6000,hudBlinkHz=2,
+ overlayScaleStep=0.05,panelOpacityStep=5,overlayContentStep=5,panelInfoStep=1,uiEpsilon=1e-6}
+for key,value in pairs(k152d) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.52 (relecture de la couche hôte) : délai minimal entre deux changements de pneus d'une IA (s) ; niveau écrit au
+-- plus en mode natif (110 %) ; facteur d'adhérence de la météo au plus ; prudence écrite au moins ; niveau d'origine lu
+-- au plus dans le point de reprise ; taille maximale d'un texte gardé dans ac.store (point de reprise) ; drapeau de
+-- l'app resté affiché après une restitution : restitution renvoyée toutes les flagLeftoverDelay s ; fenêtre de réglages
+-- ouverte hors des menus refermée au plus toutes les windowCheckPeriod s.
+local k152c={tyreWriteGap=5,nativeLevelMax=1.1,weatherGripMax=1.3,minCaution=0.5,levelReadMax=2,storeMaxBytes=65536,flagLeftoverDelay=1,windowCheckPeriod=1,
+ -- Copie laissée par la mise à jour de l'ancienne version ACAdvancedIA (src/oldinstall.lua, M.tidy) : effacée seulement
+ -- si elle compte au plus oldWorkMaxFiles fichiers et dossiers, sur oldWorkMaxDepth niveaux au plus.
+ oldWorkMaxFiles=4000,oldWorkMaxDepth=8}
+for key,value in pairs(k152c) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.52 (décision du pilote) : mise à jour d'une app compagne (SpotterEnginer), signalée à l'accueil, jamais
+-- installée par AdvancedIA. L'app la publie elle-même dans la mémoire de la partie (contrat v1, au plus
+-- companionUpdateBytes octets, versions de companionVersionBytes octets au plus), relue toutes les
+-- companionUpdatePeriod s.
+local k152e={companionUpdatePeriod=10,companionUpdateBytes=200,companionVersionBytes=32}
+for key,value in pairs(k152e) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.42 : constantes de l'étape de schéma (facteur de niveau, limite d'accélérateur), puis un bloc réservé par fourche.
 local k142schema={levelScaleMin=0.7,throttleMin=0.3,throttleEpsilon=0.01}
 -- Beta 1.42 : aspiration cassée, air sale, urgence des derniers tours (fourche AERO).
@@ -511,11 +564,11 @@ local k142sanctions={
  -- K.sanLineMeters m, K.sanLineBinsMax au plus).
  sanOutDwell=0.3,sanOutKmh=40,sanStrikeGap=4,sanLineCars=3,sanLineMeters=25,sanLineBinsMax=4000,
  -- Virage coupé : gain minimal (s) sur une portion de K.sanCutMinDist à K.sanCutMaxDist m ; coupure des gaz progressive
- -- vers K.sanCutThrottle (rampe par seconde), en ligne droite (courbure K.sanStraightCurve 1/m au plus), sans freinage,
+ -- vers K.sanCutThrottle (rampe par seconde), en ligne droite (accélération latérale K.sanStraightLat m/s² au plus), sans freinage,
  -- au-dessus de K.sanCutMinKmh km/h, personne à moins de K.sanCutBehind m derrière ; sinon pénalité de temps après
  -- K.sanCutDeferMax s.
  sanCutGain=0.3,sanCutMinDist=10,sanCutMaxDist=600,sanCutBinsMax=400,sanCutThrottle=0.35,sanCutRampDown=1.3,sanCutRampUp=2,
- sanCutMinKmh=80,sanCutBehind=30,sanCutDeferMax=90,sanStraightCurve=0.002,sanCutBrake=0.1,
+ sanCutMinKmh=80,sanCutBehind=30,sanCutDeferMax=90,sanCutBrake=0.1,
  -- Course : rien de jugé les K.sanGraceStart premières secondes ; aucun arrêt de pénalité avant K.sanServeAfterStart s.
  sanGraceStart=30,sanServeAfterStart=30,
  -- Voie des stands : excès de vitesse après K.sanPitSpeedGrace s dans la voie, au-delà de K.sanPitSpeedMargin km/h,
@@ -555,7 +608,7 @@ local k144={playerSlowRatio=0.85,playerCrawlRatio=1.25,inviteLatAccel=4,mergeExi
 -- boucles de dépassement, cessions inutiles hors course, limites de piste après un contact, drapeau bleu, journal.
 local k147={startYaw=0.2,startYawHold=0.3,startBrakeKmh=80,startAnticipate=2.5,radarStartBrakeMax=0.18,radarStartFollowTime=0.6,radarStartFollowMin=8,radarStartLift=0.3,
  defenseLatMin=0.5,defenseSaMax=20,defenseTTCMin=1.5,defenseCorner=0.9,defenseRunTime=2,defenseLogGap=20,passIgnoreCloseMult=2.5,
- followerStallTimeOff=3.5,sanContactGrace=3,blueClearTime=5,fuelLogStep=5,flagLeftoverEvery=60,flagLeftoverTries=3}
+ followerStallTimeOff=3.5,sanContactGrace=3,blueClearTime=5,fuelLogStep=5,flagLeftoverTries=3}
 -- Beta 1.47 : premier tour attentif (src/firstlap.lua). Fin : ligne franchie (passage dans les firstLapLineGrace s
 -- ignoré), peloton étiré (plus de firstLapSpread s devant et derrière pendant firstLapSpreadTime s), firstLapMax s ;
 -- rendu en firstLapRelease s. Écart en temps : prudence jusqu'à x firstLapFollowCaution sous firstLapGapMin s, rien
@@ -663,9 +716,9 @@ function M.validateGlobals(input,out)
   local v=input[k]; local valid=type(v)==type(d)
   if type(d)=='number' then valid=U.finite(v); local r=M.globalBounds[k]; if valid and r then valid=v>=r[1] and v<=r[2] end end
   if M.globalChoices[k] then valid=choice(v,M.globalChoices[k]) end
-  if k=='floodBackup' then valid=type(v)=='string' and #v<=512 and not v:find('%c') end
-  if k=='loadedPreset' then valid=type(v)=='string' and #v<=M.K.presetNameBytes+16 and not v:find('%c') end
-  if k=='builtinMarks' then valid=type(v)=='string' and #v<=128 and v:match('^[%w=,]*$')~=nil end
+  if k=='floodBackup' then valid=type(v)=='string' and #v<=M.K.floodBackupBytes and not v:find('%c') end
+  if k=='loadedPreset' then valid=type(v)=='string' and #v<=M.K.presetNameBytes+M.K.loadedPresetPrefix and not v:find('%c') end
+  if k=='builtinMarks' then valid=type(v)=='string' and #v<=M.K.builtinMarksBytes and v:match('^[%w=,]*$')~=nil end
   if k=='safetyCarModel' then valid=type(v)=='string' and #v<=M.K.metadataLength and v:match('^[%w_%-%.]*$')~=nil end
   if (k=='offsetSign' or k=='sideSign') and valid then valid=v==-1 or v==0 or v==1 end
   if not valid then v=d; errors=errors+1 end
@@ -701,7 +754,7 @@ function M.effective(profile,p,out)
  for _,group in ipairs(M.sections) do local key=sectionKeys[group]; out[key]=p[key]==true end
  out.classPatterns=M.on(p,'endurance') and p.classPatterns or ''
  if not M.on(p,'general') then out.paceSpreadPct=0; out.aggrSpreadPct=0; out.cautSpreadPct=0; out.brakeZonePct=100 end
- if not M.on(p,'yield') then out.yieldEnabled=false; out.pressureEnabled=false; out.qualiTraffic=false end
+ if not M.on(p,'yield') then out.yieldEnabled=false; out.pressureEnabled=false; out.qualiTraffic=false; out.qualiCoolLaps=false end
  if not M.on(p,'blue') then out.blueFlagEnabled=false end
  if not M.on(p,'flash') then out.flashMode='never'; out.hornEnabled=false; out.aiFlashEnabled=false end
  if not M.on(p,'overtake') then out.overtakeEnabled=false; out.defenseEnabled=false; out.slipstreamEnabled=false end
@@ -717,6 +770,8 @@ function M.effective(profile,p,out)
   out.overtakeMode=false; out.bopEnabled=false; out.proAmEnabled=false; out.predictableSlowClass=false; out.redFlagEnabled=false; out.drsAssist=false
   -- Ni DRS coupé par les règles, ni DRS des IA ouvert par l'app : décocher l'onglet arrête toute la section.
   out.rulesDrs=false; out.aiDrs=false; out.pitsClosed='open'; out.redFlagWork=false; out.pitRepair=false
+  -- Beta 1.52 (relecture) : voiture de sécurité en escalade coupée aussi (src/incidents.lua), défaut vrai en course.
+  out.safetyCarEscalation=false
  end
  -- Volume des bips : préférence du pilote, aussi pour le delta d'une zone jaune quand l'onglet Règles est décoché.
  out.drsBeepVolume=p.drsBeepVolume
@@ -784,19 +839,17 @@ function M.upgradeObstacles(p) if p.section_start==true and not p.section_accide
 -- Migration unique des données enregistrées. 1.2.0 : un profil identique à un préréglage intégré reçoit sa version
 -- 1.3.0 ; un profil modifié reste tel quel, sauf l'évitement des obstacles qui suit ses clés dans l'onglet Accidents.
 -- Révisions par profil, communes aux profils enregistrés et aux préréglages personnels (from : révision des données).
--- Révision 5 (Beta 1.8) : temps delta assoupli ; un profil resté sur l'ancien défaut (0,10 s) passe au nouveau. Un
--- préréglage enregistré avant n'a pas le maintien de ligne : lu avec la valeur de la journée circuit, il prend celle
--- de son profil. Révision 6 (Beta 1.9) : règles GT conformes au règlement SRO (stands ouverts sous FCY) ; seuls les
+-- Révision 5 (Beta 1.8) : temps delta assoupli ; un profil resté sur l'ancien défaut (0,10 s) passe au nouveau.
+-- Beta 1.52 (relecture) : le maintien de ligne au départ, coupé par défaut dans tous les profils, n'a plus de migration.
+-- Révision 6 (Beta 1.9) : règles GT conformes au règlement SRO (stands ouverts sous FCY) ; seuls les
 -- profils qui portaient exactement les anciennes règles GT changent. Renvoie la liste des changements faits.
+-- _preset : vrai pour un préréglage personnel (src/presets.lua) ; plus lu depuis la Beta 1.52, gardé pour ses appels.
 -- Clés de règles apparues après les révisions qui jugent un jeu de règles : ignorées par ces révisions.
 local keys18={safetyCarEscalation=true}
-M.dataRevision=21
-function M.migrateProfile(profile,p,from,preset,out)
+M.dataRevision=22
+function M.migrateProfile(profile,p,from,_preset,out)
  out=out or {}
- if from<5 then
-  if equal(p.deltaTolerance,0.1) then p.deltaTolerance=M.defaults(profile).deltaTolerance; out[#out+1]=profile..':delta' end
-  if preset and not M.solo(profile) and p.startLaneHold==M.defaults('J').startLaneHold then p.startLaneHold=M.defaults(profile).startLaneHold end
- end
+ if from<5 and equal(p.deltaTolerance,0.1) then p.deltaTolerance=M.defaults(profile).deltaTolerance; out[#out+1]=profile..':delta' end
  if from<6 and not M.solo(profile) and p.pitsClosed=='pitFcy' then
   p.pitsClosed='open'
   if M.ruleCategory(profile,p,keys18)=='GT' then out[#out+1]=profile..':regles GT' else p.pitsClosed='pitFcy' end
@@ -859,7 +912,8 @@ function M.migrateProfile(profile,p,from,preset,out)
  if from<21 and profile=='C' and equal(p.startDelay,1) then p.startDelay=M.defaults('C').startDelay; out[#out+1]='C:attente au depart 2 s' end
  return out
 end
-function M.migrate(g,profiles)
+-- customs : préréglages personnels déjà lus (tableau de 1 à K.maxPresets, trous permis), pour la révision 22.
+function M.migrate(g,profiles,customs)
  if g.dataRevision>=M.dataRevision then return nil end
  local upgraded={}
  -- Révision 4 (Beta 1.6) : première installation (aucune donnée enregistrée, aucun profil réglé) : comme un clic sur
@@ -909,6 +963,9 @@ function M.migrate(g,profiles)
  -- chaque profil ; l'option décochée par le pilote décoche la section partout (choix gardé). La clé globale n'est plus
  -- lue qu'ici.
  if g.dataRevision<18 and g.trackLights==false then for _,profile in ipairs(M.profiles) do profiles[profile].section_lights=false end end
+ -- Révision 22 (Beta 1.52, relecture) : préréglage personnel chargé avant la Beta 1.51 (aucune marque « Perso ») : marqué
+ -- une seule fois dans son profil, que le préréglage de la session ne le remplace pas.
+ if g.dataRevision<22 and customs then local profile=M.markPersonal(g,customs); if profile then upgraded[#upgraded+1]=profile..':preset personnel garde' end end
  g.dataRevision=M.dataRevision
  return upgraded,fresh,restored
 end
@@ -944,12 +1001,12 @@ end
 local function applyValues(category,profile,p) for _,s in ipairs(M.ruleSchema) do p[s.key]=ruleValue(M.rulePresets[category],s,profile) end end
 -- Interrupteurs de l'onglet Règles de course (Beta 1.18) : arrêt obligatoire et voiture de sécurité, réglés ensemble pour
 -- les Essais, Qualifications et Course comme les jeux de règles ; un profil jamais réglé reçoit d'abord son préréglage
--- recommandé. Arrêt obligatoire activé : le nombre d'arrêts réglé est gardé (un au moins).
+-- recommandé. Beta 1.51 : arrêt obligatoire oui ou non (1 ou 0).
 function M.weekendSwitch(profiles,key,on)
  for _,profile in ipairs(M.ruleProfiles) do
   local p=profiles[profile]
   if not (p.configured or M.anySection(p)) and M.recommended[profile] then M.preset(M.recommended[profile],profile,p) end
-  if key=='mandatoryStops' then p.mandatoryStops=on and math.max(1,p.mandatoryStops) or 0 else p[key]=on==true end
+  if key=='mandatoryStops' then p.mandatoryStops=on and 1 or 0 else p[key]=on==true end
   p.configured=true
   M.validate(profile,p,p)
  end
@@ -981,8 +1038,9 @@ function M.spreadRules(from,profiles)
  end
  return true
 end
--- Beta 1.29 (demande du pilote) : un préréglage intégré n'est allumé qu'après un clic, pour le profil affiché qu'il règle
--- (« J=Nordschleife,C=Endurance ») ; un préréglage recommandé appliqué tout seul n'en pose aucun.
+-- Marques des préréglages, une par profil (« J=Nordschleife,C=Endurance,Q=Perso ») : préréglage intégré allumé pour le
+-- profil qu'il règle, après un clic du pilote (Beta 1.29) ou appliqué comme préréglage de la session (Beta 1.51) ;
+-- « Perso » (M.personalMark) : préréglage personnel chargé ou enregistré dans ce profil, jamais remplacé par la session.
 function M.mark(g,profile)
  for x,name in (g.builtinMarks or ''):gmatch('(%u)=(%w+)') do if x==profile then return name end end
  return ''
@@ -999,6 +1057,17 @@ end
 -- hotlap : aucun. Inverse la règle de la Beta 1.29 (préréglage recommandé appliqué une seule fois, sans tuile allumée).
 local builtinProfiles={Nordschleife={J=true},Essais={P=true},Qualifications={Q=true},Course={C=true},Endurance={J=true,C=true}}
 M.personalMark='Perso'
+-- Beta 1.52 (relecture, révision 22) : dernier préréglage chargé personnel (« custom:<nom> ») encore présent dans la
+-- bibliothèque customs : marque « Perso » posée dans le profil de son entrée ; renvoie ce profil, ou nil.
+function M.markPersonal(g,customs)
+ local name=type(g.loadedPreset)=='string' and g.loadedPreset:match('^custom:(.+)$')
+ if not name then return nil end
+ for i=1,M.K.maxPresets do
+  local entry=customs[i]
+  if entry and entry.name==name then M.setMark(g,entry.profile,M.personalMark); return entry.profile end
+ end
+ return nil
+end
 function M.sessionPreset(g,profile)
  if profile=='H' or not M.recommended[profile] then return nil end
  local mark=M.mark(g,profile)

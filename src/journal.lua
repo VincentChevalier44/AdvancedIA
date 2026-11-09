@@ -60,7 +60,7 @@ function M.summary(e)
  -- Beta 1.50 : pied tenu en ligne droite (dont voiture de derrière plus près de son contact).
  local flHold,flPushed=c('flHold'),c('flPushed')
  -- Beta 1.51 : essais et qualifications, tours lancés (src/quali.lua), écrits seulement s'il y en a eu.
- local qY,qP,qL,qN,qW=c('qualiYield'),c('qualiPassed'),c('qualiLost'),c('qualiNoPass'),c('qualiWarn')
+ local qY,qP,qL,qN,qW,qC=c('qualiYield'),c('qualiPassed'),c('qualiLost'),c('qualiNoPass'),c('qualiWarn'),c('qualiCool')
  local qH=e.merge and e.merge.qualiHolds or 0; if e.merge then e.merge.qualiHolds=0 end
  for key in pairs(n) do n[key]=0 end
  t.started=0; t.held=0
@@ -83,7 +83,7 @@ function M.summary(e)
   ..(tows+towEnds+dirtyAirs>0 and string.format(' | aspiration cassee %d (finies %d), air sale %d',tows,towEnds,dirtyAirs) or '')
   ..(flCare+flLift+flBrake+flAvoid+flPass>0 and string.format(' | premier tour attentif : anticipations %d, levers de pied du radar %d, freinages du radar %d, evitements refuses (voiture pas assez lente) %d, depassements retenus %d',flCare,flLift,flBrake,flAvoid,flPass) or '')
   ..(flHold>0 and string.format(' | ligne droite : pied tenu %d fois (dont voiture de derriere plus pres %d)',flHold,flPushed) or '')
-  ..(qY+qP+qL+qN+qW+qH>0 and string.format(' | tours lances : cessions %d (abouties %d, perdues %d), attaques retenues %d, retenues a la jonction %d, avis au joueur %d',qY,qP,qL,qN,qH,qW) or '')
+  ..(qY+qP+qL+qN+qW+qH+qC>0 and string.format(' | tours lances : cessions %d (abouties %d, perdues %d), attaques retenues %d, retenues a la jonction %d, avis au joueur %d, refroidissements des IA %d',qY,qP,qL,qN,qH,qW,qC) or '')
  return string.format('resume: profil %s, garde %s, IA %d, gerees %d | conduite %d, cession %d, depassement %d, evitement %d, recuperation %d | sous jaune %d, incidents %d, zones %d, IA arretees %d, neutralisation %s | cout moyen %.3f ms, max %.3f ms, erreurs %d',
   e.profile,e.guard,ai,managed,drive,yield,pass,avoid,calm,yellow,t.activeCount,t.zoneCount,t.holdCount,t.neutral and t.neutralMode or 'aucune',e.meanFrame,e.maxFrame,e.errors)
   ..(e.maxFrame==0 and ' (cout non mesure : aucun chronometre disponible)' or '')..(#unmanaged>0 and ' | hors gestion : '..table.concat(unmanaged,', ') or '')..minute

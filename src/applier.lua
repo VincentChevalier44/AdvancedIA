@@ -137,9 +137,7 @@ function M.openStore(a)
   profiles[p]=accepted and normalized or defaults
   a.storageErrors=a.storageErrors+(accepted and n or 1)+(good and 0 or 1)
  end
- -- Données 1.2.0 : migration unique, sauvegardée à la première occasion.
- local migrated,upgraded,fresh,restored=pcall(C.migrate,g,profiles)
- if migrated and upgraded then a.upgraded=upgraded; a.firstInstall=fresh==true; a.signsRestored=restored==true; a.dirty=true; a.dirtyAt=0 end
+ -- Beta 1.52 : préréglages personnels lus avant la migration (indépendants des réglages globaux), qui les reçoit.
  for i=1,K.maxPresets do
   local opened,slot=pcall(ac.storage,Presets.layout(),'humanai:custom:'..i..':')
   if opened then
@@ -148,6 +146,9 @@ function M.openStore(a)
    if good then a.presets[i]=entry; if entry and errors>0 then a.storageErrors=a.storageErrors+errors end end
   end
  end
+ -- Données 1.2.0 : migration unique, sauvegardée à la première occasion.
+ local migrated,upgraded,fresh,restored=pcall(C.migrate,g,profiles,a.presets)
+ if migrated and upgraded then a.upgraded=upgraded; a.firstInstall=fresh==true; a.signsRestored=restored==true; a.dirty=true; a.dirtyAt=0 end
  return g,profiles
 end
 function M.savePreset(a,entry)
@@ -185,15 +186,21 @@ function M.readFlagsHidden(a)
  local ok,value=pcall(readRaceFlagsHidden,a)
  if ok and type(value)=='boolean' then a.raceFlagsHidden=value elseif ok and type(value)=='number' then a.raceFlagsHidden=value~=0 else a.raceFlagsHidden=nil end
 end
-function M.menu(a,visible)
+-- Beta 1.52 : fenêtre ouverte hors des menus cherchée au changement de visibilité, puis au plus toutes les
+-- K.windowCheckPeriod s (now : horloge des images, qui avance aussi en replay, donnée par la mise à jour de l'image
+-- seulement ; sans now, rappel du dessin : au changement seulement). Avant : un appel protégé de ac.isWindowOpen à chaque image.
+function M.menu(a,visible,now)
  a.menuVisible=visible
- if visible~=a.menuLast then
+ local changed=visible~=a.menuLast
+ if changed then
   a.menuLast=visible
   -- Relue à chaque ouverture du menu (réglage CSP modifiable en cours de partie).
   if visible then M.readFlagsHidden(a) end
   if callable(ac.setWindowOpen) then pcall(ac.setWindowOpen,'main',visible) end
  end
- if not visible and callable(ac.isWindowOpen) and callable(ac.setWindowOpen) then
+ local due=changed or now~=nil and now>=(a.windowCheckAt or -math.huge)
+ if not visible and due and callable(ac.isWindowOpen) and callable(ac.setWindowOpen) then
+  if now~=nil then a.windowCheckAt=now+K.windowCheckPeriod end
   for _,id in ipairs(windowIDs) do local ok,opened=pcall(ac.isWindowOpen,id); if ok and opened then pcall(ac.setWindowOpen,id,false) end end
  end
 end
@@ -226,7 +233,13 @@ function M.rebase(a,amount)
   local s=a.cars[i]; s.lastWrite=s.lastWrite-amount; s.readAt=s.readAt-amount; s.weatherAt=s.weatherAt-amount; s.tyreAt=s.tyreAt-amount; s.levelAt=s.levelAt-amount
   s.pitAt=s.pitAt-amount; s.stopAt=s.stopAt-amount; s.parkAt=s.parkAt-amount; s.teleportAt=s.teleportAt-amount; s.flashAt=s.flashAt-amount; s.drsAt=s.drsAt-amount
   if U.finite(s.placeAt) then s.placeAt=s.placeAt-amount end; if U.finite(s.launchAt) then s.launchAt=s.launchAt-amount end; if U.finite(s.scKickAt) then s.scKickAt=s.scKickAt-amount end
+  -- Beta 1.52 : sortie du stand de la voiture de sécurité chronométrée aussi après un recalage du temps.
+  if U.finite(s.scReleasedAt) then s.scReleasedAt=s.scReleasedAt-amount end
  end
+ -- Beta 1.52 : relecture de « Hide race flags » et drapeau resté affiché, recalés aussi (la fenêtre hors menu suit
+ -- l'horloge des images de AdvancedIA.lua, jamais recalée).
+ if U.finite(a.hiddenReadAt) then a.hiddenReadAt=a.hiddenReadAt-amount end
+ if U.finite(a.flagLeftoverAt) then a.flagLeftoverAt=a.flagLeftoverAt-amount end
 end
 function M.save(a,g,profiles,now,replay,force)
  if replay or not a.dirty or not force and (now<a.dirtyAt or now-a.lastSave<K.saveDelay) then return end
@@ -288,7 +301,10 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
    local driving=mine and not car.pit and not car.offtrack
    if driving or final and mine then
     local good=s.offsetReset==true and s.offset==0
-    if not good and driving and not frame.replay then
+    -- Beta 1.52 : au déchargement (aucune image ne suit), décalage rendu à 0 sans condition (aux stands, hors piste, en
+    -- replay ou voisin trop près) : sinon AC le gardait jusqu'à la fin de la partie.
+    if not good and final then good=Caps.restoreCall(a.caps,'offset',car.index,0,false); s.offsetReset=good
+    elseif not good and driving and not frame.replay then
      Perception.occupancy(frame.cars,frame.count,i,a.g or C.globalDefaults,a.safety)
      local canonical=s.offset*(a.offsetSign==0 and 1 or a.offsetSign)
      local safe=not (canonical>0 and a.safety.left or canonical<0 and a.safety.right)
@@ -323,6 +339,9 @@ local function field(a,s,name,index,owned,value,epsilon,original)
 end
 local function claim(a,s,car,now)
  if s.owned and s.id==(car.identity or car.id) then return end
+ -- Beta 1.52 : autre voiture dans l'emplacement (déjà prise une fois) : sorties de la voiture de sécurité comptées pour
+ -- la précédente oubliées.
+ if s.id~='' and s.id~=(car.identity or car.id) then s.scEscapes=nil end
  s.id=car.identity or car.id
  if s.restoredAt~=now then s.originalLevel=car.aiLevel; s.originalAggression=car.aiAggression end
  s.owned=true; s.recovered=false; a.recoveryDirty=true
@@ -345,7 +364,7 @@ local function weather(a,s,car,cmd,now)
    if cmd.weatherCompound>=0 and (car.pit or cmd.weatherGrid and car.kmh<=K.tyreStopSpeed) and car.compoundIndex~=cmd.weatherCompound and now>=s.tyreAt and a.caps.tyres.available then
     local before=car.compoundIndex
     if Caps.call(a.caps,'tyres',car.index,cmd.weatherCompound) then
-     s.tyreAt=now+5
+     s.tyreAt=now+K.tyreWriteGap
      local names=car.tyreNames or {}
      note(a,'INFO',string.format('pneus adaptes a la meteo %s: %s -> %s (%s)',car.inPitBox and 'aux stands' or car.pit and 'dans la voie des stands' or 'a l arret au depart',
       tostring(names[before] or before),tostring(names[cmd.weatherCompound] or cmd.weatherCompound),cmd.weatherRain and 'pluie' or 'sec'),car.index+1)
@@ -381,7 +400,7 @@ local function pitRequest(a,s,car,cmd,now)
  if cmd.pitCompound>=0 and car.inPitBox and car.kmh<=K.tyreStopSpeed and s.tyreVisit~=cmd.pitVisit and now>=s.tyreAt and a.caps.tyres.available then
   claim(a,s,car,now)
   -- Journal (Beta 1.24) : gomme posée et gomme d'avant, avec leurs noms (variantes d'adhérence d'un même mod).
-  if Caps.call(a.caps,'tyres',car.index,cmd.pitCompound) then s.tyreVisit=cmd.pitVisit; s.tyreAt=now+5; note(a,'INFO',string.format('pneus poses: composé %d (%s), avant %s (%s)',cmd.pitCompound,tyreLabel(car,cmd.pitCompound),tostring(car.compoundIndex or '?'),tyreLabel(car,car.compoundIndex)),car.index+1) end
+  if Caps.call(a.caps,'tyres',car.index,cmd.pitCompound) then s.tyreVisit=cmd.pitVisit; s.tyreAt=now+K.tyreWriteGap; note(a,'INFO',string.format('pneus poses: composé %d (%s), avant %s (%s)',cmd.pitCompound,tyreLabel(car,cmd.pitCompound),tostring(car.compoundIndex or '?'),tyreLabel(car,car.compoundIndex)),car.index+1) end
  end
  -- Réparations (Beta 1.20) : une fois par passage à l'emplacement, voiture arrêtée ; seuls les dégâts lus sont réparés.
  if s.repairVisit>=0 and s.id~=(car.identity or car.id) then s.repairVisit=-1 end
@@ -413,7 +432,8 @@ local function pitRequest(a,s,car,cmd,now)
   end
  elseif s.fuelRequested>=0 and s.owned and s.id==(car.identity or car.id) and not car.inPitBox and Caps.restoreCall(a.caps,'fuel',car.index,math.huge) then s.fuelRequested=-1; s.fuelLogged=nil; a.recoveryDirty=true end
  -- Plein de course avant le départ (sans ravitaillement prévu) : une fois par voiture et par session.
- local fuelKey=cmd.fuelSet>=0 and (car.identity or car.id)..'|'..(a.session or 0)
+ -- Beta 1.52 : clé avec le numéro de passage de nextSession (une course recommencée garde le même indice de session).
+ local fuelKey=cmd.fuelSet>=0 and (car.identity or car.id)..'|'..(a.session or 0)..'|'..(a.sessionGen or 0)
  if fuelKey and s.fuelSetFor~=fuelKey and a.caps.fuelSet.available then
   claim(a,s,car,now)
   if Caps.call(a.caps,'fuelSet',car.index,cmd.fuelSet) then s.fuelSetFor=fuelKey; note(a,'INFO',string.format('carburant au depart: %.1f L (%.1f L avant)',cmd.fuelSet,car.fuel or -1),car.index+1) end
@@ -499,20 +519,24 @@ local function nativeFree(f) return f==K.flagNone or f==K.flagStart end
 -- Beta 1.47 (Monza, 4 novembre, 17:26) : après « rendus a AC » à la relance d'une session, CSP affichait encore le rouge
 -- écrit par l'app (5, le noir d'AC) ; l'app le prenait pour un drapeau noir natif : plus rien n'était écrit (« drapeau
 -- natif 5 ») et l'overlay restait sur le drapeau noir. Après une restitution, une valeur affichée égale à la dernière
--- écrite par l'app est la sienne : restitution renvoyée (toutes les K.flagLeftoverEvery images, K.flagLeftoverTries
--- fois), jamais lue comme un drapeau natif ; au bout des essais, laissée à AC (un vrai drapeau noir d'AC reste donc
--- respecté) ; oubliée dès que la valeur affichée change.
+-- écrite par l'app est la sienne : restitution renvoyée (Beta 1.52 : toutes les K.flagLeftoverDelay s, avant : toutes
+-- les 60 images, K.flagLeftoverTries fois), jamais lue comme un drapeau natif ; au bout des essais, laissée à AC (un vrai
+-- drapeau noir d'AC reste donc respecté) ; oubliée dès que la valeur affichée change.
 function M.flagReleased(a)
- if a.flagLast and a.flagLast~=K.flagNone and a.flagLast~=K.flagStart then a.flagLeftover=true; a.flagLeftoverTries=0; a.flagLeftoverFrames=0 end
+ if a.flagLast and a.flagLast~=K.flagNone and a.flagLast~=K.flagStart then a.flagLeftover=true; a.flagLeftoverTries=0; a.flagLeftoverAt=nil end
 end
 function M.flagMine(a,frame) return a.flagOverride or a.flagLeftover==true and frame.flag==a.flagLast end
-local function leftover(a,frame,value)
+-- clock : temps du moteur (le premier envoi attend K.flagLeftoverDelay s) ; sans lui, renvoi à chaque appel.
+local function leftover(a,frame,value,clock)
  if not a.flagLeftover then return end
  if frame.flag~=a.flagLast then a.flagLeftover=false; return end
  if value~=K.flagNone then return end
- a.flagLeftoverFrames=(a.flagLeftoverFrames or 0)+1
- if a.flagLeftoverFrames<K.flagLeftoverEvery then return end
- a.flagLeftoverFrames=0; a.flagLeftoverTries=(a.flagLeftoverTries or 0)+1
+ if clock~=nil then
+  if a.flagLeftoverAt==nil then a.flagLeftoverAt=clock+K.flagLeftoverDelay end
+  if clock<a.flagLeftoverAt then return end
+  a.flagLeftoverAt=clock+K.flagLeftoverDelay
+ end
+ a.flagLeftoverTries=(a.flagLeftoverTries or 0)+1
  if a.flagLeftoverTries==1 then note(a,'INFO',string.format('panneaux lumineux du circuit: drapeau %d de l app encore affiche apres restitution, restitution renvoyee',a.flagLast),-1) end
  Caps.restoreCall(a.caps,'flag',-1,K.flagNone)
  -- Au bout des essais : AC garde sa dernière valeur tant qu'il ne la change pas lui-même (blanc, 6, resté affiché à Spa
@@ -525,7 +549,9 @@ local function leftover(a,frame,value)
   a.flagLast=K.flagStart
  end
 end
-function M.flag(a,frame,wanted,reason,now,hold)
+-- Beta 1.52 : clock, temps du moteur donné à chaque appel (now n'est donné qu'avec les panneaux), pour le drapeau de
+-- l'app resté affiché.
+function M.flag(a,frame,wanted,reason,now,hold,clock)
  if not a.allowed or frame.online or frame.replay or frame.paused then return end
  local value=wanted==true and K.flagCaution or type(wanted)=='number' and wanted or K.flagNone
  local lights=reason~=nil and reason~=''
@@ -534,7 +560,7 @@ function M.flag(a,frame,wanted,reason,now,hold)
  local cap=a.caps.flag
  if value==K.flagStop and lights and not redHidden(a,now) then value=K.flagCaution end
  if value==K.flagNone then a.flagBlocked=nil end
- leftover(a,frame,value)
+ leftover(a,frame,value,clock or now)
  if value~=K.flagNone and not a.flagOverride then
   -- Jamais par-dessus un drapeau natif (bleu, blanc, damier, noir, pénalité) : sur le jaune natif, seulement le jaune ou
   -- le rouge.
@@ -723,6 +749,10 @@ local function safety(a,s,car,cmd,now)
  elseif not cmd.scSkin and s.skinOriginal then restoreSkin(s,car) end
  if cmd.scPark or cmd.scSpeed<K.unlimitedSpeed then claim(a,s,car,now) end
  if cmd.scPark then
+  -- Beta 1.52 : garage en cours : une restitution en attente (changement de session, reprise après un rechargement) est
+  -- annulée, comme pour la retenue (hold) ; sinon elle rendait la voiture puis la regarait (ou la retenait) à chaque
+  -- image : quatre écritures natives, une ligne au journal et un point de reprise par image.
+  s.reset=false
   -- Ramenée à son emplacement depuis la piste comme depuis la voie des stands (jamais garée en travers) ; de nouveau si
   -- elle en ressort (Beta 1.22 : garée sans pilote, une IA peut quitter son emplacement, Content Manager la placer en
   -- piste), au plus toutes les K.parkReturnPeriod s.
@@ -735,7 +765,13 @@ local function safety(a,s,car,cmd,now)
   -- K.scHoldTime s, freinage forcé de K.scHoldStop s, renouvelés toutes les K.scHoldPeriod s), jamais garée sans pilote : libérée, elle
   -- repart d'elle-même par la voie des stands (garée sans pilote, elle n'en sortait jamais). Garée sans pilote seulement
   -- après K.scEscapeMax sorties de son emplacement malgré l'attente.
-  if cmd.parkReason=='sc' and (s.scEscapes or 0)<K.scEscapeMax and not s.parked then
+  local held=cmd.parkReason=='sc' and (s.scEscapes or 0)<K.scEscapeMax
+  -- Beta 1.52 : garée sans pilote à une session précédente (sorties comptées, oubliées à chaque session) ou par une
+  -- version d'avant : levée d'abord, puis retenue par l'attente d'AC ; levée refusée : garée comme avant.
+  if held and s.parked then
+   if Caps.restoreCall(a.caps,'park',car.index,false) then s.parked=false; s.parkAt=-math.huge; a.recoveryDirty=true else held=false end
+  end
+  if held then
    if car.inPitBox then
     if now>=(s.scHoldAt or -math.huge) or s.scHoldAt-now>K.scHoldPeriod then
      s.scHoldAt=now+K.scHoldPeriod; Caps.call(a.caps,'startDelay',car.index,K.scHoldTime); Caps.call(a.caps,'stop',car.index,K.scHoldStop)
@@ -749,6 +785,9 @@ local function safety(a,s,car,cmd,now)
    if not s.parked then a.recoveryDirty=true; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: garee jusqu a la fin de la session' or cmd.parkReason=='spare' and 'voiture de securite en reserve: garee sans pilote' or 'voiture de securite: garee sans pilote',car.index+1) end; s.parked=true; s.parkAt=now+K.parkPeriod
   end
  else
+  -- Beta 1.52 : retenue levée sans libération (scPark retombé sans scRelease) : attente native de K.scHoldTime s et
+  -- freinage forcé rendus à AC (avant : laissés posés, la voiture restait à son emplacement).
+  if s.scHeld then Caps.restoreCall(a.caps,'startDelay',car.index,0); Caps.restoreCall(a.caps,'stop',car.index,0); a.recoveryDirty=true end
   s.teleported=false; s.teleportAt=-math.huge; s.scHeld=false; s.scHoldAt=-math.huge
   if s.parked and Caps.restoreCall(a.caps,'park',car.index,false) then s.parked=false; s.parkAt=-math.huge; a.recoveryDirty=true end
   -- Beta 1.25 : libérée mais encore à son emplacement (en course, elle n'en sortait jamais seule) : réveillée, départ
@@ -956,6 +995,26 @@ function M.journalWrite(a,text)
 end
 function M.storeText(key,text) if ac.store then return pcall(ac.store,key,text) end return false end
 function M.loadText(key) if not ac.load then return nil end local ok,text=pcall(ac.load,key); return ok and text or nil end
+-- Beta 1.52 (décision du pilote) : état de la mise à jour d'une app compagne, publié par elle-même dans la mémoire de la
+-- partie (contrat v1 avec SpotterEnginer : « v=1;installed=…;latest=…;state=…[;needs=…] », champs inconnus ignorés).
+-- Lecture seule : AdvancedIA ne télécharge ni n'installe jamais rien pour elle. nil si absent ou illisible.
+local companionStates={available=true,uptodate=true,checking=true,error=true,incompatible=true}
+local function companionVersion(value) return type(value)=='string' and #value>0 and #value<=K.companionVersionBytes and value:match('^[%w%.%-%? ]+$')~=nil end
+function M.parseCompanionUpdate(text)
+ if type(text)~='string' or #text>K.companionUpdateBytes or text:sub(1,4)~='v=1;' then return nil end
+ local fields={}
+ for key,value in text:gmatch('(%w+)=([^;]*)') do fields[key]=value end
+ if not companionStates[fields.state] or not companionVersion(fields.installed) then return nil end
+ return {state=fields.state,installed=fields.installed,latest=companionVersion(fields.latest) and fields.latest or nil,needs=companionVersion(fields.needs) and fields.needs or nil}
+end
+function M.companionUpdate(key) return M.parseCompanionUpdate(M.loadText(key)) end
+-- Fenêtre de réglages d'une app compagne ouverte (elle y gère seule sa mise à jour) ; false si impossible.
+function M.openCompanion(window)
+ if not ac or not callable(ac.accessAppWindow) then return false end
+ local ok,w=pcall(ac.accessAppWindow,window)
+ if not ok or not w then return false end
+ return (pcall(function() w:setVisible(true) end))
+end
 function M.message(title,text) if callable(ac.setMessage) then return pcall(ac.setMessage,title,text) end return false end
 -- Message témoin du masquage des messages d'AC (Beta 1.26), le plus bref possible.
 function M.probeMessage(title) if callable(ac.setMessage) then return pcall(ac.setMessage,title,'',nil,K.probeTime) end return false end
@@ -989,6 +1048,47 @@ function M.floodLeftover()
  local okAfter,still=pcall(io.fileExists,bak)
  return okAfter and still~=true
 end
+-- Beta 1.52 : ancienne version désinstallée (plus de apps/lua/<old>/manifest.ini, lu sans erreur) : copie laissée par sa
+-- mise à jour (cfg/extension/state/<work>, ACAdvancedIA-update : ses versions next, current et backup) effacée.
+-- Ce seul dossier, au nom exact, dans le dossier d'état de CSP (jamais AdvancedIA-update, celui de cette app, ni le
+-- fichier ACAdvancedIA-cspgui.ini voisin) ; tout le contenu listé d'abord, rien n'est effacé si un nom est douteux
+-- (« .. », séparateur, « : ») ou si la liste dépasse K.oldWorkMaxFiles entrées ou K.oldWorkMaxDepth niveaux. Une
+-- fois effacé, rien n'est plus tenté ; toute erreur laisse le reste en place, sans message. Vrai si le dossier a disparu.
+local function oldWorkList(dir,rel,depth,out)
+ if depth>K.oldWorkMaxDepth then error('profondeur',0) end
+ io.scanDir(dir,'*',function(name,attr)
+  if name=='.' or name=='..' then return end
+  if type(name)~='string' or name=='' or name:find('..',1,true) or name:find('[/\\:]') then error('nom',0) end
+  if #out>=K.oldWorkMaxFiles then error('taille',0) end
+  local path=rel=='' and name or rel..'/'..name
+  if attr and attr.isDirectory then oldWorkList(dir..'/'..name,path,depth+1,out); out[#out+1]={path=path,dir=true}
+  else out[#out+1]={path=path,dir=false} end
+ end)
+ return out
+end
+function M.oldWorkLeftover(old,work)
+ local ok,done=pcall(function()
+  if type(old)~='string' or not old:match('^[%w_%-]+$') or type(work)~='string' or not work:match('^[%w_%-]+$') then return false end
+  if type(ac)~='table' or type(ac.getFolder)~='function' or type(ac.FolderID)~='table' or not ac.FolderID.ExtCfgState or not ac.FolderID.ACAppsLua then return false end
+  if type(io)~='table' then return false end
+  for _,name in ipairs({'fileExists','dirExists','scanDir','deleteFile','deleteDir'}) do if type(io[name])~='function' then return false end end
+  local apps,state=ac.getFolder(ac.FolderID.ACAppsLua),ac.getFolder(ac.FolderID.ExtCfgState)
+  if type(apps)~='string' or apps=='' or type(state)~='string' or state=='' then return false end
+  apps=apps:gsub('\\','/'):gsub('/+$',''); state=state:gsub('\\','/'):gsub('/+$','')
+  if apps=='' or state=='' then return false end
+  -- Ancienne version encore là (ou réponse douteuse) : rien n'est touché.
+  if io.fileExists(apps..'/'..old..'/manifest.ini')~=false then return false end
+  local root=state..'/'..work
+  if io.dirExists(root)~=true then return false end
+  local list=oldWorkList(root,'',1,{})
+  for _,item in ipairs(list) do if not item.dir then io.deleteFile(root..'/'..item.path) end end
+  -- Dossiers listés les plus profonds d'abord (chaque dossier ajouté après son contenu), puis le dossier lui-même.
+  for _,item in ipairs(list) do if item.dir then io.deleteDir(root..'/'..item.path) end end
+  io.deleteDir(root)
+  return io.dirExists(root)==false
+ end)
+ return ok and done==true
+end
 -- Écriture sûre d'un fichier de cfg/extension. Beta 1.38 : io.save(…, true) passe par io.replaceFile, qui laisse
 -- l'ancien contenu en <fichier>.bak : ce reste est effacé après chaque écriture.
 local function saveClean(path,text)
@@ -1018,6 +1118,8 @@ local function removeFile(path)
  return ok and present~=true
 end
 function M.cspPort()
+ -- Nom du fichier d'état volontairement resté « ACAdvancedIA-cspgui.ini » au changement de nom de l'app (Beta 1.49) :
+ -- les valeurs d'origine gardées par les versions d'avant y restent lues et rendues (migration) ; ne pas le renommer.
  local gui,state=folderFile('ExtCfgUser','gui.ini'),folderFile('ExtCfgState','ACAdvancedIA-cspgui.ini')
  local ready=gui~=nil and state~=nil and io~=nil and callable(io.load) and callable(io.save) and callable(io.fileExists) and callable(io.deleteFile)
   and ac.INIConfig~=nil and callable(ac.INIConfig.cspModule) and ac.CSPModuleID~=nil
@@ -1085,15 +1187,15 @@ function M.apply(a,frame,commands,g,now)
     if not U.finite(cmd.level) or not U.finite(cmd.aggression) or not U.finite(cmd.caution) then a.rejected=math.min(K.counterMax,a.rejected+1) end
     -- Beta 1.42 : facteur de niveau des modules (tour de sortie, panne) ; 1 = niveau du directeur inchangé.
     local scale=cmd.levelScale or 1
-    local level=U.number(scale~=1 and U.finite(cmd.level) and cmd.level*math.max(K.levelScaleMin,scale) or cmd.level,0,a.caps.levelMode=='native' and 1.1 or 1,s.level or car.aiLevel)
+    local level=U.number(scale~=1 and U.finite(cmd.level) and cmd.level*math.max(K.levelScaleMin,scale) or cmd.level,0,a.caps.levelMode=='native' and K.nativeLevelMax or 1,s.level or car.aiLevel)
     local previous=s.level
     field(a,s,'level',car.index,cmd.levelOwned,level,K.levelEpsilon,s.originalLevel)
     if s.level~=previous then s.levelAt=now end
     field(a,s,'aggression',car.index,cmd.aggressionOwned,U.number(cmd.aggression,0,K.maxAggression,car.aiAggression),K.aggrEpsilon,s.originalAggression)
-    field(a,s,'caution',car.index,cmd.cautionOwned,U.number(cmd.caution,0.5,K.maxCaution,K.defaultCaution),K.cautionEpsilon,K.defaultCaution)
+    field(a,s,'caution',car.index,cmd.cautionOwned,U.number(cmd.caution,K.minCaution,K.maxCaution,K.defaultCaution),K.cautionEpsilon,K.defaultCaution)
     local grip=K.gripBase; local gripOwned=false
-    if g.useGripBoost and a.caps.levelMode=='grip' then grip=grip*(1+math.max(0,U.number(cmd.level,0,1.1,1)*100-100)*g.gripPerLevelPct); gripOwned=true end
-    if cmd.weatherManaged and (cmd.weatherGrip or 1)>1 then grip=grip*U.number(cmd.weatherGrip,1,1.3,1); gripOwned=true end
+    if g.useGripBoost and a.caps.levelMode=='grip' then grip=grip*(1+math.max(0,U.number(cmd.level,0,K.nativeLevelMax,1)*100-100)*g.gripPerLevelPct); gripOwned=true end
+    if cmd.weatherManaged and (cmd.weatherGrip or 1)>1 then grip=grip*U.number(cmd.weatherGrip,1,K.weatherGripMax,1); gripOwned=true end
     if gripOwned and a.caps.grip.available then
      send(a,s,'grip',car.index,grip,K.gripEpsilon)
     elseif s.grip then if Caps.restoreCall(a.caps,'grip',car.index,K.gripBase) then s.grip=nil; a.recoveryDirty=true end end
@@ -1156,14 +1258,21 @@ function M.nextSession(a,frame)
     if s.level and not s.recovered and math.abs(car.aiLevel-s.level)>K.levelEpsilon then s.originalLevel=car.aiLevel end
     if s.aggression and not s.recovered and math.abs(car.aiAggression-s.aggression)>K.aggrEpsilon then s.originalAggression=car.aiAggression end
     -- Voiture garée (voiture de sécurité, réserve, disqualifiée) : gardée sous l'ordre de garage, que le moteur lève
-    -- lui-même ; la restituer la libérerait puis la regarerait à chaque image.
-    s.reset=not s.parked; s.tyreVisit=-1
+    -- lui-même ; la restituer la libérerait puis la regarerait à chaque image. Beta 1.52 : de même pour la voiture de
+    -- sécurité retenue à son emplacement (attente d'AC).
+    s.reset=not s.parked and not s.scHeld; s.tyreVisit=-1
    end
   end
   -- Nouvelle session ou course recommencée : AC replace les voitures sur la grille ; une voiture à garer (voiture de
   -- sécurité, réserve) ou à dépanner est de nouveau ramenée à son stand.
   s.lastWrite=-math.huge; s.readAt=0; s.teleported=false; s.teleportAt=-math.huge; s.redTeleported=false
+  -- Beta 1.52 : réparations de nouveau à la première visite de la session (Pits.reset remet le compteur de visites à
+  -- 0 : la réparation de la session d'avant la sautait) ; sorties de la voiture de sécurité recomptées (sinon, après
+  -- K.scEscapeMax sorties, garée sans pilote dans toutes les sessions suivantes).
+  s.repairVisit=-1; s.scEscapes=nil
  end
+ -- Beta 1.52 : numéro de passage, dans la clé du plein de course (une course recommencée garde le même indice).
+ a.sessionGen=(a.sessionGen or 0)+1
  a.session=frame.session
 end
 function M.clipboard(text) if ac.setClipboardText then return pcall(ac.setClipboardText,text) end return false end
@@ -1173,7 +1282,9 @@ function M.checkpoint(a,frame,force)
  for i=1,K.maxCars do
   local s=a.cars[i]
   if s.owned and s.id:match('^[%w_%-]*$') then
-   rows[#rows+1]=string.format('%d,%s,%.9g,%.9g,%.9g,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d',i,s.id,s.originalLevel,s.originalAggression,s.offset,s.level and 1 or 0,s.aggression and 1 or 0,s.caution and 1 or 0,s.grip and 1 or 0,s.brake>0 and 1 or 0,s.speed and 1 or 0,s.rainHint~=nil and 1 or 0,s.rainHint==true and 1 or 0,s.originalRain and 1 or 0,s.pitRequest and 1 or 0,s.stop and 1 or 0,s.parked and 1 or 0)
+   -- Beta 1.52 : deux colonnes ajoutées à la fin (une ligne plus ancienne reste lue) : carburant demandé (litres, -1
+   -- sans demande) et voiture de sécurité retenue par l'attente d'AC ; rendus à AC par l'instance suivante.
+   rows[#rows+1]=string.format('%d,%s,%.9g,%.9g,%.9g,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d',i,s.id,s.originalLevel,s.originalAggression,s.offset,s.level and 1 or 0,s.aggression and 1 or 0,s.caution and 1 or 0,s.grip and 1 or 0,s.brake>0 and 1 or 0,s.speed and 1 or 0,s.rainHint~=nil and 1 or 0,s.rainHint==true and 1 or 0,s.originalRain and 1 or 0,s.pitRequest and 1 or 0,s.stop and 1 or 0,s.parked and 1 or 0,s.fuelRequested>=0 and math.floor(s.fuelRequested) or -1,s.scHeld and 1 or 0)
   end
  end
  local ok=pcall(ac.store,'humanai:recovery',table.concat(rows,'\n')); if ok then a.recoveryDirty=false end
@@ -1181,7 +1292,7 @@ end
 function M.recover(a,frame)
  if not ac.load then return end
  local ok,text=pcall(ac.load,'humanai:recovery')
- if not ok or type(text)~='string' or #text>K.maxZoneBytes then return end
+ if not ok or type(text)~='string' or #text>K.storeMaxBytes then return end
  -- Drapeau laissé par une instance précédente : rendu à AC quelle que soit la session.
  local head=text:match('^[^\n]*') or ''
  if head:find(';F',1,true) then a.flagOverride=true end
@@ -1189,16 +1300,18 @@ function M.recover(a,frame)
  if head:find(';D',1,true) then a.drsRelease=true end
  local session=text:match('^(%d+)')
  if tonumber(session)~=frame.session then return end
- for slot,id,level,aggression,offset,lc,ag,ca,gr,br,sp,rh,rv,ro,pr,st,pk in text:gmatch('\n(%d+),([%w_%-]*),([%d.eE+%-]+),([%d.eE+%-]+),([%d.eE+%-]+),([01]),([01]),([01]),([01]),([01]),?([01]?),?([01]?),?([01]?),?([01]?),?([01]?),?([01]?),?([01]?)') do
+ for slot,id,level,aggression,offset,lc,ag,ca,gr,br,sp,rh,rv,ro,pr,st,pk,fu,sh in text:gmatch('\n(%d+),([%w_%-]*),([%d.eE+%-]+),([%d.eE+%-]+),([%d.eE+%-]+),([01]),([01]),([01]),([01]),([01]),?([01]?),?([01]?),?([01]?),?([01]?),?([01]?),?([01]?),?([01]?),?(%-?%d*),?([01]?)') do
   local i=tonumber(slot); local l,aggressionValue,o=tonumber(level),tonumber(aggression),tonumber(offset)
-  if i and i>=1 and i<=K.maxCars and U.finite(l) and l>=0 and l<=2 and U.finite(aggressionValue) and aggressionValue>=0 and aggressionValue<=1 and U.finite(o) and math.abs(o)<=1 then
+  if i and i>=1 and i<=K.maxCars and U.finite(l) and l>=0 and l<=K.levelReadMax and U.finite(aggressionValue) and aggressionValue>=0 and aggressionValue<=1 and U.finite(o) and math.abs(o)<=1 then
    local s=a.cars[i]; s.owned=true; s.reset=true; s.recovered=true; s.id=id; s.originalLevel=l; s.originalAggression=aggressionValue; s.offset=o
-   s.level=lc=='1' and l or nil; s.aggression=ag=='1' and aggressionValue or nil; s.caution=ca=='1' and 1 or nil; s.grip=gr=='1' and K.gripBase or nil; s.brake=br=='1' and K.brakeMax or 0
+   s.level=lc=='1' and l or nil; s.aggression=ag=='1' and aggressionValue or nil; s.caution=ca=='1' and K.defaultCaution or nil; s.grip=gr=='1' and K.gripBase or nil; s.brake=br=='1' and K.brakeMax or 0
    s.speed=sp=='1' and K.unlimitedSpeed or nil
    s.offsetReset=o==0
    -- Relecture : accélérateur peut-être laissé limité par l'instance d'avant (coupure des gaz) : rendu.
    s.throttle=K.throttleMin
    if rh=='1' then s.rainHint=rv=='1' end; s.originalRain=ro=='1'; s.pitRequest=pr=='1'; s.stop=st=='1'; s.parked=pk=='1'
+   -- Beta 1.52 : colonnes absentes (ligne d'une version plus ancienne) : aucune demande de carburant, aucune retenue.
+   local liters=tonumber(fu); s.fuelRequested=liters and liters>=0 and liters or -1; s.scHeld=sh=='1'
   end
  end
 end

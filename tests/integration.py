@@ -22,5 +22,7 @@ assert lua.eval("require('src/config').release")==manifest['ABOUT']['VERSION']
 run=lua.execute((APP/'tests/integration_cases.lua').read_text(encoding='utf-8'))
 cases=run((APP/'AdvancedIA.lua').read_text(encoding='utf-8'))
 result={'ok':True,'cases':list(cases.values())}
-(APP/'tests/integration-results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+# Filtre (INT_FILTER, campagne de mutations) : résultat partiel, jamais écrit à la place du résultat complet.
+if not os.environ.get('INT_FILTER'):
+    (APP/'tests/integration-results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
 print(json.dumps(result,ensure_ascii=False),flush=True)

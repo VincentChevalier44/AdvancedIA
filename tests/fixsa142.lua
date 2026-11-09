@@ -123,18 +123,20 @@ tests.FIXSA_WINDOW_HOLD_142=function()
  assert(logged(e,'arret retenu jusqu a l ouverture de la fenetre obligatoire')==1,'logged once')
  a.maxFuel=100; a.fuelPerLap=4; a.fuel=2; e.strategy.cars[2].replan=true; F.tick(e,f,0.2)
  assert(e.strategy.cars[2].wanted and e.strategy.cars[2].cause=='fuel','critical fuel: never held')
- -- Deux arrêts obligatoires (fenêtre 10 à 90 %) : arrêt aligné sur le plan seulement dans la tranche du premier.
+ -- Relecture 1.52 : un seul arrêt obligatoire depuis la 1.51 (fenêtre 10 à 90 %, tour 79 / 100) : arrêt aligné sur le
+ -- plan seulement s'il tombe avant la fin de la fenêtre moins la marge de la stratégie (avant : tranche du premier de
+ -- deux arrêts, code mort retiré).
  local function ruled(nextLap)
   -- Plan connu (cmd.stratPlanAt) avant que les règles d'arrêt ne jugent l'appel.
-  local x,fx=race(3,20,8)
-  worn(fx.cars[2],0.3); arm(x,2,8,nextLap,0.3); x.strategy.cars[2].stops=2
+  local x,fx=race(3,100,79)
+  worn(fx.cars[2],0.3); arm(x,2,79,nextLap,0.3)
   F.tick(x,fx,0.1)
-  x.p.mandatoryStops=2; x.p.pitWindowOpenPct=10; x.p.pitWindowClosePct=90; E.changed(x)
+  x.p.mandatoryStops=1; x.p.pitWindowOpenPct=10; x.p.pitWindowClosePct=90; E.changed(x)
   F.tick(x,fx,0.1); F.tick(x,fx,0.1)
   return x.commands[2].rulePit
  end
- assert(not ruled(9),'plan inside the first slice: rules wait for it')
- assert(ruled(12),'plan beyond the first slice: the rules call the stop')
+ assert(not ruled(81),'plan inside the window: rules wait for it')
+ assert(ruled(85),'plan beyond the end of the window (less the margin): the rules call the stop')
 end
 -- S-M3 : un tour neutralisé n'apprend pas la consommation (pits.lua).
 tests.FIXSA_FUEL_NEUTRAL_142=function()

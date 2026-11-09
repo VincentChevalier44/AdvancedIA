@@ -13,6 +13,11 @@ local function damageValues(raw)
   sd and math.max(U.number(sd[0],0,1,0),U.number(sd[1],0,1,0),U.number(sd[2],0,1,0),U.number(sd[3],0,1,0)) or 0,
   U.number(raw.engineLifeLeft,0,K.engineLifeNew,K.engineLifeNew),U.number(raw.gearboxDamage,0,1,0)
 end
+local function sizeRead(a)
+ local size=ac.getCar(a.index).aabbSize
+ a.length=size and U.finite(size.z) and size.z>=K.minLength and size.z<=K.maxLength and size.z or K.length
+ a.width=size and U.finite(size.x) and size.x>=K.minWidth and size.x<=K.maxWidth and size.x or K.width
+end
 local function damageRead(a,raw)
  a.damageBody,a.damageSuspension,a.engineLife,a.damageGearbox=damageValues(raw); a.repairingNative=raw.isRepairing==true
 end
@@ -94,9 +99,8 @@ local function readCar(a,index,dt,lane)
  a.lapTimeMs=U.number(raw.lapTimeMs,0,1e9,0)
  -- Meilleur et dernier tour (Beta 1.25, overlay et récapitulatif de course), en secondes ; 0 : aucun.
  a.bestLap=U.number(raw.bestLapTimeMs,0,1e8,0)/1000; a.lastLap=U.number(raw.previousLapTimeMs,0,1e8,0)/1000
- local size=raw.aabbSize
- a.length=size and U.finite(size.z) and size.z>=K.minLength and size.z<=K.maxLength and size.z or K.length
- a.width=size and U.finite(size.x) and size.x>=K.minWidth and size.x<=K.maxWidth and size.x or K.width
+ -- Beta 1.52 : longueur et largeur (raw.aabbSize) lues avec les métadonnées (sizeRead, toutes les K.metaPeriod s),
+ -- plus à chaque image.
  a.brake=U.number(raw.brake,0,1,0); a.gas=U.number(raw.gas,0,1,0)
  a.aiLevel=U.number(raw.aiLevel,0,2,K.defaultLevel); a.aiAggression=U.number(raw.aiAggression,0,1,K.defaultAggression)
  a.stopped=0
@@ -211,6 +215,8 @@ function M.read(s,dt,now,light)
  local ok=pcall(simRead,s)
  if not ok then s.online=true; s.count=0; s.errors=math.min(K.counterMax,s.errors+1); return false end
  if not pcall(raceRead,s) then s.flag=0; s.pitWindowStart=0; s.pitWindowEnd=0; s.errors=math.min(K.counterMax,s.errors+1) end
+ -- Beta 1.52 : première lecture toujours complète (place du joueur connue avant toute lecture légère).
+ if light and not s.playerSlot then light=false end
  if not light and s.lightLast then s.metaAt=-1; s.configSession=-1 end
  s.lightLast=light==true
  s.player=0
@@ -218,9 +224,24 @@ function M.read(s,dt,now,light)
   local a=s.cars[i]; local good,result=pcall(readCar,a,i-1,dt,s.laneWanted)
   if not good or not result then a.valid=false; a.control=false; s.invalid=math.min(K.counterMax,s.invalid+1) end
   if a.player and a.valid then s.player=i end
- end end
+ end
  -- L'indice zéro est réservé au joueur si un mode ne publie pas isUserControlled.
- if not light and s.player==0 and s.count>0 then s.player=1; s.cars[1].player=true; s.cars[1].control=false end
+ s.playerFallback=s.player==0 and s.count>0
+ if s.playerFallback then s.player=1; s.cars[1].player=true; s.cars[1].control=false end
+ s.playerSlot=s.player; s.lightPlayer=0
+ else
+  -- Beta 1.52 : lecture légère (rien à piloter ni à rendre) : seule la voiture du joueur est relue (place trouvée à la
+  -- dernière lecture complète), dans s.lightPlayer (s.player reste à 0 : le moteur et l'overlay, qui n'ont pas les
+  -- autres voitures, font comme avant) ; les autres sont marquées invalides. Avant : la mise à jour se croyait en
+  -- conduite aux stands, et le pont publiait les voitures d'une image ancienne comme valides.
+  local k=s.playerSlot; s.lightPlayer=0
+  for i=1,s.count do if i~=k then local a=s.cars[i]; a.valid=false; a.control=false end end
+  if k>0 and k<=s.count then
+   local a=s.cars[k]; local good,result=pcall(readCar,a,k-1,dt,false)
+   if good and result and (a.player or s.playerFallback) then s.lightPlayer=k; if s.playerFallback then a.player=true; a.control=false end
+   else a.valid=false; a.control=false end
+  end
+ end
  if not light and s.player>0 and now>=s.playerDamageAt then
   s.playerDamageAt=now+K.playerDamagePeriod
   if not pcall(playerDamage,s,s.cars[s.player]) then s.playerDamageSlot=0 end
@@ -258,6 +279,7 @@ function M.read(s,dt,now,light)
    local idOK,id=pcall(ac.getCarID,a.index); if idOK and type(id)=='string' then a.id=id:sub(1,K.metadataLength) end
    local nameOK,name=pcall(ac.getDriverName,a.index); if nameOK and type(name)=='string' then a.name=name:sub(1,K.metadataLength) end
    if a.id~=oldID or a.name~=oldName then a.identity=(a.id..'\0'..a.name):gsub('.',hexByte) end
+   if not pcall(sizeRead,a) then a.length=K.length; a.width=K.width end
    -- Livrée (dossier du skin) : une livrée « safety » désigne la voiture de sécurité parmi celles du modèle.
    local skinOK,skin=pcall(ac.getCarSkinID,a.index)
    if a.valid and a.control and not pcall(wearRead,a) then a.wearKnown=false end

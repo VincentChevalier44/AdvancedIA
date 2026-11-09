@@ -25,14 +25,15 @@ function M.reset(t)
 end
 -- Distance (m) le long de la piste jusqu'à la jonction : positive avant elle, négative après.
 function M.before(t,spline,length) return U.spline(t.spline-spline)*length end
--- Sortie relevée à spline : moyenne glissante ; trois sorties de suite à plus de K.mergeOutlier m : autre jonction.
+-- Sortie relevée à spline : moyenne glissante ; K.mergeOutlierCount sorties de suite à plus de K.mergeOutlier m : autre
+-- jonction.
 local function learn(t,spline,length,log,now)
  if t.spline<0 then t.spline=spline; t.samples=1; t.outliers=0
  else
   local offset=U.spline(spline-t.spline)
   if abs(offset)*length>K.mergeOutlier then
    t.outliers=t.outliers+1
-   if t.outliers<3 then return end
+   if t.outliers<K.mergeOutlierCount then return end
    t.spline=spline; t.samples=1; t.outliers=0
   else t.spline=(t.spline+offset*K.mergeAlpha)%1; t.samples=t.samples+1; t.outliers=0 end
  end

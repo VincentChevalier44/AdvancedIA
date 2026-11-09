@@ -1,11 +1,13 @@
-"""Outils de développement (hors jeu) : édition qui conserve les fins de ligne, comparaison d'arborescences,
-sauvegarde et installation jeu fermé.
+"""Outils de développement (hors jeu) : comparaison d'arborescences, sauvegarde et installation jeu fermé.
 
   python devtools.py tree <dossier A> <dossier B>
   python devtools.py install <dossier préparé> <copie de référence de l'app installée> <version installée> <nouvelle version>
 
 L'installation refuse si Assetto Corsa tourne, sauvegarde l'app et les réglages dans _AdvancedIA_archives, copie
-les fichiers changés, puis vérifie la copie."""
+les fichiers changés, puis vérifie la copie.
+
+Chemins : ADVANCEDIA_GAME (dossier d'Assetto Corsa) et ADVANCEDIA_SETTINGS (réglages des apps Lua de CSP) ; par
+défaut, ceux de la machine de l'auteur."""
 import hashlib
 import os
 import shutil
@@ -14,27 +16,14 @@ import sys
 import zipfile
 from pathlib import Path
 
-GAME = Path('D:/SteamLibrary/steamapps/common/assettocorsa')
+GAME = Path(os.environ.get('ADVANCEDIA_GAME', 'D:/SteamLibrary/steamapps/common/assettocorsa'))
 LIVE = GAME / 'apps/lua/AdvancedIA'
 ARCHIVES = GAME / '_AdvancedIA_archives'
-SETTINGS = Path.home() / 'Documents/Assetto Corsa/cfg/extension/state/lua/app'
+SETTINGS = Path(os.environ.get('ADVANCEDIA_SETTINGS', Path.home() / 'Documents/Assetto Corsa/cfg/extension/state/lua/app'))
 SKIP = {'__pycache__'}
 # Mise à jour depuis l'app (Beta 1.33) : sauvegarde, dépôt et repères propres à chaque installation, jamais copiés ni
 # retirés par l'installation, jamais comparés.
 LOCAL = {'backup'}
-
-
-def edit(path, old, new, count=1):
-    """Remplace old par new (exactement count fois), en gardant le style de fin de ligne du fichier."""
-    raw = Path(path).read_bytes().decode('utf-8')
-    crlf = '\r\n' in raw
-    if crlf:
-        old = old.replace('\r\n', '\n').replace('\n', '\r\n')
-        new = new.replace('\r\n', '\n').replace('\n', '\r\n')
-    found = raw.count(old)
-    if found != count:
-        raise SystemExit(f'{path}: {found} occurrence(s) au lieu de {count} : {old[:80]!r}')
-    Path(path).write_bytes(raw.replace(old, new).encode('utf-8'))
 
 
 def files(root):

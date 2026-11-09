@@ -32,6 +32,8 @@ end
 function M.rebase(g,amount)
  g.since=g.since-amount; g.lightsAt=g.lightsAt-amount; g.outAt=g.outAt-amount
  if U.finite(g.goUntil) then g.goUntil=g.goUntil-amount end
+ -- Relecture 1.52 : début du mouvement d'une IA avant l'extinction (faux départ) décalé aussi.
+ for i=1,K.maxCars do if g.aiJumpAt[i] then g.aiJumpAt[i]=g.aiJumpAt[i]-amount end end
 end
 -- Ordre du classement de la course (positions inconnues à la fin, départage par indice) : un seul comparateur, sans
 -- fermeture créée à chaque tri (aussi pour la sortie des stands après un drapeau rouge).
@@ -207,7 +209,7 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
   if placed and held>=n or timeout then
    g.phase='lights'; g.lightsAt=now; t.standing='lights'
    -- Cinquième feu après (K.gridLights-1) pas, extinction entre K.lightsOutMin et K.lightsOutMax s plus tard.
-   g.outAt=now+K.lightStep*(K.gridLights-1)+K.lightsOutMin+U.unit(seed or 0,t.reds or 0,9134)*(K.lightsOutMax-K.lightsOutMin)
+   g.outAt=now+K.lightStep*(K.gridLights-1)+K.lightsOutMin+U.unit(seed or 0,t.reds or 0,K.lightsOutSalt)*(K.lightsOutMax-K.lightsOutMin)
    U.log(log,now,'INFO',string.format('feux: allumage (%d / %d IA en place)',held,n),-1)
   end
  end
@@ -265,7 +267,7 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
   t.gridPlaced=k>0 and not t.gridPit and placedPlayer(g,frame,player)
   t.gridPassed=k>0 and not t.gridPit and back>K.gridSlotRadius
   local shown=t.gridPassed and back or math.max(0,d)
-  t.gridGap=shown<20 and math.floor(shown) or math.floor(shown/10+0.5)*10
+  t.gridGap=shown<K.gridGapFine and math.floor(shown) or math.floor(shown/K.gridGapStep+0.5)*K.gridGapStep
  end
  return nil
 end

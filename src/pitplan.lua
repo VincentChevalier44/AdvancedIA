@@ -46,7 +46,9 @@ end
 function M.update(t,frame,now,due,f1,started,read,note)
  local a=frame.player>0 and frame.cars[frame.player] or nil
  local active=due and f1 and started and a~=nil and a.valid and a.compoundIndex~=nil and a.tyresKnown
- if not active then t.state=''; t.lastPit=a~=nil and a.pit==true; return end
+ -- Relecture 1.52 : image inactive (relance arrêtée, course pas encore lancée) : clé et échéance oubliées, la stratégie
+ -- est relue dès la reprise (sinon la même clé taisait l'avertissement « même composé »).
+ if not active then t.state=''; t.key=''; t.checkAt=-math.huge; t.lastPit=a~=nil and a.pit==true; return end
  local entering=a.pit==true and not t.lastPit
  t.lastPit=a.pit==true
  if now<t.checkAt and not entering then return end

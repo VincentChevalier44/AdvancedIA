@@ -3,7 +3,8 @@
 -- Documents/Assetto Corsa/cfg/extension/new_behaviour.ini, section [AI_FLOOD] ; valeurs par défaut de CSP dans
 -- extension/config/new_behaviour.ini. Texte pur, sans accès au jeu : seules les clés gérées de la section changent, le
 -- reste du fichier (sections, commentaires, fins de ligne) est conservé tel quel.
-local K=require('src/config').K
+local C=require('src/config')
+local K=C.K
 local M={}
 M.section='AI_FLOOD'
 M.keys={'ENABLED','SPAWN_MIN_DISTANCE_TO_PLAYER','SPAWN_DISTANCE','SPAWN_RANGE','SPAWN_DESPAWN'}
@@ -103,8 +104,10 @@ function M.restore(backup)
 end
 -- Décision pour une journée circuit : 'restore' (départ laissé au jeu : réglage d'origine rendu), 'off' (assez d'IA
 -- pour les répartir sur tout le circuit), 'on' (sous le seuil : AI flood avec la portée choisie).
+-- Beta 1.52 : réglage absent : valeur du schéma (profil Course : départ laissé au jeu), au lieu de valeurs répétées ici.
+local fallback=C.defaults('C')
 function M.decide(p,count)
- if (p.spawnMode or 'native')=='native' then return 'restore' end
- return count>=(p.spawnMinCars or 10) and 'off' or 'on'
+ if (p.spawnMode or fallback.spawnMode)=='native' then return 'restore' end
+ return count>=(p.spawnMinCars or fallback.spawnMinCars) and 'off' or 'on'
 end
 return M

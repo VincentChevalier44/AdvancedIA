@@ -135,6 +135,8 @@ function M.new(g,profiles)
  e.strategy=Strategy.new(); e.sanctions=Sanctions.new(); e.race={progress=-1,lapsLeft=-1,known=false}
  for i=1,K.maxCars do
   local s=Director.newState(); s.slot=i; e.states[i]=s
+  -- Relecture 1.52 : dernier saut de position (IA anormalement lente), décalé par M.rebase (C.optionalTimerFields).
+  s.slowTeleportAt=-math.huge
   e.commands[i]={active=false,offset=0,level=1,aggression=0.5,caution=1,brake=0,speedLimit=K.unlimitedSpeed,yellowLimit=K.unlimitedSpeed,stopHold=false,recover=false,penaltyPass=false,flashEvent=0,rulePit=false,pitHold=false,pitCompound=-1,pitVisit=0,scPark=false,scSpeed=K.unlimitedSpeed,mistakeId=0,mistakeKind='',mistakeCause='',mistakeTime=0,mistakeSeverity=1,fuelTarget=-1,fuelLaps=0,fuelSet=-1,pitRepair=false,startDelay=-1,startDelayFor='',levelScale=1,throttleLimit=1,wearId=0,wearWheel=0,wearKm=0}
  end
  return e
@@ -158,10 +160,24 @@ function M.rebase(e,amount)
  e.traffic.nextAt=e.traffic.nextAt-amount
  e.weather.pendingAt=e.weather.pendingAt-amount
  Incidents.rebase(e.incidents,amount); Pits.rebase(e.pits,amount); Pitplan.rebase(e.pitplan,amount); Strategy.rebase(e.strategy,amount); Sanctions.rebase(e.sanctions,amount); Quali.rebase(e.quali,amount)
+ -- Relecture 1.52 : informations de l'overlay, premier tour attentif, prochaine décision de l'AI flood et sorties
+ -- étalées des stands (sinon IA retenue près de 24 h si le décalage tombe pendant les sorties) décalées aussi.
+ HudInfo.rebase(e.hud,amount)
+ if FirstLap.rebase then FirstLap.rebase(e.fl,amount) end
+ e.flood.at=e.flood.at-amount
+ local x=e.traffic.exits
+ if x then
+  x.at=x.at-amount
+  for i=1,K.maxCars do
+   if U.finite(x.releaseAt[i]) then x.releaseAt[i]=x.releaseAt[i]-amount end
+   if U.finite(x.checkAt[i]) then x.checkAt[i]=x.checkAt[i]-amount end
+  end
+ end
  for i=1,K.maxCars do
   local s=e.states[i]
   for _,key in ipairs(C.timerFields) do if U.finite(s[key]) then s[key]=s[key]-amount end end
-  for _,key in ipairs(C.optionalTimerFields) do if s[key]>0 then s[key]=s[key]-amount end end
+  -- Relecture 1.52 : champ facultatif absent (nil) : rien à décaler.
+  for _,key in ipairs(C.optionalTimerFields) do local v=s[key]; if v and v>0 then s[key]=v-amount end end
   for j=1,K.directionLimit do if U.finite(s.directions[j]) then s.directions[j]=s.directions[j]-amount end end
   local r=e.flash.requests[i]; r.untilTime=r.untilTime-amount; r.readyAt=r.readyAt-amount; r.cornerUntil=r.cornerUntil-amount
   local q=e.flash.ai[i]; q.untilTime=q.untilTime-amount; q.readyAt=q.readyAt-amount
@@ -423,11 +439,13 @@ function M.step(e,frame,dt)
    s.excluded=false; s.disqualified=false; s.errorUntil=0; s.errorCount=0; s.pitBefore=false; s.pitExitUntil=0; s.pitCautionUntil=0; s.pitGuardUntil=0; s.obstacleSlow=0
    -- Relecture de la Beta 1.41 : état « anormalement lente » et demande d'arrêt oubliés avec la session.
    slowReset(s); s.slowPitAsked=false; s.slowPitDone=false
+   -- Relecture 1.52 : épisode « anormalement lente » du journal oublié aussi (sinon sa fin notée dans la session suivante).
+   s.slowFor=0; s.slowLogged=false; s.slowCalm=0; s.slowWhy=nil
    for j=1,#s.pace do s.pace[j]=0 end
   end
  end
  if e.g.autoProfile then e.profile=C.autoProfile(frame)
- elseif not e.g.autoProfile then e.profile=e.g.manualProfile end
+ else e.profile=e.g.manualProfile end
  local newProfile=e.loggedSession~=e.session or e.loggedProfile~=e.profile
  if newProfile then
   if e.loggedSession~=e.session then
@@ -442,12 +460,29 @@ function M.step(e,frame,dt)
  -- nouvelle session est détectée (circuit et indice de session), une seule fois par session : un rechargement de l'app
  -- dans le même lancement (repère e.presetSession, gardé par ac.store) ne refait rien, les retouches du pilote restent.
  -- Règles de championnat du profil gardées. Hotlap et préréglage personnel : rien (C.sessionPreset).
- -- Profil compris dans la clé : une détection qui arrive après la première image (journée circuit d'abord, puis
- -- qualifications) donne encore son préréglage au bon profil.
- local sessionKey=tostring(frame.track)..'#'..tostring(frame.session)..'#'..tostring(e.profile)
- if e.g.autoProfile and e.g.presetBySession and selected and not frame.replay and not frame.online then
-  if e.presetSession~=sessionKey then
-   e.presetSession=sessionKey; e.presetSessionDirty=true
+ -- Profils déjà servis compris dans la clé : une détection qui arrive après la première image (journée circuit d'abord,
+ -- puis qualifications) donne encore son préréglage au bon profil.
+ -- Relecture 1.52 : clé « circuit#indice#profils servis » (ancienne clé circuit#indice#profil lue de même) : une bascule
+ -- A -> B -> A dans la même session ne réapplique rien (retouches gardées) ; bornée à K.presetSessionKeyMax octets (nom du
+ -- circuit tronqué) ; base refaite seulement quand le circuit ou l'indice change, jamais une chaîne par image. App
+ -- coupée : rien (appliqué à son retour).
+ if e.presetTrack~=frame.track or e.presetIndex~=frame.session then
+  e.presetTrack=frame.track; e.presetIndex=frame.session
+  local index='#'..tostring(frame.session)
+  e.presetBase=tostring(frame.track):sub(1,K.presetSessionKeyMax-#index-K.presetSessionProfilesMax-1)..index
+ end
+ -- Profils servis relus seulement quand la clé ou la base change (clé rechargée par AdvancedIA.lua comprise).
+ if e.presetParsed~=e.presetSession or e.presetParsedBase~=e.presetBase then
+  local base,text=e.presetBase,e.presetSession
+  e.presetParsed=text; e.presetParsedBase=base
+  local served=#text>#base and text:sub(1,#base+1)==base..'#' and text:sub(#base+2) or ''
+  e.presetServed=served:find('#',1,true) and '' or served
+ end
+ local bySession=e.g.autoProfile and e.g.presetBySession
+ if bySession and e.g.enabled and selected and not frame.replay and not frame.online then
+  local served=e.presetServed or ''
+  if not served:find(e.profile,1,true) and #served<K.presetSessionProfilesMax then
+   e.presetSession=e.presetBase..'#'..served..e.profile; e.presetSessionDirty=true
    local name=C.sessionPreset(e.g,e.profile)
    if name then
     C.applyBuiltin(e.g,e.profiles,name,e.profile,true,e.presetKept)
@@ -455,8 +490,9 @@ function M.step(e,frame,dt)
     U.log(e.log,now,'INFO',string.format('preset_session: %s (profil %s%s)',name,e.profile,tostring(frame.track):lower():find('nordschleife',1,true) and ', circuit Nordschleife' or ''),-1)
    else U.log(e.log,now,'INFO','preset_session: aucun (profil '..e.profile..(C.mark(e.g,e.profile)==C.personalMark and ', preset personnel garde)' or ')'),-1) end
   end
- -- Profil Hotlap : aucun préréglage recommandé (sessions sans IA), il reste neutre.
- elseif e.g.presetsUsed and selected and not selected.configured and not C.anySection(selected) and C.recommended[e.profile] then
+ -- Profil Hotlap : aucun préréglage recommandé (sessions sans IA), il reste neutre. Relecture 1.52 : jamais avec le
+ -- préréglage par session coché (relecture, en ligne, app coupée compris), ni en relecture ou en ligne.
+ elseif not bySession and not frame.replay and not frame.online and e.g.presetsUsed and selected and not selected.configured and not C.anySection(selected) and C.recommended[e.profile] then
   -- Profil jamais réglé : son préréglage intégré recommandé, une seule fois. Un profil déjà réglé n'est jamais modifié.
   local name=C.recommended[e.profile]
   -- Beta 1.29 : règles de championnat du week-end gardées (copiées par le préréglage d'une autre session).
@@ -497,7 +533,8 @@ function M.step(e,frame,dt)
   e.startSpeedLogged=true
   local sum,n=0,0
   for i=1,frame.count do local a=frame.cars[i]; if a.valid and a.control and not a.player and not a.safetyCar and not a.pit then sum=sum+a.kmh; n=n+1 end end
-  U.log(e.log,now,'INFO',string.format('depart: peloton a %.0f km/h en moyenne apres %.0f s, %d freinage(s) du radar au lancement, %d lever(s) de pied',n>0 and sum/n or 0,e.run.startDelay,e.startRadar or 0,e.startLift or 0),-1)
+  -- Relecture 1.52 : pieds tenus en ligne droite (director.lua, e.startHold) notés aussi.
+  U.log(e.log,now,'INFO',string.format('depart: peloton a %.0f km/h en moyenne apres %.0f s, %d freinage(s) du radar au lancement, %d lever(s) de pied, %d pied(s) tenu(s) en ligne droite',n>0 and sum/n or 0,e.run.startDelay,e.startRadar or 0,e.startLift or 0,e.startHold or 0),-1)
  end
  e.wasStarted=frame.started
  -- Maintien de ligne au départ : écart à la trajectoire lu dans l'instantané suivant, pendant le départ seulement.
@@ -514,12 +551,15 @@ function M.step(e,frame,dt)
  e.guard=reason
  if reason~='ready' then
   Merge.idle(e.merge,e.commands)
-  for i=1,K.maxCars do local cmd=e.commands[i]; cmd.active=false; cmd.stopHold=false; cmd.rulePit=false; cmd.pitHold=false; cmd.penaltyPass=false; cmd.pitCompound=-1; cmd.fuelTarget=-1; cmd.fuelSet=-1; cmd.scPark=false; cmd.scSpeed=K.unlimitedSpeed; cmd.recover=false; cmd.drsBlock=false; cmd.startDelay=-1 end
+  for i=1,K.maxCars do local cmd=e.commands[i]; cmd.active=false; cmd.stopHold=false; cmd.rulePit=false; cmd.pitHold=false; cmd.penaltyPass=false; cmd.pitCompound=-1; cmd.fuelTarget=-1; cmd.fuelSet=-1; cmd.scPark=false; cmd.scSpeed=K.unlimitedSpeed; cmd.recover=false; cmd.drsBlock=false; cmd.startDelay=-1; cmd.slowCalled=false end
   -- App à l'arrêt : le panneau reprend encore les drapeaux d'AC (leur affichage d'origine est masqué dans CSP).
   e.incidents.playerFlag=false; e.incidents.playerYellow=false
   -- Pause : valeur des panneaux gardée (l'applicateur n'écrit rien en pause) ; sinon rendue à AC et recalculée dès la
   -- reprise (jamais un quart de seconde rendu à AC à chaque sortie de pause, Beta 1.35).
   if reason~='paused' then e.lights.value=K.flagNone; e.lights.reason=''; e.lights.at=-math.huge end; Panel.native(e.panel,frame,now,e.p,e.profile)
+  -- Relecture 1.52 : rappels et avis des stands du joueur vidés (lus par le pont), sauf en pause (aucune annonce
+  -- refaite à chaque reprise).
+  if reason~='paused' then Incidents.clearPlayerPit(e.incidents) end
   -- Aucun onglet coché (hotlap, journée circuit sans commande) : le bip du DRS du joueur reste actif ; app coupée,
   -- panique, pause : aucun bip.
   if reason=='nosections' then drsBeep(e,frame,frame.flag==K.flagCaution and not frame.flagOwned,e.p.drsAssist~=false,e.p.drsBeepVolume or 100) else e.drs.was=false end
@@ -553,9 +593,9 @@ function M.step(e,frame,dt)
   safety=preferred
   for i=1,frame.count do frame.cars[i].safetyCar=i==safety end
  end
- local state=matches..(oneMake and 'm' or '')..safety
- if state~=e.safetyState then
-  e.safetyState=state; e.safetyAmbiguous=matches>1 and not oneMake; e.safetyOneMake=oneMake
+ -- Relecture 1.52 : état comparé champ par champ (jamais une chaîne par image).
+ if matches~=e.safetyMatches or oneMake~=e.safetyOneMake or safety~=e.safetySlot then
+  e.safetyMatches=matches; e.safetySlot=safety; e.safetyAmbiguous=matches>1 and not oneMake; e.safetyOneMake=oneMake
   if oneMake then U.log(e.log,now,'WARN',string.format('voiture de securite: modele %s = modele de la grille (%s), %s',model,shared and string.format('modele par defaut porte par %d voitures',matches) or 'monotype',safety>0 and 'seule la voiture a livree de securite est retiree' or 'aucune voiture retiree (repli FCY)'),-1)
   elseif matches>1 then U.log(e.log,now,'WARN',string.format('voiture de securite: modele %s porte par %d voitures, %s deployee, %d garees',model,matches,preferred>0 and 'celle a livree de securite' or 'la premiere',matches-1),-1) end
  end
@@ -776,8 +816,6 @@ function M.step(e,frame,dt)
   U.log(e.log,now,'INFO',string.format('vehicule lent devant le joueur: %s a %.0f km/h, %.0f m devant',frame.cars[l.slowSlot].name,l.slowKmh,l.slowGap),l.slowSlot)
  end
  e.slowLogged=l.slowSlot
- e.panel.giveBackDue=e.penalties.giveBack>0 and not e.penalties.disqualified
- Panel.update(e.panel,e.incidents,frame,e.run,e.profile,now,l)
  -- Pénalités du joueur sous drapeau jaune : journal, message à l'écran et ligne du panneau ; écriture par l'applicateur.
  Penalties.resume(e.penalties,frame)
  local penalty=Penalties.update(e.penalties,frame,e.run,e.profile,e.incidents,now,dt,e.delta)
@@ -848,7 +886,9 @@ function M.step(e,frame,dt)
  Weather.step(e.weather,frame,e.commands,e.run,now,e.states,e.runtimeG.seed)
  -- Journal : météo lue au lancement de chaque session et à chaque changement de profil, avec la gestion des pneus
  -- du profil en cours (diagnostic des pneus pluie au sec).
- local reported=frame.session..e.profile
+ -- Relecture 1.52 : clé refaite seulement quand la session ou le profil change (jamais une chaîne par image).
+ if e.reportSession~=frame.session or e.reportProfile~=e.profile then e.reportSession=frame.session; e.reportProfile=e.profile; e.reportKey=frame.session..e.profile end
+ local reported=e.reportKey
  if e.weather.reported~=reported then
   e.weather.reported=reported
   local managed=e.run.weatherTyresEnabled and 'oui' or not C.on(e.p,'weather') and 'non (onglet Meteo decoche)' or 'non (option pneus decochee)'
@@ -872,17 +912,29 @@ function M.step(e,frame,dt)
  Strategy.update(e.strategy,e,frame,now,dt)
  -- Arrêts obligatoires du joueur : rappel sur le panneau à l'ouverture et vers la fin de la fenêtre ; arrêt manqué
  -- à la fermeture : pénalité, dès que possible (une fenêtre qui se ferme à 100 % de la course ne se ferme jamais).
- local due=0
- if player and e.pits.state=='open' then due=math.max(0,e.run.mandatoryStops-e.pits.cars[frame.player].windowStops) end
- e.incidents.playerPitDue=due
- e.incidents.playerPitRemind=due>0 and (now-e.pits.openedAt<K.pitRemindTime or e.pits.position>=e.pits.close-(e.pits.close-e.pits.open)*K.pitRemindLate)
- if e.pits.justClosed and player and e.pits.cars[frame.player].windowStops<e.run.mandatoryStops then e.penalties.stopPending=true end
+ -- Relecture 1.52 : un seul arrêt obligatoire (0 ou 1 depuis la 1.51) : dû ou non ; l'entier 0/1 reste publié au pont.
+ local pc=player and e.pits.cars[frame.player] or nil
+ local due=pc~=nil and e.pits.state=='open' and pc.windowStops<e.run.mandatoryStops
+ e.incidents.playerPitDue=due and 1 or 0
+ e.incidents.playerPitRemind=due and (now-e.pits.openedAt<K.pitRemindTime or e.pits.position>=e.pits.close-(e.pits.close-e.pits.open)*K.pitRemindLate)
+ -- Relecture 1.52 : fenêtre fermée pendant que le composé du joueur est attendu (F1, arrivé dans la fenêtre) : pénalité
+ -- différée jusqu'à la décision (src/pits.lua), seulement si l'arrêt n'est finalement pas compté (même composé à la fin
+ -- du délai) ; oubliée si la voiture du joueur change ou si l'arrêt obligatoire est levé (course mouillée).
+ if e.pits.justClosed and pc and pc.windowStops<e.run.mandatoryStops then
+  if pc.pendingCompound~=nil then e.pits.stopAwait=pc.identity else e.penalties.stopPending=true end
+ end
+ if e.pits.stopAwait then
+  if not pc or pc.identity~=e.pits.stopAwait or e.pits.waived then e.pits.stopAwait=false
+  elseif pc.pendingCompound==nil then
+   e.pits.stopAwait=false
+   if pc.windowStops<e.run.mandatoryStops then e.penalties.stopPending=true end
+  end
+ end
  -- Beta 1.49 : F1 (changement de composé exigé), arrêt obligatoire encore dû : stratégie des stands du joueur relue
  -- (src/pitplan.lua, lecture fournie par l'hôte) ; rappel « changez de composé » avant l'entrée des stands (environ
  -- K.pitHintTime s, entrée relevée sur les autres voitures, sinon dernier tiers du tour), dans la voie et à
  -- l'emplacement ; avis du joueur après l'arrêt (src/pits.lua). Rien ne change pour les IA.
  local f1=e.profile=='C' and e.run.pitCompoundChange==true and not e.pits.waived and e.run.mandatoryStops>0
- local pc=player and e.pits.cars[frame.player] or nil
  local owed=f1 and pc~=nil and pc.windowStops<e.run.mandatoryStops and (e.pits.state=='pending' or e.pits.state=='open')
  e.incidents.playerPitCompound=f1
  if e.pitSpinners then Pitplan.update(e.pitplan,frame,now,owed,f1,frame.started and e.incidents.standing~='grid' and e.incidents.standing~='lights',e.pitSpinners,e.note) end
@@ -907,7 +959,7 @@ function M.step(e,frame,dt)
   end
  else p0.hintLatch=false end
  if owed and player.compoundIndex~=e.pits.hintFor then
-  local p0=e.pits; p0.hintFor=player.compoundIndex; p0.hintTyre=player.compoundIndex~=nil and player.tyreNames and player.tyreNames[player.compoundIndex] or ''
+  p0.hintFor=player.compoundIndex; p0.hintTyre=player.compoundIndex~=nil and player.tyreNames and player.tyreNames[player.compoundIndex] or ''
   local others={}
   for _,index in ipairs(player.dryList or {}) do if index~=player.compoundIndex and player.tyreNames and player.tyreNames[index] then others[#others+1]=player.tyreNames[index] end end
   p0.hintOthers=others
@@ -927,13 +979,17 @@ function M.step(e,frame,dt)
  e.incidents.playerPlanNotice=planNotice
  e.incidents.playerPitNotice=now<e.pits.playerNoticeUntil and e.pits.playerNotice or ''
  e.incidents.playerPitFrom=e.pits.playerNoticeFrom; e.incidents.playerPitTo=e.pits.playerNoticeTo
+ -- Relecture 1.52 : panneau du joueur décidé après ses pénalités et ses rappels des stands de cette image (avant, ceux de
+ -- l'image précédente).
+ e.panel.giveBackDue=e.penalties.giveBack>0 and not e.penalties.disqualified
+ Panel.update(e.panel,e.incidents,frame,e.run,e.profile,now,l)
  -- Drapeau rouge : toutes les IA rentrent aux stands et y restent. Dépannage d'une IA immobile en piste jusqu'à son
  -- stand : sous drapeau rouge, sous neutralisation, ou bloquée longtemps (commissaires), jamais le joueur.
  local neutral=e.incidents.neutral
  local decide=decisionTime(e,neutral)
  for i=1,frame.count do
   local a=frame.cars[i]; local cmd=e.commands[i]
-  cmd.recover=false
+  cmd.recover=false; cmd.slowCalled=false
   if a.valid and a.control and not a.player and not a.finished and not a.safetyCar then
    if red then cmd.rulePit=not a.inPitBox; cmd.pitHold=a.inPitBox==true
    -- Reprise : chaque IA attend son tour pour quitter son emplacement (ordre du classement).
@@ -967,7 +1023,8 @@ function M.step(e,frame,dt)
    if damaged and (s.abnormalFor or 0)>=K.slowPitTime and not a.pit and e.run.section_accidents then
     local call=false
     if e.profile=='C' then
-     if not red and not e.incidents.pitsClosed and not s.slowPitDone then cmd.rulePit=true; s.slowPitAsked=true; call=true end
+     -- Relecture 1.52 : appel marqué (cmd.slowCalled), compté par pits.lua et strategy.lua dans la limite d'appels.
+     if not red and not e.incidents.pitsClosed and not s.slowPitDone then cmd.rulePit=true; cmd.slowCalled=not a.pit; s.slowPitAsked=true; call=true end
     elseif not cmd.recover then cmd.recover=true; cmd.recoverReason='lente et endommagee'; cmd.recoverStill=s.abnormalFor end
     if not s.slowPitSent then
      s.slowPitSent=true
@@ -1011,7 +1068,7 @@ function M.step(e,frame,dt)
  end
  -- Formation de la grille et feux : aucun arrêt aux stands demandé (la voie des stands longe la grille).
  if e.incidents.standing=='grid' or e.incidents.standing=='lights' then
-  for i=1,frame.count do local cmd=e.commands[i]; if not frame.cars[i].pit then cmd.rulePit=false; cmd.weatherPit=false end end
+  for i=1,frame.count do local cmd=e.commands[i]; if not frame.cars[i].pit then cmd.rulePit=false; cmd.weatherPit=false; cmd.slowCalled=false end end
  end
  -- Carburant des arrêts forcés, une fois toutes les demandes d'arrêt connues (règles, météo, drapeau rouge).
  Pits.fuel(e.pits,frame,e.commands,e.run,e.profile,now,red)

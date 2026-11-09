@@ -32,18 +32,21 @@ function M.overlay()
   ui.setCursor(vec2(18,60)); ui.textWrapped(M.textEn)
  end)
 end
+-- Beta 1.52 : copie laissée par la mise à jour de l'ancienne version (cfg/extension/state/<oldWork>), effacée une fois
+-- celle-ci désinstallée (Applier.oldWorkLeftover, appelé par AdvancedIA.lua).
+M.oldWork='ACAdvancedIA-update'
 -- Tout l'état de l'app inerte : journal (une ligne), puis rappels de l'interface protégés (une erreur n'arrête rien).
 function M.run(script,Applier,release)
  local host={}
  pcall(function()
   if Applier.journalOpen(host) then
    local clock=Applier.clockText()
-   Applier.journalWrite(host,'=== AdvancedIA '..tostring(release)..' : lancement '..clock..' ===\n'..clock..string.format(' %9.1f %-6s %3d %s\n',0,'WARN',-1,M.journalText))
+   Applier.journalWrite(host,'=== AdvancedIA '..tostring(release)..' : lancement '..clock..' ===\n'..clock..string.format(' %9.1f %-5s %3d %s\n',0,'WARN',-1,M.journalText))
   end
  end)
  pcall(function() if ac and type(ac.log)=='function' then ac.log('AdvancedIA: '..M.textEn) end end)
  local function none() end
- script.update=none; script.HUMANAI__UPDATE=none; script.HUMANAI__MENU=none; script.HUMANAI__FLAGS=none
+ script.update=none; script.HUMANAI__UPDATE=none; script.HUMANAI__MENU=none
  script.HUMANAI__MAIN=function() pcall(M.window,release) end
  script.HUMANAI__HUD=function() pcall(M.overlay) end
  M.active=true

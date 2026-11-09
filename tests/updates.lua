@@ -548,11 +548,13 @@ tests.UPDATE_REMOTE_RECOVERY=function()
   local names={}; for k,val in pairs({['manifest.ini']='VERSION=Beta 1.32',['AdvancedIA.lua']='main Beta 1.32'}) do f.files[f.work..'/backup/'..k]=val; names[#names+1]=k end
   names[#names+1]='src/ui.lua'; f.files[f.work..'/backup/.files']=table.concat(names,'\n')
  end,function(_,p,u) assert(u.previous==nil and not p.sourceComplete('backup') and not Up.rollback(u,p,true)) end)
- -- Restes de l'ancien module (Beta 1.33/1.34, dossier backup/ de l'app) : compte rendu lu, repère levé si terminé.
+ -- Beta 1.52 : restes de l'ancien module (Beta 1.33/1.34, dossier backup/ de l'app) plus lus : ces versions
+ -- s'appelaient ACAdvancedIA (apps/lua/ACAdvancedIA), le dossier de l'app AdvancedIA ne les a jamais contenus (code
+ -- mort retiré, relecture 1.52) ; un fichier de ce nom n'est ni pris pour un compte rendu ni effacé.
  onFake(nil,function(f)
   f.files[f.root..'/backup/updated.txt']='update Beta 1.32 -> Beta 1.33'; f.files[f.root..'/backup/installing.txt']='update Beta 1.32 -> Beta 1.33'
  end,function(f,_,u)
-  assert(u.updated and u.updated.kind=='update' and u.updated.to=='Beta 1.33' and f.files[f.root..'/backup/updated.txt']==nil and f.files[f.root..'/backup/installing.txt']==nil)
+  assert(u.updated==nil and f.files[f.root..'/backup/updated.txt']~=nil and f.files[f.root..'/backup/installing.txt']~=nil)
  end)
 end
 -- Beta 1.36 (3e relecture) : dossiers vides effacés avec leurs fichiers ; trois mises à jour de suite, la version

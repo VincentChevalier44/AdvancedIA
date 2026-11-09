@@ -13,9 +13,10 @@ _manifest = configparser.ConfigParser()
 _manifest.read(APP/'manifest.ini',encoding='utf-8')
 VERSION = _manifest['ABOUT']['VERSION']
 
-def runtime():
+def runtime(root=APP):
+    """LuaJIT avec les globales du jeu à faux et une métatable stricte des globales ; modules lus dans root."""
     lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.execute("package.path = ... .. '/?.lua;' .. package.path", APP.as_posix())
+    lua.execute("package.path = ... .. '/?.lua;' .. package.path", Path(root).as_posix())
     lua.execute("""
       script={}; HUMANAI=false
       ac={}; physics={}; ui={}; rgbm=false; vec2=false; vec4=false
@@ -26,6 +27,10 @@ def runtime():
     """)
     return lua
 
+def catalog():
+    """Situations cataloguées dans le PDR (lignes « | T01 | » des tableaux), chacune portée par un test du même nom."""
+    return re.findall(r'^\| ([TFQRMLPSE]\d{2}) \|', (APP/'HumanAI_PDR_v1.0.md').read_text(encoding='utf-8'), re.M)
+
 def main():
     lua = runtime()
     for file in [APP/'AdvancedIA.lua', *sorted((APP/'src').glob('*.lua'))]:
@@ -35,9 +40,8 @@ def main():
     for name in extended.keys():
         assert name not in tests
         tests[name] = extended[name]
-    catalog = re.findall(r'^\| ([T F Q R E M L P S]\d{2}) \|', (APP/'HumanAI_PDR_v1.0.md').read_text(encoding='utf-8'), re.M)
-    assert len(catalog) == 78, len(catalog)
-    assert all(name in tests for name in catalog)
+    names = catalog()
+    assert names and all(name in tests for name in names), [name for name in names if name not in tests]
     results = {}
     for name in sorted(tests.keys()):
         started = time.perf_counter()

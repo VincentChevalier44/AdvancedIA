@@ -15,6 +15,10 @@ function M.new()
   started=false,grid=0,finished=false,dnf=false,dq=false,final=0,passes=0,lost=0,rel={},at=-math.huge,cars=0,
   fieldBest=0,fieldBestName='',recap={},recapSerial=0,recapNew=false,strip={},stripCount=0,stripAt=-math.huge,stripKey='',corrected=0}
 end
+-- Relecture 1.52 : échéances décalées avec l'horloge de l'app (Engine.rebase), sinon figées près de 24 h.
+function M.rebase(h,amount)
+ for _,key in ipairs({'lapUntil','msgUntil','msgAt','aiUntil','aiAt','at','stripAt'}) do if U.finite(h[key]) then h[key]=h[key]-amount end end
+end
 -- Temps au tour « 2:01,456 » (séparateur décimal de la langue) ; 0 ou moins : aucun.
 function M.lapTime(seconds)
  if not seconds or seconds<=0 then return '' end
@@ -111,7 +115,8 @@ local function strip(h,frame,e,a)
   item(h,L.hudLap,string.format('%d/%d',math.min(math.max(1,a.lap+1),frame.sessionLaps),frame.sessionLaps))
  elseif frame.left>0 then item(h,L.hudLeft,M.clock(frame.left)) end
  if (a.bestLap or 0)>0 then item(h,L.hudBest,M.lapTime(a.bestLap),false,true) end
- if race and e.run.mandatoryStops>0 and e.pits.cars[frame.player] then
+ -- Relecture 1.52 : arrêt levé (F1, course devenue mouillée) : plus affiché.
+ if race and e.run.mandatoryStops>0 and e.pits.cars[frame.player] and not e.pits.waived then
   local done=math.min(e.pits.cars[frame.player].windowStops,e.run.mandatoryStops)
   item(h,L.hudStops,string.format('%d/%d',done,e.run.mandatoryStops),done<e.run.mandatoryStops and e.pits.state=='open')
  end

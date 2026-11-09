@@ -1,14 +1,23 @@
 """Factual report: open criteria are never turned into a pass."""
-from pathlib import Path
 import hashlib
 import json
 import platform
-from test_pdr import APP, VERSION
+import re
+from test_pdr import APP, VERSION, catalog
+from performance import RELEASE_FRAMES
+from package import check_docs
 
 def read(name):
     return json.loads((APP/'tests'/name).read_text(encoding='utf-8'))
 
+def previous_performance():
+    """Measurement of the previous version: the current one of the last report (docs/RELEASE_STATUS.json). A report
+    made again for the same version keeps its own reference."""
+    status=json.loads((APP/'docs/RELEASE_STATUS.json').read_text(encoding='utf-8'))
+    return status['comparison']['current'] if status['version']!=VERSION else status['comparison']['previous']
+
 def main():
+    check_docs()
     scenarios=read('results.json')
     integration=read('integration-results.json')
     soak=read('soak-results.json')
@@ -16,22 +25,25 @@ def main():
     source=[APP/'AdvancedIA.lua',APP/'manifest.ini',*sorted((APP/'src').glob('*.lua'))]
     hashes={p.relative_to(APP).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in source}
     assert soak['sources']==hashes, 'Sources changed since the soak started.'
-    previous=read('performance-previous-results.json')
+    previous=previous_performance()
     current=read('performance-current-results.json')
     assert current.get('version')==VERSION and previous.get('version')!=VERSION and not previous['profiling'] and not current['profiling']
     assert current['sources']=={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (APP/'src').glob('*.lua')}
     old_name=previous['version']
     comparison=[f'| AI | Mean {old_name} / {VERSION} (ms) | P99 {old_name} / {VERSION} (ms) | Raw peak {old_name} / {VERSION} (ms) |','|---|---|---|---|']
     for old,new in zip(previous['results'],current['results'],strict=True):
-        assert old['ai']==new['ai'] and old['frames']==new['frames']==30000 and old['errors']==new['errors']==0
+        assert old['ai']==new['ai'] and old['frames']==new['frames']==RELEASE_FRAMES and old['errors']==new['errors']==0
         comparison.append(f"| {new['ai']} | {old['meanMs']:.3f} / {new['meanMs']:.3f} | {old['p99Ms']:.3f} / {new['p99Ms']:.3f} | {old['peakMs']:.3f} / {new['peakMs']:.3f} |")
-    lint=(APP/'tests/lint-results.txt').read_text(encoding='utf-8')
+    lint=read('lint-results.json')
+    pdr=catalog()
+    fuzz=[int(m.group(1)) for m in (re.fullmatch(r'FUZZ_(\d+)',name) for name in scenarios) if m]
+    assert len(fuzz)==1, fuzz
     result={
         'version':VERSION,'accepted':False,
         'soakScope':'Eight simulated hours of the core (track day, 40 AI, weather and spacing), then one hour of a race with racing rules (neutralisations, delta time, DRS, driving mistakes); SDK calls and interface simulated separately.',
-        'scenarios':{'total':len(scenarios),'passed':sum(x['ok'] for x in scenarios.values()),'catalog':78,'fuzzSteps':10000},
+        'scenarios':{'total':len(scenarios),'passed':sum(x['ok'] for x in scenarios.values()),'catalog':len(pdr),'fuzzSteps':fuzz[0]},
         'integration':{'ok':integration['ok'],'cases':len(integration['cases'])},
-        'lint':{'ok':'aucune globale' in lint,'runtimeFiles':len(source)-1},
+        'lint':{'ok':lint['ok'],'runtimeFiles':lint['files']},
         'soak':soak,
         'openCriteria':['Physical tests in the game and real CSP cost'],
         'platform':{'python':platform.python_version(),'system':platform.system(),'architecture':platform.machine()},
@@ -46,7 +58,7 @@ def main():
 
 Released version: {result['version']}. All strict PDR criteria accepted: **no**, open points below. These results are not a guarantee of in-game FPS.
 
-- Catalogue and checks: **{result['scenarios']['passed']}/{len(scenarios)}**, including the 78 PDR situations and the 10,000-step fuzz.
+- Catalogue and checks: **{result['scenarios']['passed']}/{len(scenarios)}**, including the {len(pdr)} PDR situations and the {fuzz[0]:,}-step fuzz.
 - Integration: **{result['integration']['cases']} cases**, status {integration['ok']}.
 - Linter: {result['lint']['runtimeFiles']} files, status {result['lint']['ok']}.
 - Soak: {soak['frames']:,} frames, {soak['simulatedHours']} simulated hours, {soak['ai']} AI, {soak['errors']} errors.
@@ -57,7 +69,7 @@ Released version: {result['version']}. All strict PDR criteria accepted: **no**,
 
 The maximum is not filtered. This benchmark includes neither the real SDK nor the UI. The kinematic tests do not certify the physical driving.
 
-Comparison with {old_name}: same load (track day, multi-class, weather), 30,000 frames measured after warm-up, independent VMs, no profiler, each version measured by its own bench on the same machine. Both benches enable the same JIT compiler cache as the app in the game (since Beta 1.40; the `compilateur JIT` log line confirms that CSP accepts it).
+Comparison with {old_name}: same load (track day, multi-class, weather), {RELEASE_FRAMES:,} frames measured after warm-up, independent VMs, no profiler, each version measured by its own bench on the same machine. Both benches enable the same JIT compiler cache as the app in the game (since Beta 1.40; the `compilateur JIT` log line confirms that CSP accepts it).
 
 {chr(10).join(comparison)}
 

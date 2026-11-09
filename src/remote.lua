@@ -91,7 +91,6 @@ function M.new(onRelease)
  local old=work and work..'/backup.old'
  local marker=work and work..'/installing.txt'; local report=work and work..'/updated.txt'
  local bootFile=work and work..'/boot.txt'; local failedFile=work and work..'/failed.txt'
- local legacyMarker=app and app..'/backup/installing.txt'; local legacyReport=app and app..'/backup/updated.txt'
  local function exists(f) if not ready or not f then return false end; local ok,r=pcall(io.fileExists,f); return ok and r==true end
  local function load(f) if not exists(f) then return nil end; local ok,t=pcall(io.load,f); return ok and type(t)=='string' and t or nil end
  local function save(f,t)
@@ -162,20 +161,16 @@ function M.new(onRelease)
   return true
  end
  function p.markerFile() return marker end
- function p.marker() return load(marker) or load(legacyMarker) end
+ function p.marker() return load(marker) end
  -- Repère écrit puis relu : un repère qui ne s'écrit pas (disque plein, lecture seule) arrête l'opération.
  function p.mark(text) return save(marker,text) and load(marker)==text end
- -- Repère levé : vrai seulement s'il n'existe plus (ni l'ancien du dossier de l'app).
- function p.clearMarker()
-  local gone=delete(marker)
-  if exists(legacyMarker) then watch(true); gone=delete(legacyMarker) and gone; watch(false) end
-  return gone
- end
+ -- Repère levé : vrai seulement s'il n'existe plus. Beta 1.52 : plus de repère ni de compte rendu de l'ancien module
+ -- (Beta 1.33/1.34, dossier backup/ de l'app) : ces versions s'appelaient ACAdvancedIA (dossier apps/lua/ACAdvancedIA),
+ -- le dossier de l'app (AdvancedIA depuis la Beta 1.49) ne les a jamais contenus.
+ function p.clearMarker() return delete(marker) end
  function p.report(text) return save(report,text) end
  function p.takeReport()
   local text=load(report); delete(report)
-  -- Compte rendu de l'ancien module (Beta 1.33/1.34), retiré dans tous les cas.
-  if exists(legacyReport) then local was=load(legacyReport); watch(true); delete(legacyReport); watch(false); text=text or was end
   return Update.parseReport(text)
  end
  -- Démarrage surveillé : version installée, essais de démarrage, version précédente.

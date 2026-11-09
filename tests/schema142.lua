@@ -100,7 +100,7 @@ tests.SCHEMA_142_MIGRATION=function()
  for k,v in pairs(C.defaults('C')) do store['p_'..k]=v end
  store.p_section_rules=true; store.p_section_strategy=nil; store.p_section_sanctions=nil
  local entry=assert(Pr.decode(store)); assert(entry.p.section_strategy and entry.p.section_sanctions,'custom preset migrated')
- assert(Pr.encode(entry).revision==14)
+ assert(Pr.encode(entry).revision==15)
 end
 tests.SCHEMA_142_NEUTRAL_HOOKS=function()
  local e,f=F.scene('C',4); e.commands[2].levelScale=0.5; e.commands[3].throttleLimit=0.2; F.tick(e,f,2)

@@ -16,7 +16,7 @@ local M={}
 local function car()
  return {identity='',lap=-1,lapWear=-1,wearRate=0,wearLaps=0,lastWear=0,planned=false,stops=-1,nextLap=-1,limit='',planLoggedAt=-math.huge,
   shift=0,reaction=false,wanted=false,cause='',wantSince=0,visit=-1,inLane=false,replan=false,retryAt=0,
-  boxSeen=false,outLap=false,outFrom=0,outLap0=-1,outEnd=-1,outLogged=false,
+  boxSeen=false,outLap=false,outFrom=0,outLap0=-1,outEnd=-math.huge,outLogged=false,
   failState=0,failKind='',failAt=0,failRamp=0,failLoss=0,failChecks=0,failNext=0,failVisit=-1,failRepair=0,failAsked=false,
   wearSeen=0,rivalLane=false,
   -- Relecture 1.42 : appel tenu (place d'appel gardée), arrêt servi, contrôle après l'arrêt (pneus posés, carburant
@@ -50,6 +50,8 @@ function M.rebase(t,amount)
   local c=t.cars[i]
   c.planLoggedAt=c.planLoggedAt-amount; c.wantSince=c.wantSince-amount; c.outFrom=c.outFrom-amount; c.retryAt=c.retryAt-amount
   c.failAt=c.failAt-amount; c.failNext=c.failNext-amount; c.checkAt=c.checkAt-amount
+  -- Relecture 1.52 : fin du tour de sortie décalée aussi (repère -math.huge : pas encore finie).
+  if U.finite(c.outEnd) then c.outEnd=c.outEnd-amount end
  end
 end
 -- Lignes du Diagnostic (bloc « Course des IA ») : les K.strategyRows derniers événements, du plus récent au plus ancien,
@@ -180,7 +182,8 @@ end
 -- Beta 1.47 : arrêt obligatoire encore dû, fenêtre ouverte (course à arrêts obligatoires, plan de la stratégie à 0 arrêt).
 local function mandatoryDue(e,i,p)
  local pits=e.pits; local pc=pits and pits.cars[i]
- return (p.mandatoryStops or 0)>0 and pits~=nil and pits.opened==true and pc~=nil and pc.windowStops<p.mandatoryStops
+ -- Relecture 1.52 : fenêtre ouverte en ce moment (pits.opened reste vrai après sa fermeture).
+ return (p.mandatoryStops or 0)>0 and pits~=nil and pits.state=='open' and pc~=nil and pc.windowStops<p.mandatoryStops
 end
 local function rivals(t,e,frame,j,now,p)
  local row=e.perception.rows[j]; if not row then return end
@@ -191,7 +194,7 @@ local function rivals(t,e,frame,j,now,p)
  for k=1,row.count do
   local r=row.neighbors[k]; local i=r.index; local a=frame.cars[i]; local c=t.cars[i]
   if a and i~=j and c.planned and not c.reaction and not c.wanted and eligible(a,e.states[i],e,i) and not a.pit
-   and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap and r.gap<=K.strategyRivalGap*max(10,a.speed or 0) then
+   and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap and r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0) then
    local risk=e.states[i].persona.strategyRisk or 0.5
    local w=wearUse(t,a)
    if r.long<0 and c.stops>0 and w>=0 and w<U.clamp(p.strategyTyreWearPct/100,0,1)*K.strategyOvercutWear then
@@ -219,7 +222,7 @@ local function outLap(t,e,frame,a,c,i,p,now)
  if inLane and a.inPitBox and (a.kmh or 0)<=K.tyreStopSpeed and (e.profile~='C' or frame.started and (a.lap or 0)>=1) and not e.commands[i].noOutLap then c.boxSeen=true end
  if c.inLane and not inLane then
   if c.boxSeen and not c.blockOut and p.outLapEnabled and p.outLapLevelPct>0 then
-   c.outLap=true; c.outFrom=now; c.outLap0=a.lap or 0; c.outEnd=-1
+   c.outLap=true; c.outFrom=now; c.outLap0=a.lap or 0; c.outEnd=-math.huge
    if now-t.resetAt<K.outLapSummaryTime then t.outCount=t.outCount+1
    else U.log(e.log,now,'INFO',string.format('tour de sortie: %s pneus a chauffer (niveau -%.0f %%)',name(a),p.outLapLevelPct),i) end
   end
@@ -229,7 +232,7 @@ local function outLap(t,e,frame,a,c,i,p,now)
  if not c.outLap then return 1 end
  if not p.outLapEnabled then c.outLap=false; return 1 end
  -- Fin : ligne passée, pneus à température, ou durée maximale ; puis retour progressif.
- if c.outEnd<0 then
+ if not U.finite(c.outEnd) then
   local warm=false
   if a.wearKnown and a.tyreTemp and a.tyreOptimum and (a.tyreOptimum[1] or 0)>0 then
    warm=true
@@ -238,7 +241,7 @@ local function outLap(t,e,frame,a,c,i,p,now)
   if (a.lap or 0)>c.outLap0 or warm or now-c.outFrom>=K.outLapMax then c.outEnd=now end
  end
  local drop=p.outLapLevelPct/100
- if c.outEnd>=0 then
+ if U.finite(c.outEnd) then
   local f=(now-c.outEnd)/K.outLapRelease
   if f>=1 then c.outLap=false; return 1 end
   drop=drop*(1-f)
@@ -311,7 +314,8 @@ function M.update(t,e,frame,now,_dt)
  -- Appels simultanés : une seule limite pour les règles (pits.lua, image en cours) et la stratégie ; les IA déjà appelées
  -- gardent leur place (un appel retiré bloque l'entrée des stands un instant), les nouvelles attendent.
  local requested=0
- for i=1,frame.count do local a=frame.cars[i]; local c=t.cars[i]; if not a.pit and (e.commands[i].rulePit or c.called and c.wanted or e.commands[i].sanCalled) then requested=requested+1 end end
+ -- Relecture 1.52 : appel d'une IA lente et endommagée (engine.lua, cmd.slowCalled, image précédente) compté aussi.
+ for i=1,frame.count do local a=frame.cars[i]; local c=t.cars[i]; if not a.pit and (e.commands[i].rulePit or c.called and c.wanted or e.commands[i].sanCalled or e.commands[i].slowCalled) then requested=requested+1 end end
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local cmd=e.commands[i]; local s=e.states[i]
   local identity=a.identity or a.id or ''
@@ -366,7 +370,7 @@ function M.update(t,e,frame,now,_dt)
       local row=e.perception.rows[i]
       local r=row and row.front>0 and row.neighbors[row.front]
       local b=r and frame.cars[r.index]
-      if b and not b.pit and r.gap<=K.strategyRivalGap*max(10,a.speed or 0) and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap then
+      if b and not b.pit and r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0) and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap then
        c.reaction=true; want(t,e,c,a,i,'undercut',now)
       end
      end

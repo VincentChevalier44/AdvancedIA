@@ -9,9 +9,15 @@
 local U=require('src/util')
 local K=require('src/config').K
 local Delta=require('src/delta')
-local max=math.max
+-- Beta 1.52 : avis au joueur (message de l'overlay), résolu une fois (aucune dépendance circulaire).
+local Incidents=require('src/incidents')
+local max,min=math.max,math.min
 local M={}
-local function car() return {seen=false,wasPit=false,out=false,outLap=-1,exitAt=-math.huge,cool=false,coolLap=-1,slow=0,warnAt=-math.huge} end
+-- Beta 1.51 : planned (refroidissement prévu d'une IA, niveau abaissé), pushLaps (tours lancés de suite), lapSeen (tour
+-- vu à l'image d'avant), wasPush, coolAt et coolEnd (début du refroidissement prévu, fin et retour du niveau).
+-- Beta 1.52 : why, raison d'une voiture pas lancée pour le journal ('' si lancée).
+local function car() return {seen=false,wasPit=false,out=false,outLap=-1,exitAt=-math.huge,cool=false,coolLap=-1,slow=0,warnAt=-math.huge,
+ planned=false,pushLaps=0,lapSeen=-1,wasPush=false,coolAt=-math.huge,coolEnd=-math.huge,why=''} end
 function M.new()
  local t={active=false,push={},cars={},logAt=-math.huge}
  for i=1,K.maxCars do t.cars[i]=car(); t.push[i]=false end
@@ -27,6 +33,8 @@ function M.rebase(t,amount)
   local c=t.cars[i]
   if U.finite(c.exitAt) then c.exitAt=c.exitAt-amount end
   if U.finite(c.warnAt) then c.warnAt=c.warnAt-amount end
+  if U.finite(c.coolAt) then c.coolAt=c.coolAt-amount end
+  if U.finite(c.coolEnd) then c.coolEnd=c.coolEnd-amount end
  end
 end
 local function name(a) return a and a.name or '?' end
@@ -39,10 +47,29 @@ function M.reference(e,s,a,multi)
  local v=f[Delta.bin(a.spline,e.delta.bins)] or 0
  return v*U.clamp(s.longRatio or 1,K.qualiCoolPaceMin,1)
 end
+-- Nombre de tours lancés de suite avant le refroidissement d'une IA (tiré une fois par IA et par graine).
+function M.target(seed,i) return K.qualiPushMin+math.floor(U.unit(seed,i,K.qualiCoolSalt)*(K.qualiPushMax-K.qualiPushMin+1)) end
+-- Assez de temps pour un refroidissement puis un tour lancé (temps restant inconnu : oui).
+local function timeForCool(frame,a)
+ if not (frame.left and frame.left>0) then return true end
+ local lap=max(K.qualiCoolLapMin,a.lastLap or 0,a.bestLap or 0)
+ return frame.left>K.qualiCoolLate*lap
+end
 -- Une fois par image, avant le pilotage.
 function M.update(t,e,frame,now,dt)
  local p=e.run; local profile=e.profile; local inc=e.incidents
  t.active=(profile=='P' or profile=='Q') and p.qualiTraffic==true and not inc.red and not inc.neutral and not frame.replay and not frame.online
+ -- Beta 1.52 : hors essais et qualifications (journée circuit, course, hotlap), rien à suivre : personne n'est lancé,
+ -- seuls le passage aux stands et le tour vu sont tenus à jour ; état oublié (revu à la première vue au retour).
+ if profile~='P' and profile~='Q' then
+  for i=1,frame.count do
+   local a=frame.cars[i]; local c=t.cars[i]
+   c.wasPit=a.pit==true; c.lapSeen=a.lap or 0; c.seen=false; c.cool=false; c.planned=false; c.slow=0; c.pushLaps=0; c.wasPush=false; c.why=''
+   t.push[i]=false; e.states[i].qualiNoLearn=false
+  end
+  for i=frame.count+1,K.maxCars do t.push[i]=false end
+  return
+ end
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local s=e.states[i]
   local lap=a.lap or 0
@@ -52,7 +79,7 @@ function M.update(t,e,frame,now,dt)
    c.seen=true; c.wasPit=a.pit==true; c.out=true; c.outLap=a.pit and -1 or lap; c.exitAt=now
   end
   if a.pit then
-   c.out=true; c.outLap=-1; c.cool=false; c.slow=0
+   c.out=true; c.outLap=-1; c.cool=false; c.slow=0; c.planned=false; c.pushLaps=0
   elseif c.wasPit or a.teleport then
    c.out=true; c.outLap=lap; c.exitAt=now; c.cool=false; c.slow=0
   end
@@ -62,14 +89,34 @@ function M.update(t,e,frame,now,dt)
    if now-c.exitAt<K.qualiOutGrace then c.outLap=lap else c.out=false end
   end
   -- Tour de refroidissement (ou tour abandonné) : nettement plus lente que sa référence ici, jusqu'à la ligne.
+  local crossed=c.lapSeen>=0 and lap>c.lapSeen
+  c.lapSeen=lap
   if not c.out and not a.pit then
-   if c.cool and lap>c.coolLap then c.cool=false; c.slow=0 end
+   if c.cool and lap>c.coolLap then
+    if c.planned then c.coolEnd=now end
+    c.cool=false; c.slow=0; c.planned=false
+   end
+   -- Beta 1.51 : qualifications, IA pilotée : après sa série de tours lancés, un tour de refroidissement prévu.
+   -- Beta 1.52 : série remise à zéro par un tour qui n'était pas lancé (tours lancés de suite seulement) ; refroidissement
+   -- prévu seulement avec l'onglet Général (sans lui, le niveau n'est pas commandé : la voiture roulerait un tour entier
+   -- à pleine vitesse sans être lancée).
+   if crossed and not c.wasPush then c.pushLaps=0 end
+   if crossed and c.wasPush then
+    c.pushLaps=c.pushLaps+1
+    if t.active and profile=='Q' and p.qualiCoolLaps and p.section_general and a.control and not a.player and c.pushLaps>=M.target(e.runtimeG.seed,i) and timeForCool(frame,a) then
+     c.cool=true; c.planned=true; c.coolLap=lap; c.coolAt=now; c.pushLaps=0
+     e.stats.qualiCool=(e.stats.qualiCool or 0)+1
+     if now>=t.logAt then t.logAt=now+K.qualiLogGap; U.log(e.log,now,'INFO',string.format('tour de refroidissement: %s (niveau -%.0f %%)',name(a),K.qualiCoolLevel*100),i) end
+    end
+   end
    local ref=M.reference(e,s,a,p.multiClass)
    -- Retenue derrière une voiture (à moins de K.followRange m) : jamais un refroidissement (elle perdrait sa priorité au
    -- moment où elle en a besoin).
    local row=e.perception.rows[i]
    local held=row and row.front>0 and row.neighbors[row.front].gap<=K.followRange
-   if not c.cool and ref>0 and a.speed<ref*K.qualiCoolRatio and not held and not s.yellow and not (s.state=='YIELD_IN' or s.state=='YIELD_HOLD') then
+   -- Beta 1.52 : drapeau jaune du joueur lu dans src/incidents.lua (s.yellow n'est tenu que pour les IA).
+   local yellow=a.player and (inc.playerYellow or inc.playerZone) or not a.player and s.yellow
+   if not c.cool and ref>0 and a.speed<ref*K.qualiCoolRatio and not held and not yellow and not (s.state=='YIELD_IN' or s.state=='YIELD_HOLD') then
     c.slow=c.slow+dt
     if c.slow>=K.qualiCoolTime then c.cool=true; c.coolLap=lap end
    elseif not c.cool then c.slow=0 end
@@ -78,8 +125,22 @@ function M.update(t,e,frame,now,dt)
   -- Pas lancée : tour de sortie, refroidissement, voie des stands, appelée aux stands (tour de rentrée), anormalement
   -- lente (dégâts), arrivée, ou à l'arrêt.
   local inLap=not a.player and (cmd.rulePit or cmd.sanCalled or cmd.stratCalled)
+  -- Niveau abaissé pendant le refroidissement prévu (montée en qualiCoolRamp s), rendu en qualiCoolRelease s après la ligne.
+  -- Beta 1.52 : tours lancés coupés (drapeau rouge) pendant un refroidissement prévu : il s'achève, le niveau revient
+  -- par la même rampe (jamais d'un coup) et aucun ancien début n'est repris au retour.
+  if not t.active and c.planned and c.cool then c.coolEnd=now; c.cool=false; c.planned=false; c.slow=0 end
+  local drop=0
+  if t.active and c.planned and c.cool then drop=K.qualiCoolLevel*min(1,(now-c.coolAt)/K.qualiCoolRamp)
+  elseif now-c.coolEnd<K.qualiCoolRelease then drop=K.qualiCoolLevel*(1-(now-c.coolEnd)/K.qualiCoolRelease) end
+  if drop>0 and a.control and not a.player then cmd.levelScale=(cmd.levelScale or 1)*(1-drop) end
   t.push[i]=t.active and a.valid and not a.pit and not a.finished and not a.safetyCar and not c.out and not c.cool and not inLap
    and not s.abnormal and a.kmh>=K.qualiCoolMinKmh or false
+  c.wasPush=t.push[i]
+  -- Beta 1.52 : raison d'une voiture pas lancée (journal des cessions et de l'avis au joueur).
+  c.why=t.push[i] and '' or a.pit and 'stands' or c.out and 'tour de sortie' or c.cool and 'refroidissement' or inLap and 'tour de rentree'
+   or s.abnormal and 'endommagee' or a.kmh<K.qualiCoolMinKmh and 'trop lente' or ''
+  -- Beta 1.52 : IA pas lancée pendant les tours lancés : allure habituelle pas apprise (src/director.lua).
+  s.qualiNoLearn=t.active and not t.push[i] and not a.player
  end
  for i=frame.count+1,K.maxCars do t.push[i]=false end
  if not t.active then return end
@@ -100,8 +161,8 @@ function M.update(t,e,frame,now,dt)
    if now-c.warnAt>=K.qualiWarnRepeat then
     c.warnAt=now; e.stats.qualiWarn=(e.stats.qualiWarn or 0)+1
     local b=frame.cars[best.index]
-    if p.yellowMessage then require('src/incidents').message(inc,'fastCar',best.index-1,math.floor(gapTime*10+0.5)/10,name(b)) end
-    U.log(e.log,now,'INFO',string.format('tour lance: %s arrive derriere le joueur (%s) a %.1f s (%.0f m, %+.0f km/h)',name(b),t.cars[pl].out and 'tour de sortie' or 'refroidissement',gapTime,best.gap,best.sa),best.index)
+    if p.yellowMessage then Incidents.message(inc,'fastCar',best.index-1,math.floor(gapTime*10+0.5)/10,name(b)) end
+    U.log(e.log,now,'INFO',string.format('tour lance: %s arrive derriere le joueur (%s) a %.1f s (%.0f m, %+.0f km/h)',name(b),t.cars[pl].why~='' and t.cars[pl].why or 'pas lance',gapTime,best.gap,best.sa),best.index)
    end
   end
  end

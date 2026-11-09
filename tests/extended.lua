@@ -709,7 +709,7 @@ tests.CUSTOM_PRESET_BEFORE_1_3=function()
  store.revision=0; store.p_section_accidents=false; store.p_section_rules=false; store.p_section_start=true
  local entry=Presets.decode(store)
  assert(entry and entry.p.section_accidents and not entry.p.yellowEnabled and not entry.p.incidentStop and entry.p.obstacleEnabled)
- local saved=Presets.encode(entry); assert(saved.revision==14)
+ local saved=Presets.encode(entry); assert(saved.revision==15)
  saved.p_yellowEnabled=true; local again=Presets.decode(saved); assert(again.p.section_accidents and again.p.yellowEnabled)
 end
 tests.RULE_CATEGORIES=function()
@@ -996,20 +996,22 @@ tests.MANDATORY_PIT_WINDOW=function()
  a.inPitBox=false; a.pit=false; a.kmh=150; F.tick(e,f,0.5); assert(not e.commands[2].rulePit and e.pits.done==1)
  p.pitCompoundChange=true; E.changed(e); local b=f.cars[3]; b.pit=true; b.inPitBox=true; b.kmh=0; F.tick(e,f,0.5)
  assert(e.commands[3].pitCompound==1,'F1: another dry compound')
- -- Fenêtre en deux arrêts : le second dans la seconde moitié.
- local e2,f2,p2=race(3); p2.mandatoryStops=2; E.changed(e2); f2.leaderLaps=9; F.tick(e2,f2,1)
- local first=wanting(e2,f2)
+ -- Relecture 1.52 : un seul arrêt obligatoire depuis la 1.51 (la fenêtre en deux arrêts n'existe plus, code retiré) ;
+ -- fenêtre fermée : plus aucun appel.
+ local e2,f2=race(3); f2.leaderLaps=9; F.tick(e2,f2,1)
  f2.cars[2].inPitBox=true; f2.cars[2].pit=true; F.tick(e2,f2,0.2); f2.cars[2].inPitBox=false; f2.cars[2].pit=false; F.tick(e2,f2,0.2)
- assert(e2.pits.cars[2].stops==1 and not e2.commands[2].rulePit,'second stop not yet due')
- f2.leaderLaps=15; F.tick(e2,f2,0.5); assert(e2.commands[2].rulePit and first>=0,'second stop due later')
+ assert(e2.pits.cars[2].windowStops==1 and not e2.commands[2].rulePit,'single stop done: no further call')
+ f2.leaderLaps=16; F.tick(e2,f2,0.5); assert(e2.pits.state=='closed' and not e2.commands[3].rulePit,'window closed: no call')
  -- Concurrence : au plus trois IA appelées hors des stands.
  local e3,f3=race(8); f3.leaderLaps=15; F.tick(e3,f3,1); assert(wanting(e3,f3)==C.K.pitConcurrent,'at most three at once')
  -- Hors course, sans règles ou sans arrêt demandé : rien.
  local e4,f4=race(4,'Q'); f4.leaderLaps=15; F.tick(e4,f4,1); assert(wanting(e4,f4)==0)
  local e5,f5,p5=race(4); p5.section_rules=false; E.changed(e5); f5.leaderLaps=15; F.tick(e5,f5,1); assert(wanting(e5,f5)==0)
  local e6,f6,p6=race(4); p6.mandatoryStops=0; E.changed(e6); f6.leaderLaps=15; F.tick(e6,f6,1); assert(wanting(e6,f6)==0 and e6.pits.state=='off')
- -- Course chronométrée : avancement par le temps restant.
- local e7,f7=race(3); f7.sessionLaps=0; f7.sessionMinutes=60; f7.left=600; F.tick(e7,f7,1); assert(e7.pits.progress>0.8 and wanting(e7,f7)==2)
+ -- Course chronométrée : avancement par le temps restant (relecture 1.52 : 70 %, fenêtre encore ouverte ; à plus de
+ -- 75 % elle est fermée et personne n'est plus appelé).
+ local e7,f7=race(3); f7.sessionLaps=0; f7.sessionMinutes=60; f7.left=1080; F.tick(e7,f7,1); assert(math.abs(e7.pits.progress-0.7)<0.01 and wanting(e7,f7)==2)
+ f7.left=600; F.tick(e7,f7,1); assert(e7.pits.progress>0.8 and e7.pits.state=='closed' and wanting(e7,f7)==0)
 end
 tests.STINT_AND_MIN_PIT_TIME=function()
  local e,f,p=race(3); p.mandatoryStops=0; p.maxStintMin=1; p.minPitTime=10; E.changed(e)
@@ -1751,7 +1753,8 @@ tests.PIT_CALLS_NEVER_WITHDRAWN=function()
  f.sessionLaps=20; f.leaderLaps=0; f.timedRace=false
  for i=2,9 do local a=f.cars[i]; a.tyresKnown=true; a.compoundIndex=0; a.dryCompound=0; a.dryCompounds={[0]=true}; F.place(f,i,(i-2)*500,150) end
  local was={}; local flaps=0
- for lap=4,16 do
+ -- Relecture 1.52 : jusqu'à la fin de la fenêtre (75 %, tour 15) ; fermée, les appels obligatoires sont retirés.
+ for lap=4,15 do
   f.leaderLaps=lap
   for _=1,6 do
    F.tick(e,f,0.25)
@@ -2209,7 +2212,7 @@ tests.CONFIG_REVIEW_180=function()
  store.revision=3; entry=Pr.decode(store); assert(entry.p.playerPenalties==false,'current preset: stored choice kept')
  store.p_levelPct=9999; local bad,n=Pr.decode(store)
  assert(bad and n>0 and bad.p.levelPct==C.defaults('C').levelPct,'invalid value replaced, preset kept')
- assert(Pr.encode(entry).revision==14)
+ assert(Pr.encode(entry).revision==15)
 end
 -- 1.8.0 (relecture des écritures) : drapeau rendu à AC même capacité suspendue ; drapeau noir levé à la restitution ;
 -- journal limité pour de bon ; bip non joué libéré ; sanctions conservées à travers un rechargement.
@@ -4225,7 +4228,7 @@ tests.MIGRATION_SAFETY_CAR=function()
   local store=Presets.layout(); store.name='Ancien'; store.profile='C'; store.revision=revision
   for k,v in pairs(p) do store['p_'..k]=v end
   local entry=Presets.decode(store)
-  assert(entry.p.safetyCarEscalation and C.ruleCategory('C',entry.p)=='base' and Presets.encode(entry).revision==14,'revision '..revision..' custom preset updated')
+  assert(entry.p.safetyCarEscalation and C.ruleCategory('C',entry.p)=='base' and Presets.encode(entry).revision==15,'revision '..revision..' custom preset updated')
  end
  -- Modèle par défaut : Ferrari 458 Italia Stage 3 du jeu de base ; un choix existant est gardé.
  assert(C.validateGlobals({}).safetyCarModel=='ferrari_458_s3','first install: Ferrari 458 Italia Stage 3')
@@ -4342,7 +4345,7 @@ tests.TRAFFIC_MIGRATION=function()
  local store=Presets.layout(); store.name='Ancien'; store.profile='J'; store.revision=10
  for k,v in pairs(p) do store['p_'..k]=v end
  local entry=Presets.decode(store)
- assert(entry.p.trafficGapSeconds==2.5 and entry.p.trafficVariation==45 and Presets.encode(entry).revision==14,'Beta 1.19 custom preset updated')
+ assert(entry.p.trafficGapSeconds==2.5 and entry.p.trafficVariation==45 and Presets.encode(entry).revision==15,'Beta 1.19 custom preset updated')
 end
 -- Beta 1.21 : dans une file, pas de cession pour une voiture à peine plus rapide, ni à la pression, ni sur l'appel de
 -- phares d'une IA : elle ne passerait pas et toute la file ralentirait (train de voitures identiques en journée circuit,
@@ -4543,7 +4546,7 @@ tests.START_MIGRATION=function()
  for k,v in pairs(p) do store['p_'..k]=v end
  store.g_useBrakeAssist=false
  local entry=Presets.decode(store)
- assert(math.abs(entry.p.startCautionMult-1.3)<1e-9 and entry.g.useBrakeAssist and Presets.encode(entry).revision==14,'Beta 1.23 custom preset updated')
+ assert(math.abs(entry.p.startCautionMult-1.3)<1e-9 and entry.g.useBrakeAssist and Presets.encode(entry).revision==15,'Beta 1.23 custom preset updated')
 end
 -- Beta 1.24 : contacts entre voitures notés au journal (qui touche l'arrière de qui, ou sur le côté), une fois par paire
 -- toutes les 10 s ; un mur n'en est pas un.
@@ -4882,10 +4885,10 @@ tests.CSPGUI_SESSION_AND_RELEASE=function()
  G.step(d,p,BOTH,2); assert(p.writes==3 and G.view(d)=='waiting')
  p.applied.HIDE_SYSTEM_MESSAGES=true; G.reloaded(d,p,3)
  assert(G.frozen(d,'HIDE_RACE_FLAGS')==nil and G.applied(d,'HIDE_SYSTEM_MESSAGES') and d.live and G.view(d)=='applied','reloaded by CSP')
- G.release(d,p,3+K.cspReloadRelease/2); assert(files.gui~=nil,'reload just before: CSP restarting the apps, kept')
+ G.release(d,p,3+1); assert(files.gui~=nil,'reload just before: CSP restarting the apps, kept')
  -- Beta 1.47 : déchargement après une relecture : laissées cochées aussi (fermeture du jeu : cases cochées dans Content
  -- Manager), valeurs d'origine gardées.
- G.release(d,p,3+K.cspReloadRelease); assert(files.gui~=nil and files.state~=nil and p.writes==3,'unloaded after a live reload: kept ticked')
+ G.release(d,p,3+2); assert(files.gui~=nil and files.state~=nil and p.writes==3,'unloaded after a live reload: kept ticked')
  -- Retour arrière vers une version sans ces options : rendues même sans relecture de CSP.
  local r=G.new(); G.start(r,p); G.step(r,p,BOTH,10); assert(p.writes==3,'relaunched: nothing rewritten'); G.release(r,p,11); assert(files.gui~=nil,'not reloaded: kept')
  G.release(r,p,11,true); assert(files.gui==nil and files.state==nil,'rollback: restored anyway')
@@ -5158,7 +5161,7 @@ tests.FLASH_RANGE_DEFAULTS_129=function()
  local store=Pr.layout(); store.name='Ancien'; store.profile='J'; store.revision=12; store.p_flashRange=120; store.p_flashCloseAdvantage=5
  local entry=Pr.decode(store); assert(entry.p.flashRange==200 and entry.p.flashCloseAdvantage==-5,'custom preset at the old defaults follows')
  store.p_flashRange=90; entry=Pr.decode(store); assert(entry.p.flashRange==90,'tuned custom preset kept')
- assert(Pr.encode(entry).revision==14)
+ assert(Pr.encode(entry).revision==15)
  local listed=false; for _,u in ipairs(upgraded) do if u=='J:phares' then listed=true end end; assert(listed,'logged')
 end
 -- Beta 1.29 (demande du pilote) : un préréglage règle tout son profil, règles de championnat comprises ; il ne garde que
@@ -6126,6 +6129,11 @@ for name,test in pairs(require('tests/firstlap147')) do assert(tests[name]==nil,
 for name,test in pairs(require('tests/pits149')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.49 (arrêt F1 : composé, rappels, stratégie des stands)
 for name,test in pairs(require('tests/start150')) do assert(tests[name]==nil,name); tests[name]=test end
 for name,test in pairs(require('tests/quali151')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.51 (préréglage de la session, arrêt obligatoire, tours lancés) -- Beta 1.50 (départ en ligne droite, sortie de la voiture de sécurité, annonces)
+for name,test in pairs(require('tests/review152a')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (relecture du pilotage des IA)
+for name,test in pairs(require('tests/review152b')) do assert(tests[name]==nil,name); tests[name]=test end -- Relecture 1.52, domaine B (arrêt obligatoire, préréglage de la session)
+for name,test in pairs(require('tests/review152d')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (relecture : réglages, préréglages et interface)
+for name,test in pairs(require('tests/review152c')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (relecture de la couche hôte : restitutions en boucle, sessions recommencées, point de reprise)
+for name,test in pairs(require('tests/review152e')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (mise à jour de SpotterEnginer signalée à l'accueil)
 -- Beta 1.50 : pose en piste de la voiture de sécurité (Beta 1.48) gardée en repli ; ces scènes l'exercent avec une voiture
 -- de sécurité qui ne quitte jamais son emplacement, libérée dès la fin de l'appel, sans règle de vue du joueur (testées
 -- dans tests/start150.lua).

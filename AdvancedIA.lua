@@ -7,18 +7,21 @@ local okUpdate,Update=pcall(require,'src/update')
 local okRemote,Remote=pcall(require,'src/remote')
 local onRelease
 local port
+-- Beta 1.52 : erreur de Remote.new gardée pour le journal (avant : seulement « port »).
+local portError
 if okUpdate and okRemote and type(Update)=='table' and type(Remote)=='table' then
  local ok,made=pcall(Remote.new,function() if onRelease then onRelease() end end)
- if ok and type(made)=='table' then port=made end
+ if ok and type(made)=='table' then port=made elseif not ok then portError=made end
 end
 if not port then
  -- Modules de la mise à jour illisibles : l'app se charge sans mise à jour (port inerte, état affiché « non vérifié »).
  local function none() end
- local unread=okUpdate and okRemote and 'port' or tostring(not okUpdate and Update or Remote):sub(1,160)
+ local unread=(okUpdate and okRemote and (portError~=nil and 'port: '..tostring(portError) or 'port') or tostring(not okUpdate and Update or Remote)):sub(1,160)
  port={ready=false,work='',restart=none,log=none,bootOk=none,unreadable=unread}
  if not okUpdate or type(Update)~='table' then
+  -- Beta 1.52 : sans checkGap (copie de celui de src/update.lua) : l'interface ne le lit que port prêt, jamais ici.
   Update=setmetatable({new=function(version) return {phase='idle',installed=version,events={},serial=0,askedAt=0} end,
-   view=function() return 'unchecked' end,take=function(_,out) return out end,checkGap=60,page=''},{__index=function() return none end})
+   view=function() return 'unchecked' end,take=function(_,out) return out end,page=''},{__index=function() return none end})
   -- Beta 1.36 : le remplaçant est aussi celui que rend require('src/update') (interface) ; un second require d'un module
   -- en échec lèverait « loop or previous error loading module » et arrêterait le chargement de l'app.
   local loaded=_G.package and _G.package.loaded
@@ -45,12 +48,12 @@ if recovered and recovered.restart then
  function script.HUMANAI__UPDATE() restartOnly() end
  function script.HUMANAI__MAIN() end
  function script.HUMANAI__MENU() end
- function script.HUMANAI__FLAGS() end
  function script.HUMANAI__HUD() end
  return
 end
 -- Beta 1.49 : ancienne version ACAdvancedIA encore installée (son manifeste) : elle pilote les IA ; cette app reste
 -- inerte et affiche seulement la consigne (src/oldinstall.lua), avant toute lecture ou écriture (AI flood, journal).
+local oldTidied=false
 do
  local okOld,Old=pcall(require,'src/oldinstall')
  local okApplier,Applier0=pcall(require,'src/applier')
@@ -59,6 +62,9 @@ do
   Old.run(script,Applier0,okConfig and Config0.release or '')
   return
  end
+ -- Beta 1.52 : ancienne version désinstallée : copie laissée par sa mise à jour (cfg/extension/state/ACAdvancedIA-update)
+ -- effacée, une fois ; ligne au journal de session plus bas.
+ if okOld and okApplier and type(Applier0.oldWorkLeftover)=='function' then local okTidy,done=pcall(Applier0.oldWorkLeftover,Old.folder,Old.oldWork); oldTidied=okTidy and done==true end
 end
 local Snapshot=require('src/snapshot')
 local Applier=require('src/applier')
@@ -185,6 +191,7 @@ do local user,system,writable=Applier.floodRead(); Engine.floodInit(engine,user,
 -- Beta 1.49 : stratégie des stands du joueur (menu Quick Pitstop), lecture seule (src/pitplan.lua).
 engine.pitSpinners=Applier.pitSpinners
 if Applier.floodLeftover() then U.log(engine.log,0,'INFO','nettoyage: new_behaviour.ini.bak efface (reste d une version d avant la Beta 1.38)',-1) end
+if oldTidied then U.log(engine.log,0,'INFO','nettoyage: cfg/extension/state/ACAdvancedIA-update efface (copie laissee par la mise a jour de l ancienne version ACAdvancedIA, desinstallee)',-1) end
 host.oldSettings=Applier.oldSettings()
 if host.oldSettings then U.log(engine.log,0,'WARN','reglages d ACAdvancedIA non repris (state/lua/app/ACAdvancedIA.ini present, AdvancedIA.ini absent) : voir A verifier',-1) end
 if host.storageErrors>0 then U.log(engine.log,0,'WARN','invalid_storage:'..host.storageErrors,-1) end
@@ -210,7 +217,7 @@ local function writeJournal(force)
 end
 local function cancelProbe() if host.allowed then Caps.cancelProbe(host.caps,frame) end end
 local function syncRestored()
- for i=1,K.maxCars do
+ for i=1,frame.count do
   local state=host.cars[i]
   if state.justRestored then
    Director.reset(engine.states[i],engine.time,false,true); engine.commands[i].active=false; engine.commands[i].offset=0
@@ -220,7 +227,7 @@ local function syncRestored()
 end
 -- Une voiture au moins garde une commande de l'app à rendre.
 local function anyOwned()
- for i=1,K.maxCars do if host.cars[i].owned then return true end end
+ for i=1,frame.count do if host.cars[i].owned then return true end end
  return false
 end
 -- Chaque étape de la restitution est protégée : une erreur dans l'une n'empêche jamais les suivantes.
@@ -249,17 +256,25 @@ end
 -- fermé au déchargement (les lecteurs passent à « absent » aussitôt).
 local bridge,bridgePort=nil,nil
 local companion='SpotterEnginer'
+-- Beta 1.52 : sa mise à jour, signalée à l'accueil (clé publiée par lui, fenêtre de réglages ID=main de son manifeste).
+local companionKey,companionWindow=companion..'.update','IMGUI_LUA_'..companion..'_main'
+local companionPresent,companionAt=false,-math.huge
+host.openCompanion=function() return Applier.openCompanion(companionWindow) end
 local function release()
  if released then return end
  if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil end
  -- Aucune image ne suivra : restitution complète, y compris en pause ou en replay.
- released=true; Snapshot.read(frame,K.dtMax,engine.time); pcall(saveRace,true); Applier.access(host); stop(true); Applier.unregister(host)
+ -- Beta 1.52 : instantané protégé (released est déjà posé : une erreur ici empêchait toute la restitution).
+ released=true; pcall(Snapshot.read,frame,K.dtMax,engine.time); pcall(saveRace,true); Applier.access(host); stop(true); Applier.unregister(host)
  pcall(Applier.reportCaps,host)
  -- Overlay en jeu (Beta 1.25) : case de session d'AC et messages d'origine rendus, écoute des messages close.
  pcall(UI.restoreNative,panel); pcall(messages,false); Applier.dispose(messageListener); messageListener=nil
  -- Options de CSP (Beta 1.47) : laissées cochées, valeurs d'origine gardées (src/cspgui.lua).
- -- Retour arrière depuis l'app (vers une version qui ne connaît pas ces options) : rendues dans tous les cas.
- pcall(Cspgui.release,csp,cspPort,cspClock,host.updater~=nil and host.updater.after=='rollback'); Applier.dispose(cspWatch); cspWatch=nil; cspLog()
+ -- Retour arrière depuis l'app vers une version qui ne connaît pas ces options (Beta 1.52 : d'avant la Beta 1.40, ou
+ -- version illisible ; avant : à chaque retour arrière) : rendues.
+ local up=host.updater; local back=up~=nil and up.after=='rollback'
+ local force=back and (not Update.version(up.afterVersion) or Update.newer('Beta 1.40',up.afterVersion))
+ pcall(Cspgui.release,csp,cspPort,cspClock,force); Applier.dispose(cspWatch); cspWatch=nil; cspLog()
  pcall(writeJournal,true); Applier.journalWrite(host,'=== fin : '..Applier.clockText()..' ===\n')
 end
 -- Mise à jour depuis GitHub (Beta 1.33) : vérification une fois par lancement, installation d'un clic à l'arrêt. Avant
@@ -315,11 +330,18 @@ messages=function(block,hide)
   end
  end
 end
+local raceKeys={'humanai:pits','humanai:penalties','humanai:strategy','humanai:sanctions'}
 local function session()
  if released then return end
  Engine.reset(engine,engine.time,true); engine.session=-1; calibration.attempted=false; Pits.forget(engine.pits); Strategy.forget(engine.strategy); engine.penalties.pending=nil
  -- Beta 1.42 : point de reprise des sanctions oublié aussi (redémarrage au même indice) ; celui de la stratégie l'est par Strategy.forget.
  if engine.sanctions then engine.sanctions.pending=nil end
+ -- Beta 1.52 : points de reprise gardés dans ac.store vidés aussi (même indice de session : un rechargement de l'app
+ -- dans la session recommencée reprenait sinon les arrêts, pénalités, stratégie et sanctions d'avant) ; rien de la
+ -- session d'avant n'est écrit ensuite (changements en attente oubliés). Vider plutôt que réécrire : un texte vide est
+ -- refusé par chaque relecture, sans dépendre de l'état du moteur avant sa remise à zéro.
+ engine.pits.dirty=false; engine.penalties.dirty=false; engine.strategy.dirty=false; if engine.sanctions then engine.sanctions.dirty=false end
+ for _,key in ipairs(raceKeys) do Applier.storeText(key,'') end
  host.session=nil -- Un redémarrage garde le même indice : les écritures suivies sont resynchronisées.
 end
 -- Beta 1.32 : panneaux lumineux du circuit cherchés dans sa configuration (et drapeaux d'AC masqués relus), une fois
@@ -331,16 +353,21 @@ local function lightsCheck()
  engine.grid.nodes=Applier.gridNodes(host,frame.track)
  U.log(engine.log,engine.time,'INFO',lights==true and 'panneaux lumineux du circuit: detectes ('..host.trackLightsSource..')' or lights==false and 'panneaux lumineux du circuit: non detectes'..(host.trackLightsDetail or '') or 'panneaux lumineux du circuit: configuration illisible',-1)
 end
+local capsReported,menuClock=0,0
 local function update(dt)
  if released then return end
  local valid=U.finite(dt) and dt>0 and dt<=K.dtMax
+ -- Lecture légère (rien à piloter ni à rendre). Les cinq profils restent testés : un profil coché autre que celui en
+ -- cours garde les voitures lues pour l'interface (nombre d'IA, gommes du profil affiché). Beta 1.52 : voitures de la
+ -- session seulement, et aussi DRS coupé, drapeau noir du joueur ou drapeau de l'app resté affiché : à rendre, lecture
+ -- complète.
  local quiet=not globals.enabled
  if not quiet then
   quiet=true; for _,p in pairs(profiles) do if Config.any(p) then quiet=false; break end end
  end
  if quiet then
-  if calibration.index>0 or host.caps.probeIndex>0 or host.flagOverride then quiet=false end
-  for i=1,K.maxCars do if host.cars[i].owned then quiet=false; break end end
+  if calibration.index>0 or host.caps.probeIndex>0 or host.flagOverride or host.drsAny or host.drsRelease or host.blackFlag or host.flagLeftover then quiet=false end
+  if quiet and anyOwned() then quiet=false end
  end
  local read=Snapshot.read(frame,valid and dt or K.dtMax,engine.time,quiet)
  -- Drapeau du joueur imposé par l'app elle-même : le panneau ne le prend pas pour un drapeau natif.
@@ -350,7 +377,11 @@ local function update(dt)
   if nativeFlag~=nil or frame.flag~=K.flagNone then U.log(engine.log,engine.time,'INFO',string.format('drapeau d AC: %d (%s)',frame.flag,nativeFlagNames[frame.flag] or 'autre'),-1) end
   nativeFlag=frame.flag
  end
- if read then Applier.menu(host,frame.menu) else Applier.menu(host,Snapshot.menu()) end
+ -- Beta 1.52 : horloge des images pour la fenêtre ouverte hors des menus (le temps du moteur est figé en replay).
+ if U.finite(dt) and dt>0 then menuClock=menuClock+math.min(dt,1) end
+ if read then Applier.menu(host,frame.menu,menuClock) else Applier.menu(host,Snapshot.menu(),menuClock) end
+ -- Beta 1.52 : état de la mise à jour de SpotterEnginer (publié par lui), relu toutes les K.companionUpdatePeriod s.
+ if companionPresent and menuClock>=companionAt then companionAt=menuClock+K.companionUpdatePeriod; host.companionUpdate=Applier.companionUpdate(companionKey) end
  if not initialized then
   -- Session courante connue avant la récupération : un rechargement n'est pas un changement de session.
   initialized=true; host.session=frame.session; Applier.recover(host,frame)
@@ -371,11 +402,15 @@ local function update(dt)
  engine.pitCap=host.caps.pit.available==true
  local ready=Engine.step(engine,frame,dt)
  if engine.presetSessionDirty then engine.presetSessionDirty=false; Applier.storeText('humanai:presetsession',engine.presetSession) end
- Applier.reportCaps(host)
+ -- Beta 1.52 : seulement après un nouvel échec d'une capacité (compteur de Caps.call) ; avant : à chaque image.
+ if host.caps.failureCount~=capsReported then capsReported=host.caps.failureCount; Applier.reportCaps(host) end
  if engine.settingsChanged then engine.settingsChanged=false; dirty() end
  writeJournal(false)
  if engine.rebaseDelta>0 then
   Applier.rebase(host,engine.rebaseDelta); calibration.startAt=calibration.startAt-engine.rebaseDelta
+  -- Beta 1.52 : nouvel essai de la mesure du sens latéral et information de mise à jour de l'overlay recalés aussi.
+  if U.finite(calibration.retryAt) then calibration.retryAt=calibration.retryAt-engine.rebaseDelta end
+  if U.finite(engine.panel.updateUntil) then engine.panel.updateUntil=engine.panel.updateUntil-engine.rebaseDelta end
   frame.metaAt=frame.metaAt-engine.rebaseDelta; frame.playerDamageAt=frame.playerDamageAt-engine.rebaseDelta
   lastCheckpoint=lastCheckpoint-engine.rebaseDelta; lastRaceSave=lastRaceSave-engine.rebaseDelta
   journal.flushAt=journal.flushAt-engine.rebaseDelta; journal.summaryAt=journal.summaryAt-engine.rebaseDelta
@@ -387,7 +422,7 @@ local function update(dt)
  if not ready and not engine.recalibrateRequested and calibration.index==0 and host.caps.probeIndex==0 then
   -- Drapeau natif imposé rendu à AC même sans voiture suivie (app désactivée, onglets décochés, rechargement).
   if not anyOwned() then
-   if (host.flagOverride or host.flagLeftover) and Applier.access(host) then Applier.flag(host,frame,false) end
+   if (host.flagOverride or host.flagLeftover) and Applier.access(host) then Applier.flag(host,frame,false,nil,nil,nil,engine.time) end
    -- DRS coupé par les règles (aucune voiture suivie pour autant) : rendu à toutes les voitures, joueur compris.
    if (host.drsAny or host.drsRelease) and Applier.access(host) then Applier.drs(host,frame,nil,engine.time); Applier.checkpoint(host,frame) end
    -- App désactivée : drapeau noir levé, la disqualification du joueur avec.
@@ -406,10 +441,6 @@ local function update(dt)
   engine.recalibrateRequested=false; Engine.reset(engine,engine.time,false); dirty()
  end
  if not ready then stop(false,engine.guard=='finished'); Applier.save(host,globals,profiles,engine.time,frame.replay); return end
- for i=1,frame.count do
-  local state=engine.states[i]
-  frame.cars[i].calibrationBlocked=state.state~='DRIVE' or state.excluded or engine.commands[i].active~=true
- end
  if loadedTrack~=frame.track then
   loadedTrack=frame.track; engine.zones={}; engine.zoneStart=-1; local data=Snapshot.zones(frame.track)
   lightsCheck()
@@ -434,8 +465,19 @@ local function update(dt)
   if s.owned and s.level~=nil then s.level=host.caps.probeOriginal; s.levelAt=engine.time end
  end
  local signBefore=globals.offsetSign
- if Config.needsOffset(engine.run) then Calibration.step(calibration,frame,host.caps,globals,engine.time)
- elseif calibration.index>0 then stop() end
+ if Config.needsOffset(engine.run) then
+  -- Beta 1.52 : voitures exclues de la mesure calculées seulement quand elle cherche ou mesure (avant : à chaque image).
+  if calibration.index>0 or globals.offsetSign==0 or globals.sideSign==0 then
+   for i=1,frame.count do
+    local state=engine.states[i]
+    frame.cars[i].calibrationBlocked=state.state~='DRIVE' or state.excluded or engine.commands[i].active~=true
+   end
+  end
+  Calibration.step(calibration,frame,host.caps,globals,engine.time)
+ -- Beta 1.52 : mesure en cours devenue inutile : seule la mesure est annulée (décalage rendu dès que c'est sûr) ; avant,
+ -- stop() refaisait la restitution complète (drapeaux, DRS, attentes des stands, toutes les voitures) à chaque image
+ -- tant que l'annulation attendait.
+ elseif calibration.index>0 then step(Calibration.cancel,calibration,frame,host.caps,globals) end
  if signBefore~=globals.offsetSign and globals.offsetSign~=0 then U.log(engine.log,engine.time,'INFO',string.format('sens lateral mesure: %d / %d',globals.offsetSign,globals.sideSign),-1) end
  if signBefore~=globals.offsetSign or engine.settingsChanged then engine.settingsChanged=false; dirty() end
  if calibration.index>0 then
@@ -446,14 +488,17 @@ local function update(dt)
   s.offsetReset=false
   if engine.time==calibration.startAt then host.recoveryDirty=true; Applier.checkpoint(host,frame) end
  end
- Config.effectiveGlobals(globals,engine.p,engine.runtimeG)
+ -- Beta 1.52 : recopiés seulement quand le sens latéral a changé depuis Engine.step (mesure, recalibration) ; le moteur
+ -- les recopie déjà à chaque image.
+ local rg=engine.runtimeG
+ if rg.offsetSign~=globals.offsetSign or rg.sideSign~=globals.sideSign then Config.effectiveGlobals(globals,engine.p,rg) end
  host.calibrationIndex=calibration.index
  Applier.apply(host,frame,engine.commands,engine.runtimeG,engine.time)
  -- Drapeau du joueur : panneaux lumineux du circuit (section du profil en cours, circuit équipé) ; sinon jaune natif du
  -- HUD sur demande.
  local lightsOn=Config.on(engine.run,'lights') and host.trackLights==true
  local flagValue,flagReason=Lights.output(engine.lights,engine.incidents,lightsOn)
- Applier.flag(host,frame,flagValue,flagReason,lightsOn and engine.time or nil,engine.run.lightsHold)
+ Applier.flag(host,frame,flagValue,flagReason,lightsOn and engine.time or nil,engine.run.lightsHold,engine.time)
  Applier.penalty(host,frame,engine.penalties)
  Applier.beep(host,frame,engine.drs)
  Applier.deltaBeep(host,frame,engine.deltaBeep)
@@ -475,7 +520,9 @@ local function updateTick(dt)
  updateCounter=counter; updateNow=updateNow+math.min(step,1); host.updateNow=updateNow
  -- Après la restitution (redémarrage demandé) : seule l'alerte de redémarrage en retard reste suivie.
  if released then if updater.phase=='restarting' then Update.tick(updater,port,false,updateNow); updateLog() end; return end
- local player=frame.player>0 and frame.cars[frame.player] or nil
+ -- Beta 1.52 : en lecture légère, voiture du joueur relue à part (frame.lightPlayer).
+ local slot=frame.player>0 and frame.player or frame.lightPlayer or 0
+ local player=slot>0 and frame.cars[slot] or nil
  host.updateStopped=Update.stopped(frame,player)
  Update.tick(updater,port,host.updateStopped,updateNow)
  if not updateAsked and globals.updateCheck and updateClock>=K.updateDelay and updater.phase=='idle' then updateAsked=true; Update.check(updater,port,updateNow) end
@@ -507,7 +554,8 @@ HUMANAI={engine=engine,host=host,release=release,updater=updater,port=port,panel
 -- (ac.connect), après update(), même moteur arrêté (pause, replay, en ligne, app coupée : la raison est publiée). Sans
 -- lui : rien n'est ouvert ni calculé, une ligne au journal. Lecture seule du moteur ; une erreur coupe le pont seul (une
 -- ligne au journal), jamais le moteur ni l'interface.
-if Applier.companionInstalled(companion) then
+companionPresent=Applier.companionInstalled(companion)
+if companionPresent then
  local why
  bridge=Bridge.new(Config.release)
  bridgePort,why=Applier.bridgeOpen(Bridge.layout)
@@ -527,6 +575,7 @@ local function bridgeStep()
 end
 -- Tests : port du pont (nil sans app lectrice, ou après une erreur ou le déchargement).
 HUMANAI.bridgePort=function() return bridgePort end
+local costFrames=0
 function script.HUMANAI__UPDATE(dt)
  local before=Applier.clock(host)
  local ran=protect(update,dt)
@@ -547,7 +596,10 @@ function script.HUMANAI__UPDATE(dt)
  if after then
   local cost=math.max(0,after-before)*1000
   engine.maxFrame=math.max(engine.maxFrame,cost)
-  engine.meanFrame=engine.meanFrame+(cost-engine.meanFrame)/math.max(1,math.min(engine.frames,K.performanceWindow))
+  -- Beta 1.52 : compteur d'images mesurées propre (engine.frames n'avance que moteur en marche : la moyenne valait
+  -- alors le coût de la dernière image).
+  costFrames=math.min(costFrames+1,K.performanceWindow)
+  engine.meanFrame=engine.meanFrame+(cost-engine.meanFrame)/costFrames
  end
 end
 -- Un seul point d'entrée par image, actif aussi lorsque le setup est ouvert.
@@ -594,9 +646,9 @@ function script.HUMANAI__MAIN()
 end
 -- Panneau de drapeaux : protégé comme les autres fenêtres ; une erreur d'affichage est journalisée une fois et
 -- n'arrête jamais le moteur.
--- Panneau de drapeaux dans une fenêtre : absent du manifeste (seul IN_GAME est déclaré, l'overlay le remplace) ; gardé
--- pour les tests et les anciens points d'appel, il dessine le même contenu que l'overlay.
-function script.HUMANAI__FLAGS() if not released then protectUI(UI.flags,panel) end end
+-- Tests : panneau de drapeaux seul (le même contenu que dans l'overlay), hors de tout point d'entrée de CSP (Beta 1.52 :
+-- l'ancien rappel de fenêtre HUMANAI__FLAGS, absent du manifeste depuis la Beta 1.25, est retiré).
+HUMANAI.drawFlags=function() if not released then protectUI(UI.flags,panel) end end
 -- Overlay en jeu (Beta 1.25, rappel IN_GAME) : fenêtre transparente dessinée par l'app, comme SuperHUD.
 function script.HUMANAI__HUD()
  if released then return end

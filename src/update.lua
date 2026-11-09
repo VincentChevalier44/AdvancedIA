@@ -24,6 +24,8 @@ M.api='https://api.github.com/repos/'..M.repo..'/releases/latest'
 M.page='https://github.com/'..M.repo..'/releases'
 M.download='https://github.com/'..M.repo..'/releases/download/'
 M.prefix='apps/lua/AdvancedIA/'
+-- Beta 1.52 : début du nom des fichiers publiés (paquet et empreinte), écrit une seule fois.
+M.assetPrefix='AdvancedIA-Beta-'
 M.required={'manifest.ini','AdvancedIA.lua','src/update.lua','src/remote.lua'}
 M.headers={['User-Agent']='AdvancedIA',['Accept']='application/vnd.github+json'}
 M.notesMax=40
@@ -81,7 +83,7 @@ function M.release(data)
  local tag=str(data.tag_name); local version=M.label(tag)
  if not version then return nil,'format' end
  local number=table.concat(M.version(tag),'.')
- local zipName='AdvancedIA-Beta-'..number..'.zip'
+ local zipName=M.assetPrefix..number..'.zip'
  local r={version=version,tag=tag,notes=M.notes(data.body),published=str(data.published_at) and data.published_at:sub(1,10) or '',
   page=starts(data.html_url,M.page) and data.html_url or M.page}
  if type(data.assets)=='table' then
@@ -89,7 +91,7 @@ function M.release(data)
    local name=type(asset)=='table' and str(asset.name); local url=type(asset)=='table' and str(asset.browser_download_url)
    if name and url and starts(url,M.download) then
     if name==zipName then r.zip={name=name,url=url,size=tonumber(asset.size) or 0}
-    elseif name==zipName..'.sha256' or name=='AdvancedIA-Beta-'..number..'.sha256' then r.sha={name=name,url=url} end
+    elseif name==zipName..'.sha256' or name==M.assetPrefix..number..'.sha256' then r.sha={name=name,url=url} end
    end
   end
  end
@@ -316,7 +318,9 @@ function M.start(u,port,recovered)
  end
  -- Fichiers copiés au chargement : redémarrage à la première image ; le compte rendu est lu au lancement suivant.
  if recovered and recovered.restart then
-  u.phase='restarting'; u.after=recovered.kind=='rollback' and 'rollback' or 'update'; u.restartPending=true; u.serial=u.serial+1
+  -- Beta 1.52 : version visée gardée (afterVersion) : au déchargement, les options de CSP ne sont rendues que pour un
+  -- retour vers une version d'avant la Beta 1.40.
+  u.phase='restarting'; u.after=recovered.kind=='rollback' and 'rollback' or 'update'; u.afterVersion=recovered.to; u.restartPending=true; u.serial=u.serial+1
   event(u,'INFO','mise a jour: redemarrage de l app pour charger une version complete')
   return
  end
@@ -393,7 +397,7 @@ local function place(u,port,kind,to,now)
  -- « Beta 1.45 -> Beta 1.45 ».
  if not port.report(kind..' '..(kind=='update' and u.installed or from)..' -> '..to) then event(u,'WARN','mise a jour: compte rendu non ecrit') end
  if kind=='update' then port.bootSet(to,from,0) else port.bootClear() end
- u.phase='restarting'; u.after=kind; u.restartAt=now; u.serial=u.serial+1
+ u.phase='restarting'; u.after=kind; u.afterVersion=to; u.restartAt=now; u.serial=u.serial+1
  event(u,'INFO',string.format('mise a jour: %s%s (%d fichiers compares, %d copies en %.0f ms ; %d fichiers gardes en %.0f ms), commandes des IA rendues a AC et redemarrage de l app',
   to,kind=='update' and ' installee' or ' retablie',stats and stats.compared or 0,stats and stats.copied or 0,stats and stats.ms or 0,kept and kept.saved or 0,kept and kept.ms or 0))
  port.restart()

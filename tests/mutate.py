@@ -1,11 +1,21 @@
 """Mutations ciblées dans une copie jetable : chaque règle importante est altérée, et le test nommé doit échouer
-sur le code muté (« INT: » : cas d'intégration). Usage : python tests/mutate.py [dossier de l'app]"""
-import sys, shutil, tempfile
-from pathlib import Path
-stage = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(stage / 'tests' / '_vendor'))
-from lupa.luajit21 import LuaRuntime
+sur le code muté (« INT: » : cas d'intégration). Une mutation est DÉTECTÉE quand le test passe sur le code propre et
+échoue sur le code muté.
 
+  python tests/mutate.py [dossier de l'app] [--jobs N] [--only texte]
+
+L'arbre utile (src/, AdvancedIA.lua, manifest.ini, tests/ sans _vendor) est copié une fois par processus ; chaque
+fichier muté est rendu à l'octet près après son mutant. Le résultat du code propre est calculé une fois par test, dans
+la copie. --only ne garde que les mutations dont le libellé ou le test contient le texte."""
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# (libellé, fichier, ancre, mutation, test) ; l'ancre doit apparaître exactement une fois (fins de ligne ignorées).
 MUTATIONS = [
     ('contact instantané', 'src/incidents.lua', 'if c.window-a.kmh>=K.contactDrop and c.contact then', 'if c.window-a.kmh>=K.contactDrop and (a.collided or a.offtrack) then', 'INCIDENT_DEBOUNCE'),
     ('tête-à-queue sur une image', 'src/incidents.lua', 'or c.spin>=K.spinTime or c.wrong>=K.wrongWayTime)', 'or a.slip>K.slipDegrees or c.wrong>=K.wrongWayTime)', 'INCIDENT_DEBOUNCE'),
@@ -14,7 +24,7 @@ MUTATIONS = [
     ('appel IA sans retenue', 'src/director.lua', 'local held=front.gap<K.aiFlashGap and s.stuck>=p.stuckTime', 'local held=front.gap<K.aiFlashGap*2 or s.stuck>=p.stuckTime', 'M03'),
     ('gel au freinage absent', 'src/director.lua', " if braking and s.state~='AVOID' and s.state~='CALM' then desired=s.offset end", '', 'NO_MOVE_UNDER_BRAKING'),
     ('météo prime toujours', 'src/pits.lua', 'and (cmd.weatherRain or cmd.weatherCompound~=a.compoundIndex) then', 'then', 'MANDATORY_PIT_WINDOW'),
-    ('arrêt hors fenêtre compté', 'src/pits.lua', 'if mandatory and position>=opening and (not red or p.redFlagWork) and not closed and not (dq and dq[i]) then c.windowStops', 'if true then c.windowStops', 'PIT_STOPS_SURVIVE_RELOAD'),
+    ('arrêt hors fenêtre compté', 'src/pits.lua', '    local counts=mandatory and position<=closing and (underRed and p.redFlagWork or not underRed and position>=opening) and not closed and not (dq and dq[i])\n', '    local counts=true\n', 'PIT_STOPS_SURVIVE_RELOAD'),
     ('arbitre stands : météo annule', 'src/applier.lua', 'if (cmd.weatherManaged and cmd.weatherPit or cmd.rulePit) and a.caps.pit.available then', 'if cmd.weatherManaged and cmd.weatherPit and a.caps.pit.available then', 'PIT_REQUEST_ARBITER'),
     ('drapeau natif écrasé', 'src/applier.lua', 'local free=nativeFree(frame.flag) or a.flagLeftover==true and frame.flag==a.flagLast\n   or frame.flag==K.flagCaution and (value==K.flagCaution or value==K.flagStop)', 'local free=true', 'ACCIDENT_WRITES_AND_RESTORE'),
     ('vitesse SC aux stands', 'src/applier.lua', 'if cmd.scSpeed<K.unlimitedSpeed and not car.pit then', 'if cmd.scSpeed<K.unlimitedSpeed then', 'SAFETY_CAR_WRITES'),
@@ -41,9 +51,9 @@ MUTATIONS = [
     ('infobulle oubliée', 'src/ui.lua', "L.savePresetShort,x+w-12-sw,y,sw,28,false,v.tips.ui.savePreset,'primary')", "L.savePresetShort,x+w-12-sw,y,sw,28,false,nil,'primary')", 'INT:infobulle après chaque commande'),
     ('infobulle générique', 'src/ui.lua', 'local body=wrap(T.settings[s.key] or s.label)', 'local body=wrap(s.label)', 'INT:infobulle après chaque commande'),
     ('boutons de règles cachés', 'src/ui.lua', ' y=ruleBlock(v,e,PAD,y,lw-6)\n', ' if on then y=ruleBlock(v,e,PAD,y,lw-6) end\n', 'INT:infobulle après chaque commande'),
-    ('préréglage qui efface les préférences', 'src/ui.lua', ' for key,value in pairs(kept) do p[key]=value end\n', '', 'INT:règles sélectionnables'),
-    ('signature avec les préférences', 'src/ui.lua', 'Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues,C.presetKeptKeySet)==expected', 'Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues)==expected', 'INT:règles sélectionnables'),
-    ('Endurance sans ses règles', 'src/ui.lua', "if name=='Endurance' and profile=='C' then C.applyRules('Endurance',e.profiles) else", "if false then C.applyRules('Endurance',e.profiles) else", 'INT:règles sélectionnables'),
+    ('préréglage qui efface les préférences', 'src/config.lua', ' M.preset(name,profile,p)\n for key,value in pairs(kept) do p[key]=value end\n', ' M.preset(name,profile,p)\n', 'INT:règles sélectionnables'),
+    ('signature avec les préférences', 'src/ui.lua', 'Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues,C.presetMatchSkip)==expected', 'Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues)==expected', 'INT:règles sélectionnables'),
+    ('Endurance sans ses règles', 'src/config.lua', "if name=='Endurance' and profile=='C' then M.applyRules('Endurance',profiles) else", "if false then M.applyRules('Endurance',profiles) else", 'INT:règles sélectionnables'),
     ('pneus jamais changés sur la grille', 'src/applier.lua', '(car.pit or cmd.weatherGrid and car.kmh<=K.tyreStopSpeed)', 'car.pit', 'INT:grille de départ'),
     ('gomme sèche toujours la première', 'src/weather.lua', 'if list and #list>0 then return list[math.min(#list,math.floor(U.unit(seed or 0,a.index or 0,K.tyreSalt)*#list)+1)] end', 'if list and #list>0 then return list[1] end', 'INT:grille de départ'),
     ('arrêt demandé pour un pneu de grille', 'src/weather.lua', 'a.compoundIndex~=target and not cmd.weatherGrid', 'a.compoundIndex~=target', 'INT:grille de départ'),
@@ -59,7 +69,7 @@ MUTATIONS = [
     ('bleu sans tour de retard', 'src/panel.lua', 'Classes.laps(a,b,r,frame.length)>0 then\n', 'true then\n', 'FLAG_PANEL_BLUE_PLAYER'),
     ('drapeau natif conservé', 'src/config.lua', ' for _,profile in ipairs(M.profiles) do profiles[profile].yellowHud=false end', '', 'MIGRATION_PANEL_ONLY'),
     ('ancien préréglage avec drapeau natif', 'src/presets.lua', ' if revision<2 then p.yellowHud=false end\n', '', 'MIGRATION_PANEL_ONLY'),
-    ('arrêt sous drapeau rouge compté', 'src/pits.lua', 'position>=opening and (not red or p.redFlagWork) and not closed', 'position>=opening and not closed', 'RED_FLAG_STOP_NOT_COUNTED'),
+    ('arrêt sous drapeau rouge compté', 'src/pits.lua', '(underRed and p.redFlagWork or not underRed and position>=opening)', '(position>=opening)', 'RED_FLAG_STOP_NOT_COUNTED'),
     ('overlay jamais dessiné', 'src/ui.lua', ' if not p then return end\n local s=g.overlayScale;', ' if true then return end\n local s=g.overlayScale;', 'INT:drapeau rouge en course'),
     ('tête-à-queue compté pour le drapeau rouge', 'src/incidents.lua', 'if eligible and not a.player and c.still>=K.redIncidentStill and now-c.still>t.redEnd then', 'if eligible and not a.player and now-c.still>t.redEnd then', 'RED_FLAG_PROCEDURE'),
     ('délai maximal fixe', 'src/incidents.lua', 'K.redPitMargin,K.redFlagMax,K.redFlagMaxCap)', 'K.redPitMargin,K.redFlagMax,K.redFlagMax)', 'RED_FLAG_PROCEDURE'),
@@ -85,9 +95,9 @@ MUTATIONS = [
     ('minuteries des écritures non décalées', 'src/applier.lua', '  s.pitAt=s.pitAt-amount; s.stopAt=s.stopAt-amount;', '  s.stopAt=s.stopAt-amount;', 'REBASE_TIMERS'),
     ('frein gardé aux stands', 'src/applier.lua', "   if mine and s.brake~=0 and Caps.restoreCall(a.caps,'brake',car.index,0) then s.brake=0; a.recoveryDirty=true end\n", '', 'BRAKE_RELEASED_IN_PITS'),
     ('visite de la voiture précédente', 'src/applier.lua', ' if s.tyreVisit>=0 and s.id~=(car.identity or car.id) then s.tyreVisit=-1 end\n', '', 'TYRE_VISIT_RESET'),
-    ('visite gardée d une session à l autre', 'src/applier.lua', '    s.reset=not s.parked; s.tyreVisit=-1\n', '    s.reset=not s.parked\n', 'TYRE_VISIT_RESET'),
-    ('étape de restitution non protégée', 'AdvancedIA.lua', 'step(Calibration.cancel,calibration,frame,host.caps,globals)', 'Calibration.cancel(calibration,frame,host.caps,globals)', 'INT:restitution complète même'),
-    ('drapeau natif gardé sans voiture suivie', 'AdvancedIA.lua', '   if (host.flagOverride or host.flagLeftover) and Applier.access(host) then Applier.flag(host,frame,false) end\n', '', 'INT:drapeau jaune natif rendu'),
+    ('visite gardée d une session à l autre', 'src/applier.lua', '    s.reset=not s.parked and not s.scHeld; s.tyreVisit=-1\n', '    s.reset=not s.parked and not s.scHeld\n', 'TYRE_VISIT_RESET'),
+    ('étape de restitution non protégée', 'AdvancedIA.lua', 'step(cancelProbe); step(Calibration.cancel,calibration,frame,host.caps,globals)', 'step(cancelProbe); Calibration.cancel(calibration,frame,host.caps,globals)', 'INT:restitution complète même'),
+    ('drapeau natif gardé sans voiture suivie', 'AdvancedIA.lua', '   if (host.flagOverride or host.flagLeftover) and Applier.access(host) then Applier.flag(host,frame,false,nil,nil,nil,engine.time) end\n', '', 'INT:drapeau jaune natif rendu'),
     ('erreur d affichage fatale', 'AdvancedIA.lua', ' protectUI(fn,panel)\n', ' protect(fn,panel)\n', 'INT:erreur d affichage'),
     ('arrêts mémorisés après redémarrage', 'AdvancedIA.lua', '; Pits.forget(engine.pits)', '', 'INT:arrêts obligatoires mémorisés'),
     ('évitement figé par une voiture à côté', 'src/director.lua', " if s.alongside and s.state~='AVOID' then aggression=", ' if s.alongside then aggression=', 'AVOID_NOT_FROZEN_BY_ALONGSIDE'),
@@ -102,7 +112,7 @@ MUTATIONS = [
     ('relâchement d urgence retenu', 'src/director.lua', "directionAllowed(s,emergency and desired or intended,now,p,emergency or s.state=='CALM'", "directionAllowed(s,emergency and desired or intended,now,p,factor>1 or s.state=='CALM'", 'EMERGENCY_RELEASE_FACTOR_ONE'),
     ('patience incohérente', 'src/director.lua', 'local potential=max(front.sa,(stuck or slowTarget) and (free-a.speed)*3.6 or 0)', 'local potential=max(front.sa,(s.stuck>=p.stuckTime or slowTarget) and (free-a.speed)*3.6 or 0)', 'PATIENCE_CONSISTENT'),
     ('lutte des leaders ignorée', 'src/director.lua', 'local fight=lapped and ahead and other.speed>0 and ahead.gap/other.speed<K.fightTime and abs(ahead.sa)<K.fightSpeed or false', 'local fight=lapped and front.ttc<K.fightTime and abs(front.sa)<K.fightSpeed', 'LAPPED_CAR_STAYS_BEHIND_FIGHT'),
-    ('valeurs par défaut décochent tout', 'src/config.lua', ' for key,value in pairs(kept) do p[key]=value end\n', '', 'RESTORE_KEEPS_TABS_AND_RULES'),
+    ('valeurs par défaut décochent tout', 'src/config.lua', ' M.validate(profile,M.defaults(profile),p)\n for key,value in pairs(kept) do p[key]=value end\n', ' M.validate(profile,M.defaults(profile),p)\n', 'RESTORE_KEEPS_TABS_AND_RULES'),
     ('règles sans préréglage recommandé', 'src/config.lua', '  if not p.configured and not M.anySection(p) and M.recommended[profile] then M.preset(M.recommended[profile],profile,p) end\n', '', 'RULES_ON_FRESH_PROFILES'),
     ('réglages entiers non arrondis', 'src/config.lua', ' for key in pairs(M.integerKeys) do out[key]=math.floor(out[key]+0.5) end\n', '', 'INTEGER_SETTINGS_ROUNDED'),
     ('défense au freinage', 'src/director.lua', ' and a.brake<=K.ruleBrake and s.lapseUntil<=now', ' and s.lapseUntil<=now', 'NO_DEFENSE_UNDER_BRAKING'),
@@ -163,7 +173,7 @@ MUTATIONS = [
     ('déboîtement vers la cible', 'src/director.lua', 'and -target.lat*s.targetSide<K.pullOutTargetLat then', 'then', 'OVT_ARM_PULL_OUT_RULES'),
     ('dépassement sans fin', 'src/director.lua', 'or s.passStall>K.passStallTime or fastBack or s.holdStall>K.passHoldMax then', 'or fastBack or s.holdStall>K.passHoldMax then', 'PASS_STALL_ABORT'),
     ('évitement vers l obstacle', 'src/director.lua', 'if s.avoidSide==0 and not sideFree(row,side) and abs(target.lat)<K.nearLine then side=-side end', 'if not sideFree(row,side) then side=-side end', 'AVOID_NEVER_TOWARDS_OBSTACLE'),
-    ('défense au freinage', 'src/director.lua', 'or s.yellow or a.brake>K.ruleBrake or req.untilTime>now', 'or s.yellow or req.untilTime>now', 'DEFEND_ENDS_UNDER_BRAKING'),
+    ('défense levée au freinage', 'src/director.lua', 'or s.yellow or a.brake>K.ruleBrake or req.untilTime>now', 'or s.yellow or req.untilTime>now', 'DEFEND_ENDS_UNDER_BRAKING'),
     ('incident sur un pont', 'src/director.lua', 'if r.coherent and r.long>0 and r.gap<p.obstacleDetect', 'if r.long>0 and r.gap<p.obstacleDetect', 'INCIDENT_SCAN_SPLINE_COHERENCE'),
     ('arrivée rapide impunie', 'src/delta.lua', '  if advance(z,a,frame.length,dt,vref,count) and z.delta<-tolerance and not d.infraction then\n', '  if advance(z,a,frame.length,dt,vref,count) and false then\n', 'PENALTY_FAST_ENTRY'),
     ('dépassement permis à l approche', 'src/penalties.lua', ' local regime=inc.playerNoPass or inc.neutral or inc.red or inc.playerRestart==true\n', ' local regime=inc.playerInside or inc.neutral or inc.red or inc.playerRestart==true\n', 'PLAYER_PENALTY_REGIMES'),
@@ -180,9 +190,9 @@ MUTATIONS = [
     ('reprise hors des stands impunie', 'src/penalties.lua', " if ready and t.redPending then t.redPending=false; return decide(t,'red',p.penaltySeconds,now,p) end\n", '', 'PILOT_DECISIONS'),
     ('VSC prise pour une FCY', 'src/delta.lua', "if mode=='vsc' then return 'vsc',p.vscDeltaPct,p.fcySpeedKmh end", "if mode=='vsc' then return 'fcy',p.vscDeltaPct,p.fcySpeedKmh end", 'PILOT_DECISIONS'),
     ('allure apprise sous drapeau', 'src/engine.lua', '  if not (e.incidents.neutral or e.incidents.red or e.incidents.playerZone) then Director.pace(state,player,row,dt,e.run,nil,e.delta.bins) end\n', '  Director.pace(state,player,row,dt,e.run,nil,e.delta.bins)\n', 'PILOT_DECISIONS'),
-    ('arrêt manqué impuni', 'src/engine.lua', ' if e.pits.justClosed and player and e.pits.cars[frame.player].windowStops<e.run.mandatoryStops then e.penalties.stopPending=true end\n', '', 'PILOT_DECISIONS'),
+    ('arrêt manqué impuni', 'src/engine.lua', ' if e.pits.justClosed and pc and pc.windowStops<e.run.mandatoryStops then\n', ' if false then\n', 'PILOT_DECISIONS'),
     ('rappel d arrêt permanent', 'src/engine.lua', '(now-e.pits.openedAt<K.pitRemindTime or e.pits.position>=', '(true or e.pits.position>=', 'PILOT_DECISIONS'),
-    ('file seulement derrière la SC', 'src/director.lua', ' if (yellow or e.incidents.neutral or e.incidents.red) and row.front>0', " if e.incidents.neutral and e.incidents.neutralMode=='sc' and row.front>0", 'PILOT_DECISIONS'),
+    ('file seulement derrière la SC', 'src/director.lua', ' if (yellow or e.incidents.neutral or e.incidents.red) and row.front>0', " if e.incidents.neutral and e.incidents.neutralMode=='sc' and row.front>0", 'AI_ZONE_QUEUE'),
     ('voitures de réserve non garées', 'src/engine.lua', " local cmd=e.commands[i]; cmd.scPark=true; cmd.parkReason='spare' end end\n", " local cmd=e.commands[i]; cmd.parkReason='spare' end end\n", 'PILOT_DECISIONS'),
     ('voiture de réserve qui court', 'src/engine.lua', '  a.safetyCar=reserved\n', '  a.safetyCar=i==safety\n', 'PILOT_DECISIONS'),
     ('nom Content Manager ignoré', 'src/snapshot.lua', " local name=ok and type(data)=='string' and jsonName(data)\n", ' local name=nil\n', 'INT:Beta 1.1 : voiture de sécurité'),
@@ -193,9 +203,9 @@ MUTATIONS = [
     ('libellé stocké au lieu du dossier', 'src/ui.lua', 'then g.safetyCarModel=car.id; g.safetyCarPicked=true; v.dirty() end', 'then g.safetyCarModel=car.name; g.safetyCarPicked=true; v.dirty() end', 'INT:Beta 1.1 : voiture de sécurité'),
     ('SC aux stands sans delta FCY', 'src/delta.lua', "  local merging=inc.safetyPhase=='call' or inc.safety>0 and frame.cars[inc.safety].pit\n", "  local merging=inc.safetyPhase=='call'\n", 'PLAYER_PENALTY_REGIMES'),
     ('places des stands comptées', 'src/penalties.lua', 'then clear(t.ahead); clear(t.waiting); t.passedUnder=t.passMade; return nil end', 'then clear(t.waiting); t.passedUnder=t.passMade; return nil end', 'PLAYER_PENALTY_REGIMES'),
-    ('voiture hors piste encore suivie', 'src/penalties.lua', '   for j in pairs(ahead) do if passable(frame.cars[j],inc.cars[j],p,now) or serving(t,j,now,frame.player) then ahead[j]=nil end end\n', '', 'AI_PENALTY_FAIRNESS'),
+    ('voiture hors piste encore suivie', 'src/penalties.lua', '    for j in pairs(ahead) do if passable(frame.cars[j],inc.cars[j],p,now) or spare and serving(t,j,now,frame.player) then ahead[j]=nil end end\n', '', 'AI_PENALTY_FAIRNESS'),
     ('sanctions en rafale', 'src/penalties.lua', 'else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(', 'else grant(t,j,i); if true then events=sanction(', 'AI_PENALTY_FAIRNESS'),
-    ('IA sanctionnée non dépassable', 'src/penalties.lua', ' or serving(t,j,now,frame.player) then ahead[j]=nil end end', ' then ahead[j]=nil end end', 'AI_PENALTY_FAIRNESS'),
+    ('IA sanctionnée non dépassable', 'src/penalties.lua', ' or spare and serving(t,j,now,frame.player) then ahead[j]=nil end end', ' then ahead[j]=nil end end', 'AI_PENALTY_FAIRNESS'),
     ('sanction non recalée', 'src/penalties.lua', ' for i,v in pairs(t.ai.slowUntil) do t.ai.slowUntil[i]=v-amount end\n', '', 'AI_PENALTY_FAIRNESS'),
     ('arrêt réel compté écarté', 'src/incidents.lua', 'if c.slow>=K.obstacleTime and c.halt==0 and not c.counted then', 'if c.slow>=K.obstacleTime and c.halt<K.obstacleTime and not c.counted then', 'INCIDENT_COUNTS_AND_DISMISSAL'),
     ('incident écarté pour toujours', 'src/incidents.lua', 'if not incident or not a.offtrack then c.dismissed=false end', 'if not incident then c.dismissed=false end', 'INCIDENT_COUNTS_AND_DISMISSAL'),
@@ -219,7 +229,7 @@ MUTATIONS = [
     ('panneau d approche fixe', 'src/incidents.lua', ' local lead=U.clamp(v*K.flagLeadTime+max(0,v*v-vy*vy)/(2*p.yellowDecel),K.playerFlagLead,K.playerFlagLeadMax)\n', ' local lead=K.playerFlagLead\n', 'PLAYER_ZONE_ENVELOPE'),
     ('distance à l incident affichée', 'src/panel.lua', 'value=math.floor((t.playerToZone or 0)/10+0.5)*10', 'value=math.floor(t.playerDistance/10+0.5)*10', 'FLAG_PANEL_PRIORITY'),
     ('zone jaune dans la voie des stands', 'src/incidents.lua', 'frame.length>0 and a.splineValid and not a.pit then\n', 'frame.length>0 and a.splineValid then\n', 'PLAYER_ZONE_ENVELOPE'),
-    ('limite cachée pendant la sortie de la SC', 'src/panel.lua', "   local merging=t.safetyPhase=='call' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit\n", "   local merging=t.safetyPhase=='call'\n", 'REVIEW2_MISC'),
+    ('limite cachée pendant la sortie de la SC', 'src/panel.lua', "   local merging=t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit\n", "   local merging=t.safetyPhase=='call'\n", 'REVIEW2_MISC'),
     ('drapeau noir non remis au rechargement', 'src/penalties.lua', "if pending.dq then t.kind='dq'; t.requestId=t.requestId%K.counterMax+1 end", "if pending.dq then t.kind='dq' end", 'REVIEW2_MISC'),
     ('pied levé brutal', 'src/engine.lua', 'math.max(ai.slowKmh[i],ai.slowFrom[i]-K.aiPenaltyDecel*3.6*(now-ai.slowAt[i]))', 'ai.slowKmh[i]', 'SANCTION_RAMP_AND_SERVING_PLAYER'),
     ('joueur sanctionné non dépassable', 'src/penalties.lua', " return now<(t.ai.slowUntil[j] or 0) or j==player and (t.disqualified or t.kind=='slow' and now<t.lastAt+t.seconds)\n", ' return now<(t.ai.slowUntil[j] or 0)\n', 'SANCTION_RAMP_AND_SERVING_PLAYER'),
@@ -292,7 +302,7 @@ MUTATIONS = [
     ('volume des bips non conservé', 'src/config.lua', ' out.drsBeepVolume=p.drsBeepVolume\n', '', 'INT:onglet Règles décoché'),
     ('retour au stand une fois par processus', 'src/applier.lua', '; s.teleported=false; s.teleportAt=-math.huge; s.redTeleported=false\n', '\n', 'INT:réserves ramenées'),
     ('garées libérées en fin de session', 'AdvancedIA.lua', "stop(false,engine.guard=='finished')", 'stop(false,false)', 'INT:réserves ramenées'),
-    ('garée dans la voie des stands', 'src/applier.lua', '  if not car.inPitBox and now>=s.teleportAt and', '  if not car.pit and now>=s.teleportAt and', 'INT:réserves ramenées'),
+    ('garée dans la voie des stands', 'src/applier.lua', '  if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and', '  if not car.pit and not cmd.scHideWait and now>=s.teleportAt and', 'INT:réserves ramenées'),
     ('monotype : grille écartée', 'src/engine.lua', " local oneMake=model~='' and (player~=nil and player.id==model or matches>=2 and matches>=ais or shared)\n", ' local oneMake=shared\n', 'INT:course monotype'),
     ('erreur réservée aux IA commandées', 'src/applier.lua', '  if mistake and car.valid and', '  if mistake and cmd.active and car.valid and', 'INT:erreur de pilotage écrite'),
     ('livrée jamais rendue', 'src/applier.lua', ' elseif not cmd.scSkin and s.skinOriginal then restoreSkin(s,car) end\n', ' end\n', 'INT:erreur de pilotage écrite'),
@@ -300,11 +310,11 @@ MUTATIONS = [
     ('voiture de sécurité immobilisée laissée en piste', 'src/incidents.lua', ' if t.safetyStill>=K.scStuckTime then unavailable(', ' if false then unavailable(', 'SAFETY_CAR_STUCK'),
     ('DRS des IA refermé avec retard', 'src/applier.lua', '(open and K.drsAiRetry or K.drsAiCloseRetry)', 'K.drsAiRetry', 'INT:Beta 1.2 : DRS coupé'),
     ('erreurs dès le départ', 'src/mistakes.lua', 'math.max(p.startDelay+p.startRelax,K.mistakeStartMin)', 'p.startDelay+p.startRelax', 'MISTAKE_START_WINDOW'),
-    ('reprise de place punie (joueur)', 'src/penalties.lua', '   local owed=(t.ai.waiting[j] and t.ai.waiting[j][i] or 0)>now or retake\n', '   local owed=retake\n', 'GIVE_BACK_NOT_A_PASS'),
-    ('reprise de place punie (IA)', 'src/penalties.lua', '    local owed=(s.waiting[j] and s.waiting[j][i] or 0)>now or j==frame.player and (t.waiting[i] or 0)>now or retake\n', '    local owed=retake\n', 'GIVE_BACK_NOT_A_PASS'),
-    ('file derrière la voiture qui doit la place', 'src/director.lua', '  local owes=Penalties.mayPass(e.penalties,i,j,now,frame.player)\n', '  local owes=false\n', 'AI_GIVE_BACK_DYNAMIC'),
+    ('reprise de place punie (joueur)', 'src/penalties.lua', '   local owed=(t.ai.waiting[j] and t.ai.waiting[j][i] or 0)>now or retake or restore\n', '   local owed=retake or restore\n', 'GIVE_BACK_NOT_A_PASS'),
+    ('reprise de place punie (IA)', 'src/penalties.lua', '     local owed=(s.waiting[j] and s.waiting[j][i] or 0)>now or j==frame.player and (t.waiting[i] or 0)>now or retake or restore\n', '     local owed=retake or restore\n', 'GIVE_BACK_NOT_A_PASS'),
+    ('file derrière la voiture qui doit la place', 'src/director.lua', '  local owes=Penalties.mayPass(e.penalties,i,j,now,frame.player,e.incidents.neutral and not e.incidents.red)\n', '  local owes=false\n', 'AI_GIVE_BACK_DYNAMIC'),
     ('attente oubliée en fin de régime', 'src/penalties.lua', ' if not regime then t.passMade=false; if t.retake[i]', ' if not regime then t.passMade=false; clear(t.waiting); if t.retake[i]', 'PASS_PENDING_SURVIVES_ZONE_EXIT'),
-    ('IA hors piste sans régime', 'src/penalties.lua', "   local regime=states[i].yellow or whole or inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights' or a.offtrack and s.regime[i]==true\n", '   local regime=states[i].yellow or inc.cars[i].restart==true\n', 'AI_OFFTRACK_KEEPS_REGIME'),
+    ('IA hors piste sans régime', 'src/penalties.lua', '   local regime=states[i].yellow or whole or relaunch or a.offtrack and s.regime[i]==true\n', '   local regime=states[i].yellow or relaunch\n', 'AI_OFFTRACK_KEEPS_REGIME'),
     ('zone devenue double sans delta', 'src/delta.lua', ' elseif inside and not z.on and inc.playerZoneDouble then\n', ' elseif false then\n', 'DELTA_ZONE_OVERLAP'),
     ('message de reprise rouge écrasé', 'src/incidents.lua', 'penaltyRed=5,penaltyStop=5,', '', 'RED_PENALTY_MESSAGE'),
     ('drapeau rouge annulé puni', 'src/incidents.lua', 't.redCancelled=not redAllowed', 't.redCancelled=false', 'RED_PENALTY_MESSAGE'),
@@ -318,7 +328,7 @@ MUTATIONS = [
     ('delta de zone sans nouveau départ', 'src/delta.lua', ' d.course.delta=max(d.course.delta,K.deltaStart); d.zone.delta=max(d.zone.delta,K.deltaStart)', ' d.course.delta=max(d.course.delta,K.deltaStart)', 'DELTA_REVERSE_SC_CALL_ZONE_PENALTY'),
     ('delta non recalé', 'src/delta.lua', ' if U.finite(d.onsetAt) then d.onsetAt=d.onsetAt-amount end\n', '', 'REBASE_RULE_TIMERS'),
     ('attentes du joueur non recalées', 'src/penalties.lua', ' for j,v in pairs(t.waiting) do t.waiting[j]=v-amount end\n', '', 'REBASE_RULE_TIMERS'),
-    ('début de régime non recalé', 'src/penalties.lua', ' if t.regimeAt>-math.huge then t.regimeAt=t.regimeAt-amount end;', '', 'REBASE_RULE_TIMERS'),
+    ('début de régime non recalé', 'src/penalties.lua', ' if t.regimeAt>-math.huge then t.regimeAt=t.regimeAt-amount end\n', '', 'REBASE_RULE_TIMERS'),
     ('piste glissante non recalée', 'src/incidents.lua', ' if U.finite(t.slipperyUntil) then t.slipperyUntil=t.slipperyUntil-amount end\n', '', 'REBASE_RULE_TIMERS'),
     ('reprise non recalée', 'src/incidents.lua', ' t.endingUntil=t.endingUntil-amount; t.restartSince=t.restartSince-amount\n', '', 'REBASE_RULE_TIMERS'),
     ('sortie des stands non recalée', 'src/incidents.lua', '  if U.finite(t.releaseAt[i]) then t.releaseAt[i]=t.releaseAt[i]-amount end\n', '', 'REBASE_RULE_TIMERS'),
@@ -334,15 +344,15 @@ MUTATIONS = [
     ('IA libres avant la ligne', 'src/incidents.lua', ' if t.restart and t.cars[i].restart then yellow=true end\n', '', 'RESTART_UNTIL_LINE'),
     ('joueur libre avant la ligne', 'src/penalties.lua', ' local regime=inc.playerNoPass or inc.neutral or inc.red or inc.playerRestart==true\n', ' local regime=inc.playerNoPass or inc.neutral or inc.red\n', 'RESTART_UNTIL_LINE'),
     ('reprise directe après drapeau rouge', 'src/incidents.lua', '    t.neutral=true; t.relaunch=true; t.ending=false; t.neutralMode=relaunchMode; t.neutralSince=now\n', '    t.greenUntil=now\n', 'RED_FLAG_PROCEDURE'),
-    ('IA lâchées toutes ensemble', 'src/incidents.lua', ' for rank=1,n do t.releaseAt[order[rank]]=now+K.redReleaseFirst+(rank-1)*K.redReleaseGap end\n', ' for rank=1,n do t.releaseAt[order[rank]]=now+K.redReleaseFirst end\n', 'RED_FLAG_PROCEDURE'),
+    ('IA lâchées toutes ensemble', 'src/incidents.lua', '  t.releaseAt[i]=now+K.redReleaseFirst+(rank-1)*K.redReleaseGap\n', '  t.releaseAt[i]=now+K.redReleaseFirst\n', 'RED_FLAG_PROCEDURE'),
     ('classement ignoré à la sortie des stands', 'src/grid.lua', ' if px~=py then return px<py end\n', '', 'RED_FLAG_PROCEDURE'),
-    ('IA libérées sans attendre leur tour', 'src/engine.lua', '   elseif now<e.incidents.releaseAt[i] then cmd.pitHold=a.inPitBox==true end\n', '   end\n', 'RED_FLAG_PROCEDURE'),
+    ('IA libérées sans attendre leur tour', 'src/engine.lua', '   elseif e.incidents.gate[i] then cmd.pitHold=a.inPitBox==true end\n', '   end\n', 'RED_FLAG_PROCEDURE'),
     ('tour de relance sans voiture de sécurité', 'src/incidents.lua', "local relaunchMode=t.safety>0 and not t.safetyFailed and 'sc' or", "local relaunchMode=false and 'sc' or", 'RED_FLAG_RELAUNCH_SC'),
     ('stands jamais fermés', 'src/incidents.lua', "local closed=closure~='open' and (", 'local closed=false and (', 'PITS_CLOSED'),
     ('stands fermés tout le temps de la voiture de sécurité', 'src/incidents.lua', ' and now-t.neutralSince<K.scClosedLaps*scLap)', ')', 'PITS_CLOSED'),
     ('IA appelées stands fermés', 'src/pits.lua', '   if closed and not a.pit then want=false end\n', '', 'PITS_CLOSED'),
     ('arrêt stands fermés compté', 'src/pits.lua', ' and not closed and not (dq', ' and not (dq', 'PITS_CLOSED'),
-    ('pneus sous drapeau rouge en GT', 'src/pits.lua', ' and (not red or p.redFlagWork) then cmd.pitCompound', ' then cmd.pitCompound', 'RED_FLAG_WORK_AND_WET_RACE'),
+    ('pneus sous drapeau rouge en GT', 'src/pits.lua', ' and (not underRed or p.redFlagWork) then cmd.pitCompound', ' then cmd.pitCompound', 'RED_FLAG_WORK_AND_WET_RACE'),
     ('course mouillée ignorée', 'src/pits.lua', ' local waived=p.pitCompoundChange and t.wetRace\n', ' local waived=false\n', 'RED_FLAG_WORK_AND_WET_RACE'),
     ('pluie jamais notée', 'src/engine.lua', " if e.weather.wet and e.profile=='C' and frame.started then e.pits.wetRace=true end\n", '', 'RED_FLAG_WORK_AND_WET_RACE'),
     ('Slow Zone ignorée', 'src/delta.lua', ' if p.slowZoneKmh>0 then return max(K.deltaMinKmh,p.slowZoneKmh)/3.6 end\n', '', 'SLOW_ZONE'),
@@ -356,7 +366,7 @@ MUTATIONS = [
     ('jeux de la Beta 1.3 non reconnus', 'src/config.lua', ' local name=not M.solo(profile) and category13(profile,p) or nil\n', ' local name=nil\n', 'MIGRATION_BETA_1_4'),
     ('double jaune laissé à +70 %', 'src/config.lua', ' elseif not name then p.zoneDeltaPct=schemaByKey.zoneDeltaPct.defaults[profile] end\n', ' end\n', 'MIGRATION_BETA_1_4'),
     ('réglage du pilote écrasé par la migration', 'src/config.lua', ' if not equal(zone,oldZoneDelta) then p.zoneDeltaPct=zone elseif', ' if false then p.zoneDeltaPct=zone elseif', 'MIGRATION_BETA_1_4'),
-    ('préréglage des Beta 1.0 et 1.1 incomplet', 'src/presets.lua', '   if absent then local defaults=C.defaults(profile); for _,key in ipairs(keys12) do checked[key]=defaults[key] end end\n', '', 'MIGRATION_BETA_1_4'),
+    ('préréglage des Beta 1.0 et 1.1 incomplet', 'src/presets.lua', '   if absent then local base=C.defaults(profile); for _,key in ipairs(keys12) do checked[key]=base[key] end end\n', '', 'MIGRATION_BETA_1_4'),
     ('préréglage jamais migré', 'src/presets.lua', '  C.migrateRules(profile,checked)\n', '', 'MIGRATION_BETA_1_4'),
     ('F1 2025 avec Overtake Mode', 'src/config.lua', "pitCompoundChange=true,redFlagWork=true,pitFuel='plan',redRestart='standing'},\n F1_2026=", "pitCompoundChange=true,redFlagWork=true,pitFuel='plan',redRestart='standing',overtakeMode=true},\n F1_2026=", 'RULE_CATEGORIES'),
     ('FCY GT au delta de base', 'src/config.lua', "GT={neutralization='fcy',fcyDeltaPct=150,", "GT={neutralization='fcy',", 'RULE_CATEGORIES'),
@@ -364,16 +374,14 @@ MUTATIONS = [
     ('tour pris dès la ligne de départ', 'src/classes.lua', ' or b.lap<1 then return 0 end', ' then return 0 end', 'START_LINE_NO_FALSE_LAP'),
     ('premier tour jugé sur la voiture doublée', 'src/classes.lua', ' or b.lap<1 then return 0 end', ' or a.lap<1 then return 0 end', 'START_LINE_NO_FALSE_LAP'),
     ('aucun tour pris avant deux tours terminés', 'src/classes.lua', ' or b.lap<1 then return 0 end', ' or b.lap<2 then return 0 end', 'START_LINE_NO_FALSE_LAP'),
-    ('voiture de sécurité rentrée sans être sortie des stands', 'src/incidents.lua', "if t.safetyPhase=='out' and t.safetyLeft and now>=t.neutralUntil", "if t.safetyPhase=='out' and now>=t.neutralUntil", 'SAFETY_CAR_PIT_EXIT'),
-    ('voiture de sécurité attendue sans fin aux stands', 'src/incidents.lua', '  elseif now-t.safetySince>=K.scExitMax then unavailable(', '  elseif false then unavailable(', 'SAFETY_CAR_PIT_EXIT'),
-    ('sortie des stands non remise à zéro', 'src/incidents.lua', "t.safetySince=now; t.safetyLeft=false; note(t,'INFO','voiture de securite: liberee'", "t.safetySince=now; note(t,'INFO','voiture de securite: liberee'", 'SAFETY_CAR_PIT_EXIT'),
-    ('sortie des stands non remise à zéro à la relance', 'src/incidents.lua', "t.safetyPhase='out'; t.safetySince=now; t.safetyLeft=false end", "t.safetyPhase='out'; t.safetySince=now end", 'SAFETY_CAR_PIT_EXIT'),
+    ('voiture de sécurité rentrée sans être sortie des stands', 'src/incidents.lua', '  if sc.valid and not sc.pit and not sc.inPitBox and sc.splineValid and t.safetyTarget>=0', '  if sc.valid and sc.splineValid and t.safetyTarget>=0', 'RED_FLAG_RELAUNCH_SC'),
+    ('voiture de sécurité attendue sans fin aux stands', 'src/incidents.lua', 'now-t.safetyPlaceSince>=K.scPlaceMax or now-t.safetySince>=K.scExitMax then placeFailed', 'now-t.safetyPlaceSince>=K.scPlaceMax then placeFailed', 'RED_FLAG_RELAUNCH_SC'),
+    ('sortie des stands non remise à zéro à la relance', 'src/incidents.lua', "if t.safety>0 and t.safetyPhase=='place' then", 'if false then', 'SAFETY_CAR_PIT_EXIT'),
     ('IA retenue de nouveau à sa libération', 'src/incidents.lua', '   c.holding=false; c.crashAt=-math.huge\n', '   c.holding=false\n', 'INCIDENT_HOLD_ONCE'),
     ('avertissement du plafond sans détail', 'src/director.lua', "U.log(e.log,now,'WARN',limitText(s,now),i) end", "U.log(e.log,now,'WARN','direction_limit',i) end", 'DIRECTION_LIMIT_DIAGNOSTIC'),
     ('changement refusé non noté', 'src/director.lua', 's.newDirectionLimit=true; s.limitState=s.state; s.limitSide=direction end', 's.newDirectionLimit=true end', 'DIRECTION_LIMIT_DIAGNOSTIC'),
     ('état des changements non noté', 'src/director.lua', 's.directionStates[s.directionHead]=s.state; ', '', 'DIRECTION_LIMIT_DIAGNOSTIC'),
     ('prudence de départ après l attente seulement', 'src/director.lua', " if profile=='C' and (not frame.started or elapsed<p.startDelay+p.startRelax) then", " if profile=='C' and frame.started and elapsed>=p.startDelay and elapsed<p.startDelay+p.startRelax then", 'START_MODULATORS_FROM_GRID'),
-    ('voiture garée restituée au changement de session', 'src/applier.lua', '    s.reset=not s.parked; s.tyreVisit=-1\n', '    s.reset=true; s.tyreVisit=-1\n', 'INT:Beta 1.6 : voiture de sécurité garée'),
     ('première installation laissée neutre', 'src/config.lua', " if fresh then M.applyRules('base',profiles) end\n", '', 'MIGRATION_FIRST_INSTALL'),
     ('installation existante prise pour une première', 'src/config.lua', ' local fresh=g.dataRevision==0 and not g.presetsUsed\n', ' local fresh=true\n', 'MIGRATION_FIRST_INSTALL'),
     ('migration des jeux de règles rejouée', 'src/config.lua', ' if g.dataRevision<3 then\n  for _,profile in ipairs(M.profiles) do\n   local name=M.migrateRules', ' if true then\n  for _,profile in ipairs(M.profiles) do\n   local name=M.migrateRules', 'MIGRATION_FIRST_INSTALL'),
@@ -389,13 +397,13 @@ MUTATIONS = [
     ('IA accidentée retenue en pleine piste', 'src/incidents.lua', 'not c.holding and a.offtrack and now-c.crashAt', 'not c.holding and now-c.crashAt', 'INCIDENT_STOP_HOLD'),
     ('IA immobile en pleine piste attendue 90 s', 'src/engine.lua', 'neutralStuck or trackStuck or broken or stuck)', 'neutralStuck or broken or stuck)', 'STUCK_AI_RECOVERED'),
     ('retenue levée par la restitution en attente', 'src/applier.lua', '  claim(a,s,car,now); s.reset=false\n', '  claim(a,s,car,now)\n', 'INT:accident en jeu : zone jaune à 50 km/h'),
-    ('reprise de place sanctionnée', 'src/penalties.lua', 'or j==frame.player and (t.waiting[i] or 0)>now or retake\n', 'or j==frame.player and (t.waiting[i] or 0)>now\n', 'PENALTY_RETAKE'),
+    ('reprise de place sanctionnée', 'src/penalties.lua', 'or j==frame.player and (t.waiting[i] or 0)>now or retake or restore\n', 'or j==frame.player and (t.waiting[i] or 0)>now or restore\n', 'PENALTY_RETAKE'),
     ('droit de reprise jamais accordé par le joueur', 'src/penalties.lua', 'else t.passMade=true; grant(t,j,i); if ready', 'else t.passMade=true; if ready', 'PENALTY_RETAKE'),
-    ('droit de reprise jamais accordé entre IA', 'src/penalties.lua', 'else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events) end end', 'else if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events) end end', 'PENALTY_RETAKE'),
+    ('droit de reprise jamais accordé entre IA', 'src/penalties.lua', 'else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral)', 'else if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral)', 'PENALTY_RETAKE'),
     ('droit de reprise gardé après la place reprise', 'src/penalties.lua', 'if fresh.same and fresh.long<-(a.length+b.length)*0.5 then t.retake[i][j]=nil end end\n', 'end\n', 'PENALTY_RETAKE'),
     ('droit de reprise gardé après le drapeau', 'src/penalties.lua', '   if not regime and t.retake[i] then clear(t.retake[i]) end\n', '', 'PENALTY_RETAKE'),
     ('delta à l ancienne tolérance', 'src/config.lua', "'Delta : tolérance aux mini-secteurs (s)',0,1,0.5,0.5,0.5)", "'Delta : tolérance aux mini-secteurs (s)',0,1,0.1,0.1,0.1)", 'MIGRATION_DELTA_SOFTER'),
-    ('migration du delta absente', 'src/config.lua', "if equal(p.deltaTolerance,0.1) then p.deltaTolerance=M.defaults(profile).deltaTolerance; out[#out+1]=profile..':delta' end", '', 'MIGRATION_DELTA_SOFTER'),
+    ('migration du delta absente', 'src/config.lua', "if from<5 and equal(p.deltaTolerance,0.1) then p.deltaTolerance=M.defaults(profile).deltaTolerance; out[#out+1]=profile..':delta' end", '', 'MIGRATION_DELTA_SOFTER'),
     ('réaction du delta inchangée', 'src/config.lua', 'penaltyBrakeMargin=2.5,', 'penaltyBrakeMargin=1,', 'MIGRATION_DELTA_SOFTER'),
     ('127 maintien de ligne activé par défaut', 'src/config.lua', "'Maintien de ligne au départ',false,false,false)", "'Maintien de ligne au départ',false,false,true)", 'START_LANE_HOLD'),
     # Beta 1.27 : retirée, équivalente (onglet Départ décoché : la valeur par défaut, désormais coupée, s'applique déjà).
@@ -430,7 +438,7 @@ MUTATIONS = [
     ('enchaînement depuis le retour', 'src/director.lua', "if s.clear>=K.clearConfirm and s.state~='OVT_OUT' then", 'if s.clear>=K.clearConfirm then', 'NO_CHAIN_FROM_OVT_OUT'),
     ('défense contre le plafond', 'src/director.lua', ' and directionBudget(s,now,p) and not s.defendUsed', ' and now>=s.driveUntil and not s.defendUsed', 'DEFEND_NEEDS_DIRECTION_BUDGET'),
     ('reprise du joueur sanctionnée', 'src/penalties.lua', '      if t.ahead[j]==false and regime and not t.waiting[j]', '      if false and regime and not t.waiting[j]', 'PLAYER_RETAKE_ALWAYS'),
-    ('file derrière une voiture sanctionnée', 'src/penalties.lua', ' or serving(t,j,now,player) or entitled(t,i,j)\n', ' or entitled(t,i,j)\n', 'QUEUE_NOT_BEHIND_SERVING'),
+    ('file derrière une voiture sanctionnée', 'src/penalties.lua', ' or not neutral and serving(t,j,now,player) or entitled(t,i,j)\n', ' or entitled(t,i,j)\n', 'QUEUE_NOT_BEHIND_SERVING'),
     ('extrémités du curseur manquées', 'src/widgets.lua', '  if t>=1 then v=hi elseif t<=0 then v=lo end\n', '', 'INT:chaque paramètre'),
     ('aucune infobulle affichée', 'src/widgets.lua', '  ui.setTooltip(f.tip)\n', '', 'INT:infobulle après chaque commande'),
     ('clic droit sans effet', 'src/ui.lua', '  if reset then value=s.defaults[view]; changed=value~=p[s.key] end\n  if changed then p[s.key]=value; C.validate(view,p,p); touch(v,p) end\n  return 44\n', '  if changed then p[s.key]=value; C.validate(view,p,p); touch(v,p) end\n  return 44\n', 'INT:chaque paramètre'),
@@ -447,7 +455,7 @@ MUTATIONS = [
     ('croix revenue sur les réglages', 'manifest.ini', 'FLAGS=MAIN,SETUP,NO_TITLE_BAR,', 'FLAGS=MAIN,SETUP,', 'NO_TITLE_BAR'),
     ('pénalité d AC ignorée', 'src/panel.lua', " if penalty==K.penaltyMandatoryPits and n>0 then return 'penaltyDrive',n end\n", '', 'NATIVE_FLAGS_MIRRORED'),
     ('damier d AC ignoré', 'src/panel.lua', " if f==K.flagFinished then return panel.info and panel.info.finished and 'finish' or 'checkered',0 end\n", '', 'NATIVE_FLAGS_MIRRORED'),
-    ('drapeaux d AC perdus onglet décoché', 'src/panel.lua', ' if not p.flagPanel then return M.native(panel,frame,now,p) end\n', " if not p.flagPanel then panel.kind='none'; panel.key=''; return end\n", 'NATIVE_FLAGS_MIRRORED'),
+    ('drapeaux d AC perdus onglet décoché', 'src/panel.lua', ' if not p.flagPanel then return M.native(panel,frame,now,p,profile) end\n', " if not p.flagPanel then panel.kind='none'; panel.key=''; return end\n", 'NATIVE_FLAGS_MIRRORED'),
     ('drapeaux d AC perdus app coupée', 'src/engine.lua', "e.lights.at=-math.huge end; Panel.native(e.panel,frame,now,e.p,e.profile)\n", "e.lights.at=-math.huge end; e.panel.kind='none'; e.panel.key=''\n", 'NATIVE_FLAGS_MIRRORED'),
     ('pénalité jamais lue', 'src/snapshot.lua', ' a.penaltyType=a.player and math.floor(U.number(raw.currentPenaltyType,0,16,0)) or 0\n', ' a.penaltyType=0\n', 'INT:Beta 1.11'),
     ('Hotlap manuel perdu', 'src/config.lua', "manualProfile={'J','P','Q','C','H'},", "manualProfile={'J','P','Q','C'},", 'HOTLAP_MANUAL_KEPT'),
@@ -456,10 +464,10 @@ MUTATIONS = [
     ('drapeau rouge seulement en course', 'src/incidents.lua', " local redAllowed=(profile=='C' or profile=='P' or profile=='Q') and p.redFlagEnabled\n", " local redAllowed=profile=='C' and p.redFlagEnabled\n", 'RED_FLAG_QUALIFYING'),
     ('qualifications relancées sous neutralisation', 'src/incidents.lua', "   elseif profile~='C' then\n", '   elseif false then\n', 'RED_FLAG_QUALIFYING'),
     ('plein de course jamais prévu', 'src/pits.lua', "     if mode=='plan' then\n", '     if false then\n', 'FUEL_STRATEGY'),
-    ('ravitaillement sans fin de relais', 'src/pits.lua', "     if mode=='refuel' and not red then laps=stintLaps(t,frame,c,p,lapTime,left) end\n", '', 'FUEL_STRATEGY'),
+    ('ravitaillement sans fin de relais', 'src/pits.lua', "     if mode=='refuel' and not red then laps=stintLaps(p,lapTime,left) end\n", '', 'FUEL_STRATEGY'),
     ('carburant retiré à l arrêt', 'src/pits.lua', 'U.clamp(laps*perLap*K.fuelMargin+reserve,a.fuel,a.maxFuel)', 'U.clamp(laps*perLap*K.fuelMargin+reserve,0,a.maxFuel)', 'FUEL_STRATEGY'),
     ('carburant imposé sans consommation connue', 'src/pits.lua', '   if perLap>0 and left>=0 then\n', '   if left>=0 then\n', 'FUEL_STRATEGY'),
-    ('joueur ravitaillé', 'src/pits.lua', 'a.valid and a.control and not a.player and not a.safetyCar and not a.finished and (a.fuel', 'a.valid and not a.safetyCar and not a.finished and (a.fuel', 'FUEL_STRATEGY'),
+    ('joueur ravitaillé', 'src/pits.lua', '  local eligible=learning and a.valid and a.control and not a.player and not a.safetyCar and not a.finished\n', '  local eligible=learning and a.valid and not a.safetyCar and not a.finished\n', 'FUEL_STRATEGY'),
     ('consommation jamais apprise', 'src/pits.lua', '   if used>0 and used<a.maxFuel*K.fuelLapShare then c.perLap=c.perLap>0 and c.perLap+(used-c.perLap)*K.fuelAlpha or used end\n', '', 'FUEL_STRATEGY'),
     ('demande de carburant jamais rendue', 'src/applier.lua', " elseif s.fuelRequested>=0 and s.owned and s.id==(car.identity or car.id) and not car.inPitBox and Caps.restoreCall(a.caps,'fuel',car.index,math.huge) then s.fuelRequested=-1; s.fuelLogged=nil; a.recoveryDirty=true end\n", ' end\n', 'FUEL_WRITES_AND_RESTORE'),
     ('demande gardée au déchargement', 'src/applier.lua', "   if mine and s.fuelRequested>=0 and Caps.restoreCall(a.caps,'fuel',car.index,math.huge) then s.fuelRequested=-1; s.fuelLogged=nil; a.recoveryDirty=true end\n", '', 'FUEL_WRITES_AND_RESTORE'),
@@ -524,7 +532,6 @@ MUTATIONS = [
     ('escalade levée aussitôt', 'src/incidents.lua', "  if profile=='C' and p.safetyCarEscalation then mode=t.safetyFailed and 'fcy' or 'sc' else t.escalated=false end\n", '', 'SAFETY_CAR_ESCALATION'),
     ('neutralisation levée si la voiture de sécurité manque', 'src/incidents.lua', "mode=t.safetyFailed and 'fcy' or 'sc'", "mode='sc'", 'SAFETY_CAR_ESCALATION'),
     ('escalade sans voiture de sécurité', 'src/incidents.lua', ' and t.safety>0 and not t.safetyFailed and (majors', ' and (majors', 'SAFETY_CAR_ESCALATION'),
-    ('nombre d arrêts remis à un', 'src/config.lua', 'p.mandatoryStops=on and math.max(1,p.mandatoryStops) or 0', 'p.mandatoryStops=on and 1 or 0', 'WEEKEND_SWITCHES'),
     ('interrupteur sans préréglage recommandé', 'src/config.lua', '  if not (p.configured or M.anySection(p)) and M.recommended[profile] then M.preset(M.recommended[profile],profile,p) end\n', '', 'WEEKEND_SWITCHES'),
     ('migration de la voiture de sécurité absente', 'src/config.lua', ' if from<11 and not M.solo(profile) then p.safetyCarEscalation=true end\n', '', 'MIGRATION_SAFETY_CAR'),
     ('migration GT jugée avec la nouvelle clé', 'src/config.lua', "M.ruleCategory(profile,p,keys18)=='GT'", "M.ruleCategory(profile,p)=='GT'", 'MIGRATION_SAFETY_CAR'),
@@ -541,11 +548,11 @@ MUTATIONS = [
     ('titre qui bascule l arrêt obligatoire', 'src/ui.lua', " elseif shown then v.rulesView='stops' end\n", " elseif shown then v.rulesView='stops'; C.weekendSwitch(e.profiles,'mandatoryStops',not stops) end\n", 'INT:titres des interrupteurs'),
     ('titre qui bascule la voiture de sécurité', 'src/ui.lua', " elseif shown then v.rulesView='safety' end\n", " elseif shown then v.rulesView='safety'; C.weekendSwitch(e.profiles,'safetyCarEscalation',not safety) end\n", 'INT:titres des interrupteurs'),
     ('titre qui bascule les règles', 'src/ui.lua', " elseif shown then v.rulesView='all' end\n", " elseif shown then v.rulesView='all'; p.section_rules=not on end\n", 'INT:titres des interrupteurs'),
-    ('arrêts encore dans la vue principale', 'src/ui.lua', 'local ruleViews={stops={mandatoryStops=true,', 'local ruleViews={stops={', 'INT:titres des interrupteurs'),
+    ('arrêts encore dans la vue principale', 'src/ui.lua', 'local ruleViews={switch={mandatoryStops=true},stops={pitWindowOpenPct=true,', 'local ruleViews={switch={},stops={mandatoryStops=true,pitWindowOpenPct=true,', 'INT:titres des interrupteurs'),
     ('voiture de sécurité encore dans la vue principale', 'src/ui.lua', ' safety={safetyCarSpeedKmh=true,safetyCarEscalation=true,restartOvertake=true}}\n', ' safety={}}\n', 'INT:titres des interrupteurs'),
     ('vue choisie sans surbrillance', 'src/ui.lua', ' local clicked=W.nav(id,label,x,y,w,selected,disabled,nil,tip)', ' local clicked=W.nav(id,label,x,y,w,false,disabled,nil,tip)', 'INT:titres des interrupteurs'),
     ('réinitialisation sans effet', 'src/ui.lua', '   C.applyRules(name,e.profiles); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v)\n  end\n end\n y=y+38\n', '  end\n end\n y=y+38\n', 'INT:titres des interrupteurs'),
-    ('réinitialisation au jeu exact seulement', 'src/ui.lua', 'C.closestRuleCategory(target,e.profiles[target],switchKeys)', "(C.ruleCategory(target,e.profiles[target],switchKeys) or 'base')", 'INT:titres des interrupteurs'),
+    ('réinitialisation au jeu exact seulement', 'src/ui.lua', 'v.closestName=C.closestRuleCategory(target,e.profiles[target],C.switchKeys)', "v.closestName=(C.ruleCategory(target,e.profiles[target],C.switchKeys) or 'base')", 'INT:titres des interrupteurs'),
     ('jeu le plus proche au hasard', 'src/config.lua', '  if n<count then best,count=category,n end\n', '  if n<=count then best,count=category,n end\n', 'RULES_CLOSEST'),
     ('pas de voiture de sécurité avec la zone jaune locale', 'src/incidents.lua', " or not t.neutral and mode=='local' and profile=='C')", ')', 'SAFETY_CAR_ESCALATION'),
     ('voiture de sécurité hors course', 'src/incidents.lua', "and mode=='local' and profile=='C')", "and mode=='local')", 'SAFETY_CAR_ESCALATION'),
@@ -581,13 +588,13 @@ MUTATIONS = [
     ('127 1.2.0 non reconnue après le départ du pilote', 'src/config.lua', "(startOld[s.key] or startOld126[s.key])", "startOld[s.key]", 'LEGACY_PRESET_MIGRATION'),
     ('127 départ resté aux anciens défauts', 'src/config.lua', "  for key,old in pairs(startMoved127) do if equal(p[key],old) then p[key]=M.defaults('C')[key]; moved=true end end\n", '', 'START_DEFAULTS_127'),
     ('dégâts lus sans protection', 'src/snapshot.lua', ' if not (a.control and (a.inPitBox or a.kmh<K.damageReadSpeed or a.watchDamage) and pcall(damageRead,a,raw)) then', ' if a.control and (a.inPitBox or a.kmh<K.damageReadSpeed or a.watchDamage) then damageRead(a,raw) end; if not (a.control and (a.inPitBox or a.kmh<K.damageReadSpeed or a.watchDamage)) then', 'INT:réparations aux arrêts en course'),
-    ('réparations sous drapeau rouge interdit', 'src/pits.lua', 'not a.safetyCar and (not red or p.redFlagWork) and not (dq', 'not a.safetyCar and not (dq', 'PIT_REPAIR'),
+    ('réparations sous drapeau rouge interdit', 'src/pits.lua', 'not a.safetyCar and (not underRed or p.redFlagWork) and not (dq', 'not a.safetyCar and not (dq', 'PIT_REPAIR'),
     # Beta 1.21 : sorties étalées par parcage et attente native, sortie réelle notée, cession dans une file.
-    ('cession dans une file', 'src/director.lua', " local ordinary=p.yieldEnabled and profile~='C' and clear\n", " local ordinary=p.yieldEnabled and profile~='C'\n", 'QUEUE_YIELD'),
+    ('cession dans une file', 'src/director.lua', " local ordinary=p.yieldEnabled and profile~='C' and clear and not (e.quali", " local ordinary=p.yieldEnabled and profile~='C' and not (e.quali", 'QUEUE_YIELD'),
     ('appel de phares d une IA dans une file', 'src/director.lua', "(profile~='C' and clear or laps>0 or upper)", "(profile~='C' or laps>0 or upper)", 'QUEUE_YIELD'),
     ('file sans voiture nettement plus rapide', 'src/director.lua', ' or back.sa>=K.classFightSpeed\n', '\n', 'QUEUE_YIELD'),
     # Beta 1.22 : voiture de sécurité (réserves, IA disqualifiées) ramenée à son stand chaque fois qu'elle en sort.
-    ('voiture garée ramenée une seule fois', 'src/applier.lua', 'if not car.inPitBox and now>=s.teleportAt and', 'if not car.inPitBox and not s.teleported and', 'INT:ramenée à son stand chaque fois'),
+    ('voiture garée ramenée une seule fois', 'src/applier.lua', 'if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and', 'if not car.inPitBox and not cmd.scHideWait and not s.teleported and', 'INT:ramenée à son stand chaque fois'),
     ('retour au stand sans délai', 'src/applier.lua', 's.teleported=true; s.teleportAt=now+K.parkReturnPeriod;', 's.teleported=true; s.teleportAt=now;', 'INT:ramenée à son stand chaque fois'),
     # Beta 1.22 : sorties des stands étalées en essais et qualifications (attente native seule, annulée hors de l'emplacement).
     ('sorties étalées absentes', 'src/traffic.lua', "mode=='pits' and (profile=='J' or p.pitExitSpread>0)", "false", 'PIT_EXIT_SPREAD'),
@@ -612,9 +619,9 @@ MUTATIONS = [
     ('124 radar relâché d un coup', 'src/director.lua', '(radarTarget>s.radarBrake and K.radarApply or K.radarRelease)*dt', '(radarTarget>s.radarBrake and K.radarApply or 60)*dt', 'FRONT_RADAR'),
     ('124 radar sans plafond', 'src/director.lua', 'radarTarget=U.clamp(close.sa/3.6/K.brakeGain,K.radarMinBrake,K.radarBrakeMax)', 'radarTarget=U.clamp(close.sa/3.6/K.brakeGain*4,K.radarMinBrake,1)', 'FRONT_RADAR'),
     ('124 radar sur la voiture d à côté', 'src/director.lua', 'abs(r.lat)<=(a.width+other.width)*0.5+K.radarLatMargin', 'abs(r.lat)<=8', 'FRONT_RADAR'),
-    ('124 radar sans anticipation', 'src/director.lua', '   if closeTTC<K.radarWarnTTC and not launch then caution=caution*U.lerp(K.radarCaution,1,closeTTC/K.radarWarnTTC) end\n', '', 'FRONT_RADAR'),
+    ('124 radar sans anticipation', 'src/director.lua', '   if closeTTC<K.radarWarnTTC and not launch and not straightRun then caution=caution*U.lerp(K.radarCaution,1,closeTTC/K.radarWarnTTC) end\n', '', 'FRONT_RADAR'),
     ('124 radar ignoré quand coupé', 'src/director.lua', ' if g.useBrakeAssist then\n  local close,closeTTC=nil,math.huge\n', ' if true then\n  local close,closeTTC=nil,math.huge\n', 'FRONT_RADAR'),
-    ('124 radar sans journal', 'src/director.lua', '    if s.radarBrake==0 and (now>=s.radarLogAt or s.radarLogAt-now>K.radarLogPeriod) then\n', '    if false then\n', 'FRONT_RADAR'),
+    ('124 radar sans journal', 'src/director.lua', '    if not straightHold and s.radarBrake==0 and (now>=s.radarLogAt or s.radarLogAt-now>K.radarLogPeriod) then\n', '    if false then\n', 'FRONT_RADAR'),
     ('124 voiture cassée attendue comme une autre', 'src/engine.lua', 'neutralStuck or trackStuck or broken or stuck)', 'neutralStuck or trackStuck or stuck)', 'BROKEN_CAR_RECOVERED'),
     ('124 boîte cassée ignorée', 'src/engine.lua', ' or (a.damageGearbox or 0)>=K.brokenGearbox)', ')', 'BROKEN_CAR_RECOVERED'),
     ('124 dégât léger traité comme cassé', 'src/engine.lua', '(a.damageSuspension or 0)>=K.brokenSuspension', '(a.damageSuspension or 0)>=0.1', 'BROKEN_CAR_RECOVERED'),
@@ -659,11 +666,11 @@ MUTATIONS = [
     ('125 voiture de sécurité sans départ immédiat', 'src/applier.lua', "Caps.call(a.caps,'startDelay',car.index,0); Caps.call(a.caps,'stop',car.index,0)\n", "Caps.call(a.caps,'stop',car.index,0)\n", 'INT:relancée hors de son emplacement'),
     ('125 voiture de sécurité relancée une seule fois', 'src/applier.lua', '    s.scKickAt=now+K.scKickPeriod\n', '    s.scKickAt=math.huge\n', 'INT:relancée hors de son emplacement'),
     ('125 voiture de sécurité relancée une fois sortie', 'src/applier.lua', '  if cmd.scRelease and car.inPitBox then\n', '  if cmd.scRelease then\n', 'INT:relancée hors de son emplacement'),
-    ('125 lancement freiné par la prudence de suivi', 'src/director.lua', '  if not launch then\n   caution=caution*U.lerp(K.followCaution', '  if true then\n   caution=caution*U.lerp(K.followCaution', 'START_LAUNCH_FLAT_OUT'),
+    ('125 lancement freiné par la prudence de suivi', 'src/director.lua', '  if not launch and not straightRun then\n   caution=caution*U.lerp(K.followCaution', '  if true then\n   caution=caution*U.lerp(K.followCaution', 'START_LAUNCH_FLAT_OUT'),
     ('125 radar sensible au lancement', 'src/director.lua', '(launch and K.radarLaunchTTC or K.radarTTC)', 'K.radarTTC', 'START_LAUNCH_FLAT_OUT'),
     ('125 radar coupé au lancement', 'src/director.lua', '(launch and K.radarLaunchTTC or K.radarTTC)', '(launch and 0 or K.radarTTC)', 'START_LAUNCH_FLAT_OUT'),
     ('125 prudence de départ en ligne droite', 'src/director.lua', '  local care=frame.started and s.startCare or 1\n', '  local care=1\n', 'START_MODULATORS_FROM_GRID'),
-    ('125 prudence de départ jamais au freinage', 'src/director.lua', '  local wanted=(s.startBraked or ownBrake>K.ruleBrake or s.startYawTime>=K.startYawHold) and 1 or 0\n', '  local wanted=0\n', 'START_MODULATORS_FROM_GRID'),
+    ('125 prudence de départ jamais au freinage', 'src/director.lua', '  local wanted=(s.startBraked or freeBrake or s.startYawTime>=K.startYawHold) and 1 or 0\n', '  local wanted=0\n', 'START_MODULATORS_FROM_GRID'),
     ('125 maintien de ligne sans plafond', 'src/director.lua', ' local bound=min(s.zone.maxOffset,K.laneMaxOffset,', ' local bound=min(s.zone.maxOffset,', 'START_LANE_HOLD'),
     ('125 passage de ligne absent', 'src/hudinfo.lua', ' if h.lap>=0 and a.lap>h.lap and not a.finished and frame.started then\n', ' if false then\n', 'HUD_LAP_AND_SESSION_LINE'),
     ('125 nouveau meilleur tour jamais signalé', 'src/hudinfo.lua', 'record and L.hudLapRecord or L.hudLapDetail', 'L.hudLapDetail', 'HUD_LAP_AND_SESSION_LINE'),
@@ -697,7 +704,7 @@ MUTATIONS = [
     ('125 overlay jamais replacé', 'src/ui.lua', ' then g.overlayX=-1; g.overlayY=-1; g.overlayScale=1; v.dirty() end\n', ' then v.dirty() end\n', 'INT:section Overlay des réglages'),
     ('125 réinitialisation de l overlay absente', 'src/ui.lua', '  for _,key in ipairs(overlayResetKeys) do e.g[key]=C.globalDefaults[key] end\n', '', 'INT:section Overlay des réglages'),
     ('125 section overlay avec interrupteur de profil', 'src/ui.lua', "   if group~='overlay' then\n", '   if true then\n', 'INT:section Overlay des réglages'),
-    ('126 AI flood coupé sous le seuil', 'src/flood.lua', " return count>=(p.spawnMinCars or 10) and 'off' or 'on'", " return count<(p.spawnMinCars or 10) and 'off' or 'on'", 'FLOOD_CONFIG_EDIT'),
+    ('126 AI flood coupé sous le seuil', 'src/flood.lua', " return count>=(p.spawnMinCars or fallback.spawnMinCars) and 'off' or 'on'", " return count<(p.spawnMinCars or fallback.spawnMinCars) and 'off' or 'on'", 'FLOOD_CONFIG_EDIT'),
     ('126 doublons d AI flood gardés', 'src/flood.lua', '    if values[key]~=false and not done[key] then', '    if values[key]~=false then', 'FLOOD_CONFIG_EDIT'),
     ('126 portée d AI flood ignorée', 'src/flood.lua', 'round(pair[1]*range),round(pair[2]*range)', 'round(pair[1]),round(pair[2])', 'FLOOD_CONFIG_EDIT'),
     ('126 section d AI flood jamais ajoutée', 'src/flood.lua', "   out[#out+1]='['..section..']'\n", '', 'FLOOD_CONFIG_EDIT'),
@@ -718,7 +725,7 @@ MUTATIONS = [
     ('126 cible perdue jamais abandonnée', 'src/director.lua', "      if s.targetLost>=grace then transition(e,s,'OVT_OUT','target_lost',now)", "      if s.targetLost>=grace*1000 then transition(e,s,'OVT_OUT','target_lost',now)", 'TARGET_LOST_GRACE'),
     ('126 messages d origine affichés', 'src/config.lua', ' if g.dataRevision<15 then g.overlayBlockMessages=true end\n', '', 'MESSAGES_HIDDEN_BY_DEFAULT'),
     ('126 attente native gardée avant placement', 'src/applier.lua', " Caps.call(a.caps,'startDelay',car.index,0)\n if Caps.call(a.caps,'position'", " if Caps.call(a.caps,'position'", 'INT:IA réparties sur tout le circuit'),
-    ('126 IA posée sans élan', 'src/applier.lua', '  if car.teleport and car.kmh<K.spreadSpeed then Caps.call', '  if false then Caps.call', 'INT:IA réparties sur tout le circuit'),
+    ('126 IA posée sans élan', 'src/applier.lua', '  if car.teleport and car.kmh<kmh then Caps.call', '  if false then Caps.call', 'INT:IA réparties sur tout le circuit'),
     ('126 orientation imposée', 'src/applier.lua', "Caps.call(a.caps,'position',car.index,pos,nil)", "Caps.call(a.caps,'position',car.index,pos,pos)", 'INT:IA réparties sur tout le circuit'),
     ('126 masquage jamais levé', 'AdvancedIA.lua', '   if probe<=0 then\n', '   if false then\n', 'INT:masquage des messages d AC levé'),
     ('126 témoin ignoré', 'AdvancedIA.lua', '  if engine.probeSeen then\n', '  if false then\n', 'INT:case de session et messages d AC'),
@@ -731,9 +738,9 @@ MUTATIONS = [
     ('128 fin d épisode jamais notée', 'src/engine.lua', '    if s.slowLogged then\n     local text=', '    if false then\n     local text=', 'SLOW_CAR_DIAGNOSTIC'),
     ('128 lenteur notée à chaque image', 'src/engine.lua', '   if not s.slowLogged and s.slowFor>=K.slowLogTime then\n', '   if s.slowFor>=K.slowLogTime then\n', 'SLOW_CAR_DIAGNOSTIC'),
     ('128 IA en difficulté jamais nommée', 'src/traffic.lua', '    if x.trouble<=K.spreadTroubleLines then U.log(', '    if false then U.log(', 'TRACK_DAY_SPREAD_ON_TRACK'),
-    ('129 préréglage intégré qui garde les règles', 'src/ui.lua', ' for key in pairs(C.presetKeptKeySet) do kept[key]=p[key] end\n', ' for key in pairs(C.keptKeySet) do kept[key]=p[key] end\n', 'INT:règles sélectionnables'),
-    ('129 règles du préréglage limitées à son profil', 'src/ui.lua', ' else C.spreadRules(profile,e.profiles) end\n', ' end\n', 'INT:règles sélectionnables'),
-    ('129 préréglage personnel limité à son profil', 'src/ui.lua', "C.spreadRules(profile,e.profiles); C.setMark(e.g,profile,''); presetTarget(v,profile)", "C.setMark(e.g,profile,''); presetTarget(v,profile)", 'INT:règles sélectionnables'),
+    ('129 préréglage intégré qui garde les règles', 'src/config.lua', ' for key in pairs(M.presetKeptKeySet) do kept[key]=p[key] end\n', ' for key in pairs(M.keptKeySet) do kept[key]=p[key] end\n', 'INT:règles sélectionnables'),
+    ('129 règles du préréglage limitées à son profil', 'src/config.lua', ' else M.spreadRules(profile,profiles) end end\n', ' end end\n', 'INT:règles sélectionnables'),
+    ('129 préréglage personnel limité à son profil', 'src/ui.lua', 'C.spreadRules(profile,e.profiles); C.setMark(e.g,profile,C.personalMark); presetTarget(v,profile)', 'C.setMark(e.g,profile,C.personalMark); presetTarget(v,profile)', 'INT:règles sélectionnables'),
     ('129 arrêt obligatoire allumé en journée circuit', 'src/ui.lua', ' local stops=not solo and race.mandatoryStops>0\n', ' local stops=race.mandatoryStops>0\n', 'INT:règles sélectionnables'),
     ('129 vue des arrêts ouverte en journée circuit', 'src/ui.lua', " if solo then v.rulesView='all' end\n", '', 'INT:titres des interrupteurs'),
     ('129 week-end réglé depuis la journée circuit', 'src/config.lua', ' if M.solo(from) then return false end\n local source=profiles[from]\n', ' local source=profiles[from]\n', 'PRESETS_COMPLETE_129'),
@@ -742,7 +749,7 @@ MUTATIONS = [
     ('129 règles du week-end perdues par le préréglage recommandé', 'src/engine.lua', '  if weekend then for _,s in ipairs(C.ruleSchema) do selected[s.key]=rules[s.key] end; C.validate(e.profile,selected,selected) end\n', '', 'INT:règles du week-end gardées'),
     ('129 bouton allumé sans clic', 'src/ui.lua', ' if candidate~=nil and profile==v.view and C.mark(e.g,profile)==name then\n', ' if candidate~=nil and profile==v.view then\n', 'INT:week-end : essais'),
     ('129 bouton allumé hors du profil affiché', 'src/ui.lua', ' if candidate~=nil and profile==v.view and C.mark(e.g,profile)==name then\n', ' if candidate~=nil and C.mark(e.g,profile)==name then\n', 'INT:règles sélectionnables'),
-    ('129 restaurer garde le préréglage allumé', 'src/ui.lua', "then C.restore(view,p); C.setMark(e.g,view,''); touch(v,p) end\n", 'then C.restore(view,p); touch(v,p) end\n', 'INT:règles sélectionnables'),
+    ('129 restaurer garde le préréglage allumé', 'src/ui.lua', "   C.restore(view,p); C.setMark(e.g,view,''); if here then", '   C.restore(view,p); if here then', 'INT:règles sélectionnables'),
     ('129 marques mal relues', 'src/config.lua', " for x,name in (g.builtinMarks or ''):gmatch('(%u)=(%w+)') do if x==profile then return name end end\n", " for x,name in (g.builtinMarks or ''):gmatch('(%u)=(%w+)') do return name end\n", 'PRESETS_COMPLETE_129'),
     ('129 courte distance réduite', 'src/config.lua', 'flashCloseGap=60,', 'flashCloseGap=30,', 'FLASH_HELD_129'),
     ('129 avantage à courte distance ignoré', 'src/flash.lua', ' if gap<=K.flashCloseGap and sa>=p.flashCloseAdvantage then return true end\n', ' if gap<=K.flashCloseGap then return true end\n', 'FLASH_HELD_129'),
@@ -750,7 +757,7 @@ MUTATIONS = [
     ('129 ancien avantage à courte distance gardé', 'src/config.lua', '  if equal(p.flashCloseAdvantage,flashCloseOld128[profile])', '  if false and equal(p.flashCloseAdvantage,flashCloseOld128[profile])', 'FLASH_RANGE_DEFAULTS_129'),
     ('129 préréglage personnel non migré', 'src/presets.lua', ' elseif revision<13 then C.migrateProfile(profile,checked,16,true)\n', ' elseif revision<13 then\n', 'FLASH_RANGE_DEFAULTS_129'),
     ('129 préréglage recommandé noté comme chargé', 'src/engine.lua', '  C.preset(name,e.profile,selected)\n  if weekend then', "  C.preset(name,e.profile,selected); e.g.loadedPreset='builtin:'..name\n  if weekend then", 'QUALIFICATIONS_PRESET_AND_AUTO'),
-    ('129 marques non enregistrées', 'src/config.lua', "loadedPreset='',builtinMarks='',presetsUsed=false,", "loadedPreset='',presetsUsed=false,", 'INT:règles sélectionnables'),
+    ('129 marques non enregistrées', 'src/config.lua', "loadedPreset='',builtinMarks='',presetBySession=true,presetsUsed=false,", "loadedPreset='',presetBySession=true,presetsUsed=false,", 'INT:règles sélectionnables'),
     ('129 avantage figé au moment de l appel', 'src/director.lua', ' local acceptedFlash=activeFlash and back.index==e.frame.player and currentAdvantage\n', ' local acceptedFlash=activeFlash and back.index==e.frame.player and flash.advantage and currentAdvantage\n', 'FLASH_HELD_129'),
     ('129 portée restée à l ancien défaut', 'src/config.lua', '  if equal(p.flashRange,flashOld128[profile]) then', '  if false then', 'FLASH_RANGE_DEFAULTS_129'),
     ('129 appel du joueur absent du journal', 'src/engine.lua', "   U.log(e.log,now,'INFO',f.ranked>0 and string.format(", "   U.log(e.log,now,'INFO',f.ranked<0 and string.format(", 'FLASH_HELD_129'),
@@ -776,7 +783,7 @@ MUTATIONS = [
     ('131 rapprochement jamais cumulé', 'src/director.lua', 's.closeMeters=s.closeMeters+(front.sa/3.6-s.closeMeters/K.closeMemory)*dt', 's.closeMeters=0', 'PASS_SUSTAINED_131'),
     ('131 terrain gagné remis à zéro en virage', 'src/director.lua', '     if front and front.index==s.closeFront then s.closeMeters', '     if false then s.closeMeters', 'CORNER_OVERTAKE_COMPLETES'),
     ('131 tentative jamais notée', 'src/director.lua', "string.format('depassement: %s -> %s (%s, %.0f m, %+.0f km/h)'", "string.format('tentative: %s -> %s (%s, %.0f m, %+.0f km/h)'", 'PASS_SUSTAINED_131'),
-    ('131 fin de tentative jamais notée', 'src/director.lua', '  if U.finite(s.passStartAt) then\n', '  if false then\n', 'PASS_SUSTAINED_131'),
+    ('131 fin de tentative jamais notée', 'src/director.lua', ' if U.finite(s.passStartAt) then\n', ' if false then\n', 'PASS_SUSTAINED_131'),
     ('131 vrais dépassements non comptés', 'src/engine.lua', '      stats.realPass=(stats.realPass or 0)+1\n', '', 'REAL_PASS_131'),
     ('131 dépassement de l app non reconnu', 'src/engine.lua', '      if s.lastPassTarget==s.frontWas and now-s.lastPassAt<K.realPassWindow then', '      if false then', 'REAL_PASS_131'),
     ('131 joueur passé non compté', 'src/engine.lua', '     if other.player then stats.passedPlayer=(stats.passedPlayer or 0)+1\n', '     if other.player then\n', 'REAL_PASS_131'),
@@ -906,13 +913,13 @@ MUTATIONS = [
     ('135 polices de l app jamais chargées', 'src/applier.lua', " if ok and present==true then return 'fonts' end\n", " if false then return 'fonts' end\n", 'INT:Beta 1.35 : interface Racing 26'),
     ('135 vues de course sélectionnables en journée circuit', 'src/ui.lua', " if solo then v.rulesView='all' end\n", '', 'INT:Beta 1.35 : interface Racing 26'),
     ('135 pastilles RS et SS absentes', 'src/ui.lua', "vscEnd='VSC',rolling='RS',standing='SS'}", "vscEnd='VSC'}", 'INT:Beta 1.35 : panneaux de relance'),
-    ('135 place à rejoindre absente', 'src/ui.lua', ' if place and l.delta then local label,value=placeText(v,panel.slotText,panel.slotDistance,panel.slotPlaced,panel.slotPassed); placeBox(colors,l.delta,label,value)\n elseif', ' if false then\n elseif', 'INT:Beta 1.35 : panneaux de relance'),
+    ('135 place à rejoindre absente', 'src/ui.lua', ' elseif place and l.delta then local label,value=placeText(v,panel.slotText,panel.slotDistance,panel.slotPlaced,panel.slotPassed); placeBox(colors,l.delta,label,value)\n elseif', ' elseif false then\n elseif', 'INT:Beta 1.35 : panneaux de relance'),
     # Beta 1.35 : refonte, relecture de l interface et module de mise à jour renforcé. « 129 clic accepté en journée
     # circuit » retirée : équivalente (W.switch refuse déjà le clic d'un interrupteur grisé).
     ('police grasse jamais rendue', 'src/widgets.lua', 'local function release() while f.fontDepth>0 do ui.popDWriteFont(); f.fontDepth=f.fontDepth-1 end; f.fontRole=nil; f.fontName=nil end', 'local function release() f.fontRole=nil; f.fontName=nil end', 'INT:Beta 1.35 : interface Racing 26'),
     ('une police poussée par texte', 'src/widgets.lua', ' if f.fontRole==role then return end\n local name=fonts[role] or fonts.body\n if f.fontName==name and f.fontDepth>0 then f.fontRole=role; return end\n', ' local name=fonts[role] or fonts.body\n', 'INT:Beta 1.35 : relecture de l interface'),
     ('règles lues sur le profil affiché', 'src/ui.lua', "local function ruleCategoryOf(v,e)\n local target=C.solo(v.view) and 'C' or v.view\n", 'local function ruleCategoryOf(v,e)\n local target=v.view\n', 'INT:règles sélectionnables'),
-    ('surbrillance perdue par les interrupteurs', 'src/ui.lua', 'v.ruleCategory=C.ruleCategory(target,e.profiles[target],switchKeys) end', 'v.ruleCategory=C.ruleCategory(target,e.profiles[target]) end', 'INT:titres des interrupteurs'),
+    ('surbrillance perdue par les interrupteurs', 'src/ui.lua', 'v.ruleCategory=C.ruleCategory(target,e.profiles[target],C.switchKeys) end', 'v.ruleCategory=C.ruleCategory(target,e.profiles[target]) end', 'INT:titres des interrupteurs'),
     ('consigne absente', 'src/ui.lua', " if l.detail then font('body',true); write(short,fitSize(short,l.fontDetail,l.detail[3]-l.detail[1]),l.detail,kind=='lap' and panel.lapRecord and colors.best or kind~='ai' and panel.finish and colors.text or colors.dim,START); font('body',false) end\n", '', 'INT:drapeau rouge en course'),
     ('delta sans couleur', 'src/ui.lua', '(r[3]-r[1])*0.92)),box(R2,r[1],r[2]+h*0.22,r[3],r[4]-2),negative and colors.over or colors.under,CENTER)', '(r[3]-r[1])*0.92)),box(R2,r[1],r[2]+h*0.22,r[3],r[4]-2),colors.under,CENTER)', 'INT:drapeau rouge en course'),
     ('interrupteur de section inopérant', 'src/ui.lua', "then p[idOf('section_',group)]=not C.on(p,group); touch(v,p) end", 'then touch(v,p) end', 'INT:profil affiché distinct'),
@@ -965,7 +972,6 @@ MUTATIONS = [
     ('maj: fichiers identiques recopiés', 'src/remote.lua', '   if load(src)~=load(dst) then\n', '   if true then\n', 'UPDATE_REMOTE_END_TO_END'),
     ('maj: manifeste copié en premier', 'src/remote.lua', " if path=='manifest.ini' then return 4 elseif", " if path=='manifest.ini' then return 0 elseif", 'UPDATE_REMOTE_END_TO_END'),
     ('maj: surveillance des fichiers non suspendue', 'src/remote.lua', '    watch(true)\n    if not swap(src,dst)', '    if not swap(src,dst)', 'UPDATE_REMOTE_FAILURES'),
-    ('maj: compte rendu de l ancien module jamais retiré', 'src/remote.lua', '  if exists(legacyReport) then local was=load(legacyReport)', '  if false then local was=load(legacyReport)', 'UPDATE_REMOTE_RECOVERY'),
     ('maj: moteur lancé avant le redémarrage de reprise', 'AdvancedIA.lua', 'if recovered and recovered.restart then\n local asked=false', 'if false then\n local asked=false', 'INT:Beta 1.35 : copie interrompue reprise au chargement'),
     ('maj: horloge de la mise à jour figée en pause', 'AdvancedIA.lua', ' updateCounter=counter; updateNow=updateNow+math.min(step,1); host.updateNow=updateNow\n', ' updateCounter=counter; host.updateNow=updateNow\n', 'INT:Beta 1.33 : erreurs de mise à jour sans rien changer'),
     ('maj: dossier courant listé', 'src/remote.lua', "  if name=='.' or name=='..' or name=='' then return end\n  local path=rel=='' and name or rel..'/'..name\n", "  local path=rel=='' and name or rel..'/'..name\n", 'UPDATE_REMOTE_END_TO_END'),
@@ -981,7 +987,7 @@ MUTATIONS = [
     ('1.35 grille: distance vers l arrière', 'src/grid.lua', ' local ahead=((s.spline-frame.cars[i].spline)%1)*frame.length\n', ' local ahead=U.spline(s.spline-frame.cars[i].spline)*frame.length\n', 'GRID_FORWARD_DISTANCE_135'),
     ('1.35 grille: loin derrière sa place retenue', 'src/grid.lua', ' if ahead>0 and past<=K.gridOvershoot then return -past end\n', ' if ahead>0 then return -past end\n', 'GRID_FORWARD_DISTANCE_135'),
     ('1.35 grille: feux sans recomptage', 'src/grid.lua', '   if not a.player and a.valid and not a.pit and not (dq and dq[i]) then n=n+1;', '   if not a.player then n=n+1;', 'GRID_RELEASE_AND_RECOUNT_135'),
-    ('1.35 grille: arrêt aux stands pendant la formation', 'src/engine.lua', '  for i=1,frame.count do local cmd=e.commands[i]; if not frame.cars[i].pit then cmd.rulePit=false; cmd.weatherPit=false end end\n', '', 'GRID_RELEASE_AND_RECOUNT_135'),
+    ('1.35 grille: arrêt aux stands pendant la formation', 'src/engine.lua', '  for i=1,frame.count do local cmd=e.commands[i]; if not frame.cars[i].pit then cmd.rulePit=false; cmd.weatherPit=false; cmd.slowCalled=false end end\n', '', 'GRID_RELEASE_AND_RECOUNT_135'),
     ('1.35 feux: référence sans être en place', 'src/grid.lua', '    if placedPlayer(g,frame,player) then g.ref=a.spline; g.refSet=true end\n', '    g.ref=a.spline; g.refSet=true\n', 'JUMP_ARMED_WHEN_PLACED_135'),
     ('1.35 feux: marche arrière comptée', 'src/grid.lua', '    local moved=U.spline(a.spline-g.ref)*frame.length\n', '    local moved=math.abs(U.spline(a.spline-g.ref))*frame.length\n', 'JUMP_ARMED_WHEN_PLACED_135'),
     ('1.35 feux: départ des stands surveillé', 'src/grid.lua', ' local slotted=player>0 and g.slotOf[player]>0 and not g.pit[player]\n', ' local slotted=player>0\n', 'JUMP_ARMED_WHEN_PLACED_135'),
@@ -998,7 +1004,7 @@ MUTATIONS = [
     ('1.35 grille: nœuds du circuit rendus tels quels', 'src/grid.lua', "   for k=1,count do local s=out[k] or {}; out[k]=s; s.spline=nodes[k].spline; s.lateral=nodes[k].lateral end\n", "   do return nodes,'AC_START','' end\n", 'GRID_NODES_RESOLVE_135'),
     ('1.35 grille: places côte à côte refusées', 'src/grid.lua', 'and before>=last-K.gridSideBySide and', 'and before>last and', 'GRID_NODES_RESOLVE_135'),
     ('1.35 grille: nœuds au-delà du nombre vérifiés', 'src/grid.lua', '  for k=1,count do\n   local n=nodes[k]', '  for k=1,#nodes do\n   local n=nodes[k]', 'GRID_NODES_RESOLVE_135'),
-    ('1.35 grille: place du joueur arrondie', 'src/grid.lua', ' t.gridGap=shown<20 and math.floor(shown) or math.floor(shown/10+0.5)*10\n', ' t.gridGap=math.floor(shown/10+0.5)*10\n', 'GRID_PLAYER_SLOT_TEXT_135'),
+    ('1.35 grille: place du joueur arrondie', 'src/grid.lua', 't.gridGap=shown<K.gridGapFine and math.floor(shown) or ', 't.gridGap=', 'GRID_PLAYER_SLOT_TEXT_135'),
     ('1.35 grille: place dépassée non signalée', 'src/grid.lua', '  t.gridPassed=k>0 and not t.gridPit and back>K.gridSlotRadius\n', '  t.gridPassed=false\n', 'GRID_PLAYER_SLOT_TEXT_135'),
     ('1.35 grille: joueur sans place en P0', 'src/grid.lua', '  t.gridSlot=k; t.gridPit=k==0 or g.pit[player] or frame.cars[player].pit==true\n', '  t.gridSlot=k; t.gridPit=frame.cars[player].pit==true\n', 'GRID_PLAYER_SLOT_TEXT_135'),
     ('1.35 panneaux: rendus à AC à chaque pause', 'src/engine.lua', "  if reason~='paused' then e.lights.value=K.flagNone;", "  if true then e.lights.value=K.flagNone;", 'FLAG_PAUSE_RED_SESSION_135'),
@@ -1008,7 +1014,7 @@ MUTATIONS = [
     ('1.35 décalage du temps: attentes de placement', 'src/applier.lua', '  if U.finite(s.placeAt) then s.placeAt=s.placeAt-amount end;', '', 'FLAG_PAUSE_RED_SESSION_135'),
     ('1.35 véhicule lent: journal sans limite', 'src/engine.lua', ' and (e.slowLogged==0 or now-(e.slowLoggedAt or -math.huge)>=K.slowLogGap) then\n', ' then\n', 'SLOW_LOG_RATE_135'),
     ('1.35 occupation: portée sans la vitesse', 'src/perception.lua', 'g.occMargin+g.occSpeedGain*abs(a.speed-b.speed)\n', 'g.occMargin\n', 'OCCUPANCY_EQUIVALENT_135'),
-    ('1.35 pénalités: sanction pendant la formation', 'src/penalties.lua', "inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights' or", 'inc.cars[i].restart==true or', 'AI_NO_SANCTION_DURING_FORMATION_135'),
+    ('1.35 pénalités: sanction pendant la formation', 'src/penalties.lua', "local relaunch=inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights'", 'local relaunch=inc.cars[i].restart==true', 'AI_NO_SANCTION_DURING_FORMATION_135'),
     # Beta 1.35 UI/updater fixes : mise à jour (deuxième relecture).
     ('maj: taille du paquet non vérifiée', 'src/update.lua', "   if #data~=r.zip.size then fail(u,'integrity',0,'taille '..#data..' octets au lieu de '..r.zip.size,true); return end\n", '', 'UPDATE_INSTALL_GUARDS'),
     ('maj: modules requis non contrôlés', 'src/update.lua', "   if not loads then fail(u,'content',0,'module absent : '..module,true); return end\n", '', 'UPDATE_INSTALL_GUARDS'),
@@ -1111,7 +1117,7 @@ MUTATIONS = [
     ('1.38 reste .bak de new_behaviour.ini gardé', 'src/applier.lua', '  if okExists and present==true then pcall(io.deleteFile,bak) end\n', '', 'INT:Beta 1.38 : reste new_behaviour'),
     ('1.38 interrupteur du titre des panneaux sans effet', 'src/ui.lua', "then p.section_lights=not C.on(p,'lights'); touch(v,p) end", 'then end', 'INT:Beta 1.38 : interface'),
     ('1.38 panneaux sur deux colonnes', 'src/ui.lua', 'local two=w>=560 and not single', 'local two=w>=560', 'INT:Beta 1.38 : interface'),
-    ('1.38 neutralisation absente des panneaux en cours', 'src/ui.lua', 'local key=value==2 and t.neutral and phaseTexts[t.neutralMode]', 'local key=false', 'INT:Beta 1.38 : interface'),
+    ('1.38 neutralisation absente des panneaux en cours', 'src/ui.lua', 'local key=value==K.flagCaution and t.neutral and phaseTexts[t.neutralMode]', 'local key=false', 'INT:Beta 1.38 : interface'),
     ('1.38 bonus de grip après tous les interrupteurs', 'src/ui.lua', "  if key=='useGripBoost' then\n", "  if key=='debugLog' then\n", 'INT:Beta 1.38 : interface'),
     ('1.38 compteur d infractions absent', 'src/ui.lua', "parts.infraction=not idle and panel.decided=='warning' and (panel.infractions or 0)>0", 'parts.infraction=false', 'INT:Beta 1.38 : interface'),
     ('1.38 rappel des stands absent sous la voiture endommagée', 'src/ui.lua', "parts.repair=not idle and (panel.kind=='meatball' or panel.kind=='pit')", 'parts.repair=false', 'INT:Beta 1.38 : interface'),
@@ -1175,7 +1181,7 @@ MUTATIONS = [
     ('1.40 témoin perdu sans rendre l option', 'AdvancedIA.lua', '     hideProbed=true; globals.cspMessagesLost=true; dirty()\n', '     hideProbed=true\n', 'INT:Beta 1.40 : options de CSP'),
     ('1.40 témoin de l option jamais envoyé', 'AdvancedIA.lua', " if hide and not hideProbed and type(probe)~='number' then startProbe(true) end\n", '', 'INT:Beta 1.40 : options de CSP'),
     ('1.40 relecture de CSP ignorée', 'AdvancedIA.lua', ' pcall(Cspgui.reloaded,csp,cspPort,cspClock); Applier.readFlagsHidden(host); cspLog()\n', ' Applier.readFlagsHidden(host); cspLog()\n', 'INT:Beta 1.40 : options de CSP'),
-    ('1.40 options jamais rendues au déchargement', 'AdvancedIA.lua', " pcall(Cspgui.release,csp,cspPort,cspClock,host.updater~=nil and host.updater.after=='rollback'); Applier.dispose(cspWatch)", ' Applier.dispose(cspWatch)', 'INT:Beta 1.40 : options de CSP'),
+    ('1.40 options jamais rendues au déchargement', 'AdvancedIA.lua', ' pcall(Cspgui.release,csp,cspPort,cspClock,force); Applier.dispose(cspWatch)', ' Applier.dispose(cspWatch)', 'INT:Beta 1.40 : options de CSP'),
     ('1.40 écouteur de CSP jamais fermé', 'AdvancedIA.lua', ' Applier.dispose(cspWatch); cspWatch=nil; cspLog()\n', ' cspLog()\n', 'INT:Beta 1.40 : options de CSP'),
     ('1.40 recocher sans nouvel essai', 'src/ui.lua', "   if key=='cspHideMessages' and g[key]~=before then g.cspMessagesLost=false end\n", '', 'INT:Beta 1.40 : options de CSP'),
     ('1.40 état des options jamais affiché', 'src/ui.lua', ' if cspText then yr=yr+4+W.message(', ' if false then yr=yr+4+W.message(', 'INT:Beta 1.40 : options de CSP'),
@@ -1234,8 +1240,8 @@ MUTATIONS = [
     ('1.41m annonce de l app avalée', 'src/engine.lua', ' if not own and M.drawnByAC(title,description) then\n', ' if M.drawnByAC(title,description) then\n', 'OWN_MESSAGES_NOT_DROPPED_141'),
     ('1.41m annonce reconnue au titre seul', 'src/engine.lua', ' local own=title==e.ownTitle and description==e.ownText\n', ' local own=title==e.ownTitle\n', 'OWN_MESSAGES_NOT_DROPPED_141'),
     # Beta 1.41 : relecture adversariale.
-    ('1.41r retenue de sortie en course', 'src/merge.lua', "local holds=profile=='J' and canStop==true", 'local holds=canStop==true', 'REVIEW_MERGE_PROFILE_141'),
-    ('1.41r retenue sans arrêt natif', 'src/merge.lua', "local holds=profile=='J' and canStop==true", "local holds=profile=='J'", 'REVIEW_MERGE_PROFILE_141'),
+    ('1.41r retenue de sortie en course', 'src/merge.lua', "local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q')) and canStop==true", 'local holds=canStop==true', 'REVIEW_MERGE_PROFILE_141'),
+    ('1.41r retenue sans arrêt natif', 'src/merge.lua', "local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q')) and canStop==true", "local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q'))", 'REVIEW_MERGE_PROFILE_141'),
     ('1.41r retenue avant son emplacement', 'src/merge.lua', 'and (c.holding or c.boxSeen and d<=M.before(t,c.boxSpline,length)-K.mergeBoxClear and a.kmh>=K.mergeHoldStartKmh)', 'and (c.holding or a.kmh>=K.mergeHoldStartKmh)', 'REVIEW_MERGE_BOX_141'),
     ('1.41r retenue à l arrêt', 'src/merge.lua', ' and a.kmh>=K.mergeHoldStartKmh)', ')', 'REVIEW_MERGE_BOX_141'),
     ('1.41r retenue à hauteur de son emplacement', 'src/merge.lua', '-K.mergeBoxClear and', ' and', 'REVIEW_MERGE_BOX_141'),
@@ -1246,9 +1252,9 @@ MUTATIONS = [
     ('1.41r passage dans la voie gardé à l arrêt', 'src/merge.lua', '; local c=t.cars[i]; c.wasPit=false; c.pitFor=0 end', ' end', 'REVIEW_MERGE_IDLE_141'),
     ('1.41r allure du joueur sur 400 endroits', 'src/engine.lua', 'Director.pace(state,player,row,dt,e.run,nil,e.delta.bins)', 'Director.pace(state,player,row,dt,e.run)', 'REVIEW_PLAYER_PACE_BINS_141'),
     ('1.41r joueur suiveur perdu', 'src/director.lua', 'if j==frame.player or not (r and r.long<0', 'if not (r and r.long<0', 'REVIEW_PLAYER_NOT_STALLED_141'),
-    ('1.41r attente de paire sur drapeau bleu', 'src/director.lua', 'and now<s.yieldIgnoreUntil and not blue and not classYield then return nil end', 'and now<s.yieldIgnoreUntil then return nil end', 'REVIEW_BLUE_NOT_IGNORED_141'),
+    ('1.41r attente de paire sur drapeau bleu', 'src/director.lua', 'and now<s.yieldIgnoreUntil and not blue and not classYield and not quali then return nil end', 'and now<s.yieldIgnoreUntil then return nil end', 'REVIEW_BLUE_NOT_IGNORED_141'),
     ('1.41r cession bleue ignorée', 'src/director.lua', '(not ignored or otherState.yieldBlue)', 'not ignored', 'REVIEW_BLUE_NOT_IGNORED_141'),
-    ('1.41r paire jamais attendue par la cible', 'src/director.lua', ' if s.yieldIgnore==back.index and now<s.yieldIgnoreUntil and not blue and not classYield then return nil end\n', '', 'REVIEW_BLUE_NOT_IGNORED_141'),
+    ('1.41r paire jamais attendue par la cible', 'src/director.lua', ' if s.yieldIgnore==back.index and now<s.yieldIgnoreUntil and not blue and not classYield and not quali then return nil end\n', '', 'REVIEW_BLUE_NOT_IGNORED_141'),
     ('1.41r couloir sur l allure libre en retenue', 'src/director.lua', 'slowTarget and free-other.speed or 0,K.corridorSpeedMin)', '(stuck or slowTarget) and free-other.speed or 0,K.corridorSpeedMin)', 'REVIEW_CORRIDOR_141'),
     ('1.41r couloir lent derrière une IA lente', 'src/director.lua', 'slowTarget and free-other.speed or 0,K.corridorSpeedMin)', '0,K.corridorSpeedMin)', 'REVIEW_CORRIDOR_141'),
     ('1.41r diagnostic muet sans rythme habituel', 'src/engine.lua', 'elseif a.speed<(own>0 and own or expected)*K.slowRatio then', 'elseif own>0 and a.speed<own*K.slowRatio then', 'REVIEW_SLOW_UNKNOWN_RATIO_141'),
@@ -1271,7 +1277,7 @@ MUTATIONS = [
     ('1.42s migration de la course oubliée', 'src/config.lua', "p.section_strategy=true; p.section_sanctions=true; out[#out+1]='C:strategie et sanctions'", "out[#out+1]='C:strategie et sanctions'", 'SCHEMA_142_MIGRATION'),
     ('1.42s migration des essais oubliée', 'src/config.lua', "p.section_sanctions=true; out[#out+1]=profile..':sanctions'", "out[#out+1]=profile..':sanctions'", 'SCHEMA_142_MIGRATION'),
     ('1.42s préréglage Course sans stratégie', 'src/config.lua', ',lights=true,strategy=true,sanctions=true}}', ',lights=true}}', 'SCHEMA_142_KEYS'),
-    ('1.42s préréglage personnel 1.41 non migré', 'src/presets.lua', ' elseif revision<14 then C.migrateProfile(profile,checked,18,true) end\n', ' end\n', 'SCHEMA_142_MIGRATION'),
+    ('1.42s préréglage personnel 1.41 non migré', 'src/presets.lua', ' elseif revision<14 then C.migrateProfile(profile,checked,18,true)\n', ' elseif revision<14 then\n', 'SCHEMA_142_MIGRATION'),
     ('1.42s facteurs gardés d une image à l autre', 'src/engine.lua', ' for i=1,frame.count do local cmd=e.commands[i]; cmd.levelScale=1; cmd.throttleLimit=1 end\n', '', 'SCHEMA_142_NEUTRAL_HOOKS'),
     ('1.42s tours restants faux', 'src/engine.lua', 'left=math.max(0,frame.sessionLaps-frame.leaderLaps)', 'left=frame.sessionLaps', 'SCHEMA_142_NEUTRAL_HOOKS'),
     ('1.42s accélérateur jamais oublié', 'src/applier.lua', 's.throttle=throttle<1 and throttle or nil end', 's.throttle=throttle end', 'SCHEMA_142_APPLIER_INTERFACE'),
@@ -1313,7 +1319,7 @@ MUTATIONS = [
     ('1.42t stratégie hors course', 'src/strategy.lua', "local racing=profile=='C' and frame.started==true", 'local racing=frame.started==true', 'STRATEGY_142_PLAN_TYRES'),
     ('1.42t stratégie en ligne', 'src/strategy.lua', ' if frame.online or frame.replay then for i=1,frame.count do e.commands[i].stratCalled=false end return end\n', '', 'STRATEGY_142_PLAN_TYRES'),
     ('1.42t carburant du relais ignoré', 'src/pits.lua', 'laps=math.min(left,cmd.stratLaps+math.ceil(p.strategyFuelMarginLaps or 0))', 'laps=laps', 'STRATEGY_142_FUEL'),
-    ('1.42t arrêt obligatoire non aligné', 'src/pits.lua', 'if want and not csp and not c.wanted and planAt>position and planAt<opening+span*(k+1)-span*K.strategyWindowMargin then want=false end', '', 'STRATEGY_142_MANDATORY_ALIGNED'),
+    ('1.42t arrêt obligatoire non aligné', 'src/pits.lua', 'if want and not csp and not c.wanted and planAt>position and planAt<closing-span*K.strategyWindowMargin then want=false end', '', 'STRATEGY_142_MANDATORY_ALIGNED'),
     ('1.42t couverture d un undercut oubliée', 'src/strategy.lua', "c.reaction=true; want(t,e,c,a,i,'cover',now)", 'c.reaction=true', 'STRATEGY_142_RIVALS'),
     ('1.42t overcut sans tours de plus', 'src/strategy.lua', 'c.shift=K.strategyOvercutLaps; c.reaction=true', 'c.reaction=true', 'STRATEGY_142_RIVALS'),
     ('1.42t undercut oublié', 'src/strategy.lua', "c.reaction=true; want(t,e,c,a,i,'undercut',now)", 'c.reaction=true', 'STRATEGY_142_RIVALS'),
@@ -1390,7 +1396,7 @@ MUTATIONS = [
     ('1.42m section décochée sans effet', 'src/sanctions.lua', " if not C.on(e.p,'sanctions') then\n  if not t.off then", ' if false then\n  if not t.off then', 'SANREV_UNTICK'),
     ('1.42m réglage de la source ignoré', 'src/sanctions.lua', "  if c.pending~='' and not c.entry and sourceOff[c.pendingReason] and not p[sourceOff[c.pendingReason]] then", '  if false then', 'SANREV_UNTICK'),
     ('1.42m coupure des gaz sans hystérésis', 'src/sanctions.lua', ' local range=c.cutBlocked and K.sanCutResume or K.sanCutBehind\n', ' local range=K.sanCutBehind\n', 'SANREV_CUT_SAFETY'),
-    ('1.42m ligne droite jugée sur la courbure', 'src/sanctions.lua', '   and abs(a.yawRate or 0)*max(a.speed,1)<=K.sanStraightLat and', '   and abs(a.yawRate or 0)<=K.sanStraightCurve*max(a.speed,1) and', 'SANREV_CUT_SAFETY'),
+    ('1.42m ligne droite jugée sur la courbure', 'src/sanctions.lua', '   and abs(a.yawRate or 0)*max(a.speed,1)<=K.sanStraightLat and', '   and abs(a.yawRate or 0)<=0.002*max(a.speed,1) and', 'SANREV_CUT_SAFETY'),
     ('1.42m coupure des gaz juste après le retour en piste', 'src/sanctions.lua', '   and now-c.rejoinAt>=K.sanCutAfterRejoin and', '   and', 'SANREV_CUT_SAFETY'),
     ('1.42m attente comptée dans la voie des stands', 'src/sanctions.lua', '  elseif not a.pit and not inc.neutral and not inc.red then c.cutWait=c.cutWait+dt end', '  else c.cutWait=c.cutWait+dt end', 'SANREV_CUT_SAFETY'),
     ('1.42m place due sous drapeau jaune', 'src/sanctions.lua', " or (e.states[i].yellow or e.states[j].yellow) and 'drapeau jaune'\n", '\n', 'SANREV_GIVEBACK'),
@@ -1418,10 +1424,9 @@ MUTATIONS = [
     ('FIXSA pneus non changés : arrêt redemandé', 'src/strategy.lua', '     c.noTyreStop=true; c.replan=true\n', '     c.replan=true\n', 'FIXSA_NO_STOP_LOOP_142'),
     ('FIXSA demande pendant le service de l arrêt', 'src/strategy.lua', '     if c.serving or c.checkAfter then\n', '     if false then\n', 'FIXSA_NO_STOP_LOOP_142'),
     ('FIXSA appel retiré à l arrivée d une autre IA', 'src/strategy.lua', 'elseif a.pit or c.called or requested<K.pitConcurrent', 'elseif a.pit or requested<K.pitConcurrent', 'FIXSA_CALL_SLOTS_142'),
-    ('FIXSA règles sans la limite partagée', 'src/pits.lua', 'or commands[i].stratCalled or commands[i].sanCalled) and not a.pit', 'or commands[i].sanCalled) and not a.pit', 'FIXSA_CALL_SLOTS_142'),
+    ('FIXSA règles sans la limite partagée', 'src/pits.lua', 'or commands[i].stratCalled or commands[i].sanCalled or', 'or commands[i].sanCalled or', 'FIXSA_CALL_SLOTS_142'),
     ('FIXSA carburant critique sous la limite d appels', 'src/strategy.lua', "or c.cause=='failure' or c.critical then", "or c.cause=='failure' then", 'FIXSA_CALL_SLOTS_142'),
     ('FIXSA arrêt non retenu avant la fenêtre', 'src/strategy.lua', 'local hold=p.mandatoryStops>0 and', 'local hold=false and', 'FIXSA_WINDOW_HOLD_142'),
-    ('FIXSA tranche de l arrêt obligatoire ignorée', 'src/pits.lua', 'planAt<opening+span*(k+1)-span*K.strategyWindowMargin', 'planAt<closing-span*K.strategyWindowMargin', 'FIXSA_WINDOW_HOLD_142'),
     ('FIXSA tour neutralisé appris', 'src/pits.lua', 'c.pitLap=a.pit==true or t.neutral==true', 'c.pitLap=a.pit==true', 'FIXSA_FUEL_NEUTRAL_142'),
     ('FIXSA usure non vérifiée utilisée', 'src/strategy.lua', "local function wearUse(t,a) if t.wearTrust~='trusted' then return -1 end return wearOf(a) end", 'local function wearUse(t,a) return wearOf(a) end', 'FIXSA_WEAR_TRUST_142'),
     ('FIXSA méplats avec une usure non vérifiée', 'src/mistakes.lua', "c.lockKm<K.lockWearMaxKm and e.strategy and e.strategy.wearTrust=='trusted' then", 'c.lockKm<K.lockWearMaxKm then', 'FIXSA_LOCK_KM_PER_STINT_142'),
@@ -1448,10 +1453,10 @@ MUTATIONS = [
     # POSTFIX 1.42 : relecture adverse des correctifs (scratchpad/n142/review_postfix.md), un garde par constat.
     # (Attente d'un arrêt des règles retenu ou de la stratégie voulue : gardes redondantes avec la limite d'appels partagée,
     # Pits et Strategy prenant une place libre avant Sanctions dans la même image ; couvertes par POSTFIX_PASS_WAITS_*.)
-    ('POSTFIX relais remis à zéro par un passage', 'src/pits.lua', 'if not c.passBox then c.lastStop=now end; c.passBox=false end', 'c.lastStop=now; c.passBox=false end', 'POSTFIX_STINT_PASS_142'),
+    ('POSTFIX relais remis à zéro par un passage', 'src/pits.lua', '  c.boxed=false; if not c.passBox then c.lastStop=now end; c.passBox=false\n', '  c.boxed=false; c.lastStop=now; c.passBox=false\n', 'POSTFIX_STINT_PASS_142'),
     ('POSTFIX carburant pendant un passage', 'src/sanctions.lua', 'cmd.pitRepair=false; cmd.fuelTarget=-1; cmd.fuelLaps=0\n', 'cmd.pitRepair=false\n', 'POSTFIX_PASS_NO_FUEL_142'),
     ('POSTFIX limite d appels ignorée par les pénalités', 'src/sanctions.lua', '  elseif not c.asked and t.calls>=K.pitConcurrent then\n', '  elseif false then\n', 'POSTFIX_PASS_CALL_LIMIT_142'),
-    ('POSTFIX pénalités hors du compte de la stratégie', 'src/strategy.lua', 'or c.called and c.wanted or e.commands[i].sanCalled) then requested', 'or c.called and c.wanted) then requested', 'POSTFIX_PASS_CALL_LIMIT_142'),
+    ('POSTFIX pénalités hors du compte de la stratégie', 'src/strategy.lua', 'or c.called and c.wanted or e.commands[i].sanCalled or e.commands[i].slowCalled) then requested', 'or c.called and c.wanted or e.commands[i].slowCalled) then requested', 'POSTFIX_PASS_CALL_LIMIT_142'),
     ('POSTFIX carburant critique avant le contrôle', 'src/strategy.lua', "     if c.serving or c.checkAfter then\n     elseif c.critical then want(t,e,c,a,i,'fuel',now)\n", "     if c.critical then want(t,e,c,a,i,'fuel',now)\n     elseif c.serving or c.checkAfter then\n", 'POSTFIX_CRITICAL_AFTER_CHECK_142'),
     ('POSTFIX carburant jugé après une panne', 'src/strategy.lua', "(c.stopCause=='fuel' or c.stopTarget>c.stopFuel+K.strategyFuelGainMin)", "(c.stopCause=='fuel' or c.stopLimit=='fuel')", 'POSTFIX_NOFUEL_FAILURE_142'),
     ('POSTFIX point de reprise à chaque accélérateur', 'src/applier.lua', 'then s.throttle=throttle<1 and throttle or nil end\n', 'then s.throttle=throttle<1 and throttle or nil; a.recoveryDirty=true end\n', 'POSTFIX_CHECKPOINT_THROTTLE_142'),
@@ -1483,7 +1488,7 @@ MUTATIONS = [
     ('1.44 courbure non retranchée', 'src/director.lua', ' return abs(rel.lat)-k*rel.long*rel.long*0.5>=K.inviteLat\n', ' return abs(rel.lat)>=K.inviteLat\n', 'PLAYER_INVITE_GENTLE_CURVE_144'),
     ('1.44 invitation en courbe serrée', 'src/director.lua', ' if abs(a.yawRate)*a.speed>K.inviteLatAccel or abs(b.yawRate)*b.speed>K.inviteLatAccel then return false end\n', '', 'PLAYER_INVITE_GENTLE_CURVE_144'),
     ('1.44 raison virage de l invitation', 'src/director.lua', "        or profile~='C' and abs(a.yawRate)*a.speed>K.inviteLatAccel and 'virage' or 'conditions de passage'", "        or 'conditions de passage'", 'PLAYER_INVITE_GENTLE_CURVE_144'),
-    ('1.44 voiture sortie des stands prise pour une arrivée', 'src/merge.lua', ' and now-t.cars[j].exitAt>=K.mergeExitGrace then\n', ' then\n', 'MERGE_EXITED_CAR_NOT_TRAFFIC_144'),
+    ('1.44 voiture sortie des stands prise pour une arrivée', 'src/merge.lua', ' and now-t.cars[j].exitAt>=K.mergeExitGrace and (not push or push[j]) then\n', ' and (not push or push[j]) then\n', 'MERGE_EXITED_CAR_NOT_TRAFFIC_144'),
     ('1.44 sortie des stands non notée', 'src/merge.lua', '  if c.wasPit and not a.pit and not a.teleport then c.exitAt=now end\n', '', 'MERGE_EXITED_CAR_NOT_TRAFFIC_144'),
     ('1.44 instant de sortie non recalé', 'src/engine.lua', '; Merge.rebase(e.merge,amount)', '', 'MERGE_EXITED_CAR_NOT_TRAFFIC_144'),
     ('1.44 véhicule lent à la hauteur du joueur', 'src/lights.lua', ' local nearest=j==l.slowSlot and -K.slowVehicleBehind or K.slowVehicleAhead\n', ' local nearest=-K.slowVehicleBehind\n', 'SLOW_VEHICLE_NOT_ALONGSIDE_144'),
@@ -1492,7 +1497,7 @@ MUTATIONS = [
     ('1.45 couleur de fond de CSP revenue', 'manifest.ini', 'GROUP=SETTINGS\n', 'GROUP=SETTINGS\nBACKGROUND_COLOR=SETUP\n', 'WINDOW_EDGE_145'),
     # Beta 1.46 : pont des apps compagnes (SpotterEnginer) : ouvert seulement si l'app est installée, isolé, fermé.
     ('1.46 pont ouvert sans SpotterEnginer', 'src/applier.lua', ' return ok and yes==true\nend\n-- Deux structures', ' return true\nend\n-- Deux structures', 'INT:Beta 1.46 : pont des apps compagnes'),
-    ('1.46 controle d installation saute', 'AdvancedIA.lua', 'if Applier.companionInstalled(companion) then\n', 'if true then\n', 'INT:Beta 1.46 : pont des apps compagnes'),
+    ('1.46 controle d installation saute', 'AdvancedIA.lua', 'companionPresent=Applier.companionInstalled(companion)\n', 'companionPresent=true\n', 'INT:Beta 1.46 : pont des apps compagnes'),
     ('1.46 pont appele sans port', 'AdvancedIA.lua', ' if released or not bridgePort then return end\n local ok,err=pcall(bridgeWork)\n', ' if released then return end\n local ok,err=pcall(bridgeWork)\n', 'INT:Beta 1.46 : pont des apps compagnes'),
     ('1.46 erreur du pont non isolee', 'AdvancedIA.lua', ' local ok,err=pcall(bridgeWork)\n', ' local ok,err=true,bridgeWork()\n', 'INT:Beta 1.46 : pont des apps compagnes'),
     ('1.46 pont non ferme sur erreur', 'AdvancedIA.lua', "  pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil\n  U.log(engine.log,engine.time or 0,'ERROR'", "  bridgePort=nil\n  U.log(engine.log,engine.time or 0,'ERROR'", 'INT:Beta 1.46 : pont des apps compagnes'),
@@ -1501,8 +1506,8 @@ MUTATIONS = [
     ('1.46 port gardé apres erreur', 'AdvancedIA.lua', '  pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil\n  U.log', '  pcall(Bridge.close,bridge,bridgePort.hello)\n  U.log', 'INT:Beta 1.46 : pont des apps compagnes'),
     ('1.46 manifeste du lecteur ignore', 'src/applier.lua', "manifest.ini')==true", "manifest.ini')~=nil", 'INT:Beta 1.46 : pont des apps compagnes'),
     # Beta 1.47 : départs, défense, boucles, usure, limites de piste, sortie des stands, drapeau bleu, journal.
-    ('1.47 lancement perdu sur un écart de rotation passager', 'src/director.lua', 's.startYawTime>=K.startYawHold) and 1 or 0', 'a.corner<K.startCorner) and 1 or 0', 'START_LAUNCH_HELD_147'),
-    ('1.47 retour au lancement après un vrai freinage', 'src/director.lua', '  local wanted=(s.startBraked or ownBrake>K.ruleBrake or', '  local wanted=(ownBrake>K.ruleBrake or', 'START_PACK_ANTICIPATE_147'),
+    ('1.47 lancement perdu sur un écart de rotation passager', 'src/director.lua', 's.startYawTime>=K.startYawHold) and 1 or 0', 'a.corner<0.9) and 1 or 0', 'START_LAUNCH_HELD_147'),
+    ('1.47 retour au lancement après un vrai freinage', 'src/director.lua', '  local wanted=(s.startBraked or freeBrake or', '  local wanted=(freeBrake or', 'START_PACK_ANTICIPATE_147'),
     ('1.47 point de freinage du peloton ignoré', 'src/director.lua', '  if ahead then s.startBraked=true end\n', '', 'START_PACK_ANTICIPATE_147'),
     ('1.47 radar de départ non plafonné', 'src/director.lua', '     radarTarget=min(radarTarget,K.radarStartBrakeMax)\n', '', 'START_RADAR_LIFT_147'),
     ('1.47 pas de lever de pied au départ', 'src/director.lua', 'then radarTarget=0; lift=true; cmd.throttleLimit=min(cmd.throttleLimit or 1,K.radarStartLift) end\n', 'then end\n', 'START_RADAR_LIFT_147'),
@@ -1511,7 +1516,7 @@ MUTATIONS = [
     ('1.47 vrai drapeau noir recouvert', 'src/applier.lua', 'local free=nativeFree(frame.flag) or a.flagLeftover==true and frame.flag==a.flagLast', 'local free=nativeFree(frame.flag) or frame.flag==K.flagStop', 'INT:Beta 1.47 : vrai drapeau noir'),
     ('1.47 défense contre un suiveur bien plus rapide', 'src/director.lua', ' and (back.sa<=K.defenseSaMax or back.ttc>=K.defenseTTCMin) and ', ' and ', 'DEFENSE_SPEED_GUARD_147'),
     ('1.47 compte rendu de mise à jour sur la version du disque', 'src/update.lua', "port.report(kind..' '..(kind=='update' and u.installed or from)..' -> '..to)", 'port.report(mark)', 'UPDATE_REPORT_RUNNING_147'),
-    ('1.47 défense sur un écart latéral nul', 'src/director.lua', 'local defendOk=not firstLap and back~=nil and abs(back.lat)>=K.defenseLatMin and ', 'local defendOk=not firstLap and back~=nil and ', 'DEFENSE_GUARDS_147'),
+    ('1.47 défense sur un écart latéral nul', 'src/director.lua', 'and not firstLap and back~=nil and abs(back.lat)>=K.defenseLatMin and ', 'and not firstLap and back~=nil and ', 'DEFENSE_GUARDS_147'),
     ('1.47 défense en courbe', 'src/director.lua', ' and a.corner>=K.defenseCorner\n', '\n', 'DEFENSE_GUARDS_147'),
     ('1.47 défense pendant la garde des stands', 'src/director.lua', 'and not back.alongside and now>=(s.pitGuardUntil or 0) and ', 'and not back.alongside and ', 'DEFENSE_GUARDS_147'),
     ('1.47 défense sur un tour de sortie', 'src/director.lua', ' and not (e.strategy and e.strategy.cars[i] and e.strategy.cars[i].outLap)\n', '\n', 'DEFENSE_GUARDS_147'),
@@ -1524,7 +1529,7 @@ MUTATIONS = [
     ('1.47 contact non noté pour les limites de piste', 'src/engine.lua', '   if e.lastContactAt then e.lastContactAt[i]=now; e.lastContactAt[j]=now end\n', '', 'TRACK_LIMITS_AFTER_CONTACT_147'),
     ('1.47 décalage gardé à la sortie des stands', 'src/director.lua', 's.pitGuardUntil=now+K.pitGuardTime; M.reset(s,now,false)', 's.pitGuardUntil=now+K.pitGuardTime; M.reset(s,now,true)', 'PIT_EXIT_OFFSET_147'),
     ('1.47 cession inutile gardée hors course', 'src/director.lua', "s.followerStall[j]>(profile=='C' and K.followerStallTime or K.followerStallTimeOff)", 's.followerStall[j]>K.followerStallTime', 'YIELD_STALL_PRACTICE_147'),
-    ('1.47 drapeau bleu refusé par le plafond', 'src/director.lua', "or not blue and not directionBudget(s,now,p) and 'trop de", "or not directionBudget(s,now,p) and 'trop de", 'NO_MANEUVER_WITHOUT_DIRECTION_BUDGET'),
+    ('1.47 drapeau bleu refusé par le plafond', 'src/director.lua', "or not blue and not classYield and not quali and not directionBudget(s,now,p) and 'trop de", "or not directionBudget(s,now,p) and 'trop de", 'NO_MANEUVER_WITHOUT_DIRECTION_BUDGET'),
     ('1.47 drapeau bleu compté par le plafond', 'src/director.lua', " or s.yieldBlue and yieldStates[s.state],intended,frozen) then", ",intended,frozen) then", 'NO_MANEUVER_WITHOUT_DIRECTION_BUDGET'),
     ('1.47 carburant noté à chaque litre', 'src/applier.lua', 'if not s.fuelLogged or math.abs(liters-s.fuelLogged)>=K.fuelLogStep then', 'if true then', 'FUEL_LOG_STEP_147'),
     ('1.47 options CSP rendues pendant la panique', 'src/cspgui.lua', " if panic or type(g)~='table' or type(profile)~='table' then return nil end\n local on=g.enabled==true\n", " if type(g)~='table' or type(profile)~='table' then return nil end\n local on=g.enabled==true and not panic\n", 'CSP_FOLLOWS_SETTINGS_147'),
@@ -1554,10 +1559,10 @@ MUTATIONS = [
     ('1.47 suiveur collé jugé en mètres', 'src/director.lua', 'back.gap<max(K.radarStartFollowMin,frame.cars[back.index].speed*K.radarStartFollowTime)', 'back.gap<K.radarStartFollowMin', 'FIRST_LAP_RADAR_LIFT_FIRST_147'),
     ('1.47 évitement d une vague de freinage', 'src/director.lua', 'local slowRef=firstLap and max(p.obstacleSpeedKmh,K.firstLapAvoidPct*a.kmh) or math.huge', 'local slowRef=math.huge', 'FIRST_LAP_AVOID_SLOW_ONLY_147'),
     ('1.47 refus d évitement non compté', 'src/director.lua', 'if not s.flAvoidNoted then s.flAvoidNoted=true; e.stats.flAvoid=(e.stats.flAvoid or 0)+1 end', '', 'FIRST_LAP_AVOID_SLOW_ONLY_147'),
-    ('1.47 défense au premier tour', 'src/director.lua', 'local defendOk=not firstLap and back~=nil', 'local defendOk=back~=nil', 'FIRST_LAP_NO_DEFENCE_147'),
+    ('1.47 défense au premier tour', 'src/director.lua', 'p.defenseEnabled and not firstLap and back~=nil', 'p.defenseEnabled and back~=nil', 'FIRST_LAP_NO_DEFENCE_147'),
     ('1.47 air sale au premier tour', 'src/director.lua', 's.dirty=dirtyAir(e,s,a,front,p,startPhase or firstLap)', 's.dirty=dirtyAir(e,s,a,front,p,startPhase)', 'FIRST_LAP_NO_DIRTY_AIR_147'),
     ('1.47 dépassement au freinage du premier tour', 'src/director.lua', 'local flHeld=firstLap and not invited and', 'local flHeld=false and not invited and', 'FIRST_LAP_PASS_STRAIGHT_ONLY_147'),
-    ('1.47 écart en mètres au premier tour', 'src/director.lua', 'if close and not launch then timeFactor=', 'if false then timeFactor=', 'FIRST_LAP_TIME_GAP_147'),
+    ('1.47 écart en mètres au premier tour', 'src/director.lua', 'if close and not launch and not straightRun then timeFactor=', 'if false then timeFactor=', 'FIRST_LAP_TIME_GAP_147'),
     ('1.47 points de freinage non anticipés', 'src/director.lua', 'approach=FirstLap.nextPoint(e.fl,a,frame.length)<=max(a.speed,K.firstLapSpeedMin)*K.firstLapAnticipate or', 'approach=', 'FIRST_LAP_TIME_GAP_147'),
     ('1.47 freinage de la voiture de devant ignoré', 'src/director.lua', ' or fb>(fs.appBrake or 0)+K.brakeEcho and fb>K.ruleBrake\n', '\n', 'FIRST_LAP_TIME_GAP_147'),
     ('1.47 points de freinage jamais appris', 'src/firstlap.lua', 'if free then addPoint(fl,a.spline,frame.length) end', '', 'FIRST_LAP_POINTS_LEARNT_147'),
@@ -1575,34 +1580,8 @@ MUTATIONS = [
     ('1.47 rouge après 5 s', 'src/incidents.lua', 'c.still>=K.redIncidentStill and now-c.still>t.redEnd', 'c.still>=K.redStopTime and now-c.still>t.redEnd', 'RED_FLAG_BLOCKED_ONLY_147'),
     ('1.47 rouge : voiture endommagée de la file ignorée', 'src/incidents.lua', 'elseif incident or damaged or c.spunIncident or offLine then', 'elseif incident then', 'RED_FLAG_BLOCKED_ONLY_147'),
     ('1.47 rouge : refus jamais noté', 'src/incidents.lua', '  if not t.redRefused then\n', '  if false then\n', 'RED_FLAG_BLOCKED_ONLY_147'),
-]
-
-# Beta 1.48 : mutations reportées sur le nouveau code (ordre figé au drapeau rouge, sortie conditionnée, pose de la
-# voiture de sécurité en piste, arrêts sous drapeau rouge, exemption de reprise de place) ; même intention, même test.
-_MOVED_148 = {
-    # (« en piste » n'arrive plus qu'après la pose : t.safetyLeft toujours vrai en « out » ; même intention sur la pose)
-    'voiture de sécurité rentrée sans être sortie des stands': ('  if sc.valid and not sc.pit and not sc.inPitBox and sc.splineValid and t.safetyTarget>=0', '  if sc.valid and sc.splineValid and t.safetyTarget>=0', 'RED_FLAG_RELAUNCH_SC'),
-    'voiture de sécurité attendue sans fin aux stands': ('now-t.safetyPlaceSince>=K.scPlaceMax or now-t.safetySince>=K.scExitMax then placeFailed', 'now-t.safetyPlaceSince>=K.scPlaceMax then placeFailed', 'RED_FLAG_RELAUNCH_SC'),
-    'arrêt hors fenêtre compté': ('    local counts=mandatory and (underRed and p.redFlagWork or not underRed and position>=opening) and not closed and not (dq and dq[i])\n', '    local counts=true\n'),
-    'arrêt sous drapeau rouge compté': ('(underRed and p.redFlagWork or not underRed and position>=opening)', '(position>=opening)'),
-    'limite cachée pendant la sortie de la SC': ("   local merging=t.safetyPhase=='call' or t.safetyPhase=='place' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit\n", "   local merging=t.safetyPhase=='call'\n"),
-    'reprise de place punie (joueur)': ('   local owed=(t.ai.waiting[j] and t.ai.waiting[j][i] or 0)>now or retake or restore\n', '   local owed=retake or restore\n'),
-    'reprise de place punie (IA)': ('     local owed=(s.waiting[j] and s.waiting[j][i] or 0)>now or j==frame.player and (t.waiting[i] or 0)>now or retake or restore\n', '     local owed=retake or restore\n'),
-    'IA lâchées toutes ensemble': ('  t.releaseAt[i]=now+K.redReleaseFirst+(rank-1)*K.redReleaseGap\n', '  t.releaseAt[i]=now+K.redReleaseFirst\n'),
-    'IA libérées sans attendre leur tour': ('   elseif e.incidents.gate[i] then cmd.pitHold=a.inPitBox==true end\n', '   end\n'),
-    'pneus sous drapeau rouge en GT': (' and (not underRed or p.redFlagWork) then cmd.pitCompound', ' then cmd.pitCompound'),
-    # (t.safetyLeft n'a plus d'effet : la pose le met à vrai, puis le bloc « en piste apres » ; délai de pose à la place)
-    'sortie des stands non remise à zéro': (" t.safetyPhase='place'; t.safetySince=now; t.safetyLeft=false; t.safetyPlaceSince=-math.huge;", " t.safetyPhase='place'; t.safetySince=now; t.safetyLeft=false;"),
-    'sortie des stands non remise à zéro à la relance': ("if t.safety>0 and t.safetyPhase=='place' then", "if false then"),
-    'reprise de place sanctionnée': ('or j==frame.player and (t.waiting[i] or 0)>now or retake or restore\n', 'or j==frame.player and (t.waiting[i] or 0)>now or restore\n'),
-    'réparations sous drapeau rouge interdit': ('not a.safetyCar and (not underRed or p.redFlagWork) and not (dq', 'not a.safetyCar and not (dq'),
-    '126 IA posée sans élan': ('  if car.teleport and car.kmh<kmh then Caps.call', '  if false then Caps.call'),
-    '135 place à rejoindre absente': (' elseif place and l.delta then local label,value=placeText(v,panel.slotText,panel.slotDistance,panel.slotPlaced,panel.slotPassed); placeBox(colors,l.delta,label,value)\n elseif', ' elseif false then\n elseif'),
-    'POSTFIX relais remis à zéro par un passage': ('  c.boxed=false; if not c.passBox then c.lastStop=now end; c.passBox=false\n', '  c.boxed=false; c.lastStop=now; c.passBox=false\n'),
-}
-# Troisième élément facultatif : test qui porte la même intention sur le nouveau code.
-MUTATIONS = [(m[0], m[1], *_MOVED_148[m[0]][:2], *(_MOVED_148[m[0]][2:] or m[4:])) if m[0] in _MOVED_148 else m for m in MUTATIONS]
-MUTATIONS += [
+    # Beta 1.48 : voiture de sécurité posée en piste (C), ordre figé au drapeau rouge et sortie conditionnée (A, B),
+    # exemption de reprise de place (E), overlay (D), arrêts sous drapeau rouge (F).
     # C : voiture de sécurité posée en piste
     ('1.48 SC jamais posée (aucune commande de position)', 'src/incidents.lua', " if t.safetyPhase=='place' and t.safetyTarget>=0 then cmd.place=t.safetyTarget;", " if false then cmd.place=t.safetyTarget;", 'SAFETY_CAR_CYCLE'),
     ('1.48 SC posée sur une voiture', 'src/incidents.lua', '   if j~=t.safety and b.valid and not b.pit and b.splineValid and math.abs(U.spline(b.spline-s))*length<K.scPlaceFree then ok=false; break end\n', '', 'SAFETY_CAR_PIT_EXIT'),
@@ -1621,7 +1600,7 @@ MUTATIONS += [
     ('1.48 SC garée hors de son emplacement', 'src/applier.lua', "cmd.parkReason~='dq' and (car.inPitBox or not a.caps.teleport.available)", "cmd.parkReason~='dq'", 'SAFETY_CAR_WRITES'),
     ('1.48 SC posée sans son élan', 'src/applier.lua', 's.launchKmh=cmd.placeKmh\n', '\n', 'INT:Beta 1.48 : voiture de sécurité posée en piste par CSP (setCarPosition), jamais conduite hors de son emplacement'),
     # (« SC encore garée pendant la pose » retirée : mutant équivalent, la pose est vue à l'image suivante et la SC rendue aussitôt.)
-    ('1.48 appel : SC encore conduite hors de son stand', 'src/incidents.lua', "then toPlace(t,now); note(t,'INFO','voiture de securite: liberee, posee devant le meneur',t.safety) end", "then t.safetyPhase='out'; t.safetySince=now; t.safetyLeft=false end", 'SAFETY_CAR_CYCLE'),
+    ('1.48 appel : SC encore conduite hors de son stand', 'src/incidents.lua', "  if go then toExit(t,now); note(t,'INFO','voiture de securite: liberee, sort par la voie des stands',t.safety) end\n", "  if go then t.safetyPhase='out'; t.safetySince=now; t.safetyLeft=false end\n", 'SAFETY_CAR_CYCLE'),
     # A et B : ordre figé, sortie conditionnée
     ('1.48 ordre non figé au drapeau rouge', 'src/incidents.lua', '  freeze(t,frame)\n', '', 'RED_FLAG_PROCEDURE'),
     ('1.48 SC acceptée là où elle se trouve', 'src/incidents.lua', ' and t.safetyTarget>=0 and math.abs(U.spline(sc.spline-t.safetyTarget))*length<=K.scPlaceReach then\n', ' then\n', 'RED_FLAG_RELAUNCH_SC'),
@@ -1657,10 +1636,7 @@ MUTATIONS += [
     ('1.48 F1 : arrêt sous rouge avant la fenêtre non compté', 'src/pits.lua', '(underRed and p.redFlagWork or not underRed and position>=opening)', '(position>=opening and (not underRed or p.redFlagWork))', 'RED_FLAG_STOPS_148'),
     ('1.48 joueur : composé inchangé compté', 'src/pits.lua', '  local changed=a.compoundIndex~=nil and a.compoundIndex~=c.pendingCompound\n', '  local changed=true\n', 'RED_FLAG_STOPS_148'),
     ('1.48 joueur : arrêt compté à l arrivée', 'src/pits.lua', '    if counts and a.player and p.pitCompoundChange and a.compoundIndex~=nil then c.pendingCompound=a.compoundIndex\n', '    if false then c.pendingCompound=a.compoundIndex\n', 'RED_FLAG_STOPS_148'),
-]
-
-# Beta 1.49 : nom AdvancedIA ; ancienne version installée : app inerte ; rappel des réglages ; anciens paquets refusés.
-MUTATIONS += [
+    # Beta 1.49 : nom AdvancedIA ; ancienne version installée : app inerte ; rappel des réglages ; anciens paquets refusés.
     ('1.49 ancienne version ignoree', 'AdvancedIA.lua', ' if okOld and okApplier and Applier0.companionInstalled(Old.folder) then\n', ' if false then\n', 'INT:Beta 1.49 : ancienne version'),
     ('1.49 mauvais dossier surveille', 'src/oldinstall.lua', "M.folder='ACAdvancedIA'", "M.folder='AdvancedIA'", 'INT:Beta 1.49 : ancienne version'),
     ('1.49 consigne absente de la fenetre', 'src/oldinstall.lua', ' script.HUMANAI__MAIN=function() pcall(M.window,release) end\n', ' script.HUMANAI__MAIN=function() end\n', 'INT:Beta 1.49 : ancienne version'),
@@ -1669,7 +1645,7 @@ MUTATIONS += [
     ('1.49 rappel des reglages toujours', 'src/applier.lua', "io.fileExists(dir..'AdvancedIA.ini')~=true", "true", 'INT:Beta 1.49 : ancienne version'),
     ('1.49 rappel des reglages jamais', 'AdvancedIA.lua', 'host.oldSettings=Applier.oldSettings()\n', 'host.oldSettings=false\n', 'INT:Beta 1.49 : ancienne version'),
     ('1.49 ancien paquet accepte', 'src/update.lua', "    if name==zipName then r.zip=", "    if name==zipName or name=='ACAdvancedIA-Beta-'..number..'.zip' then r.zip=", 'UPDATE_RELEASE_PARSE'),
-    ('1.49 ancienne empreinte acceptee', 'src/update.lua', "    elseif name==zipName..'.sha256' or name=='AdvancedIA-Beta-'..number..'.sha256' then", "    elseif name==zipName..'.sha256' or name=='AdvancedIA-Beta-'..number..'.sha256' or name=='ACAdvancedIA-Beta-'..number..'.sha256' then", 'UPDATE_RELEASE_PARSE'),
+    ('1.49 ancienne empreinte acceptee', 'src/update.lua', "or name==M.assetPrefix..number..'.sha256' then", "or name==M.assetPrefix..number..'.sha256' or name=='ACAdvancedIA-Beta-'..number..'.sha256' then", 'UPDATE_RELEASE_PARSE'),
     ('1.49 ancien prefixe', 'src/update.lua', "M.prefix='apps/lua/AdvancedIA/'", "M.prefix='apps/lua/ACAdvancedIA/'", 'UPDATE_RELEASE_PARSE'),
     # Arrêt F1 du joueur : composé suivi jusqu'à la sortie des stands, avis, rappel, stratégie des stands.
     ('1.49 compose juge a la sortie de l emplacement', 'src/pits.lua', '  elseif a.pit or a.inPitBox or c.boxed then c.pendingUntil=nil\n', '  elseif false then c.pendingUntil=nil\n', 'PIT_COMPOUND_149'),
@@ -1679,8 +1655,8 @@ MUTATIONS += [
     ('1.49 avis meme compose absent', 'src/pits.lua', "   notice(t,'same',from,from,now+K.pitNoticeSame,c.pendingCompound,c.pendingCompound)\n", '', 'PIT_COMPOUND_149'),
     ('1.49 avis oublie par le panneau', 'src/panel.lua', "  elseif t.playerPitNotice~=nil and t.playerPitNotice~='' then kind='pit'", "  elseif false then kind='pit'", 'PIT_COMPOUND_149'),
     ('1.49 entree jamais relevee', 'src/pits.lua', 'then t.entrySpline=a.spline end\n', 'then t.entrySpline=-1 end\n', 'PIT_HINT_149'),
-    ('1.49 rappel hors de la voie', 'src/engine.lua', '  if player.pit or player.inPitBox then hint=true\n', '  if false then hint=true\n', 'PIT_HINT_149'),
-    ('1.49 rappel sans entree connue', 'src/engine.lua', '   else hint=player.spline>=K.pitHintSector end\n', '   else hint=false end\n', 'PIT_HINT_149'),
+    ('1.49 rappel hors de la voie', 'src/engine.lua', '  if player.pit or player.inPitBox then hint=true; p0.hintLatch=true\n', '  if false then hint=true; p0.hintLatch=true\n', 'PIT_HINT_149'),
+    ('1.49 rappel sans entree connue', 'src/engine.lua', '   else p0.hintLatch=false; hint=player.spline>=K.pitHintSector end\n', '   else p0.hintLatch=false; hint=false end\n', 'PIT_HINT_149'),
     ('1.49 rappel hors F1', 'src/engine.lua', " local f1=e.profile=='C' and e.run.pitCompoundChange==true and not e.pits.waived and e.run.mandatoryStops>0\n", " local f1=e.profile=='C' and not e.pits.waived and e.run.mandatoryStops>0\n", 'PIT_HINT_149'),
     ('1.49 rappel F1 sans composé', 'src/panel.lua', "extra=t.playerPitCompound and 1 or 0\n", "extra=0\n", 'PIT_HINT_149'),
     ('1.49 strategie relue a chaque image', 'src/pitplan.lua', ' if now<t.checkAt and not entering then return end\n', '', 'PIT_PLAN_149'),
@@ -1703,29 +1679,8 @@ MUTATIONS += [
     ('1.49 avis en attente publie dans la meme image', 'src/incidents.lua', ' if t.heldFrame==t.frameId or t.messageFrame==t.frameId then return end\n', '', 'PIT_HELD_149'),
     ('1.49 pneus du joueur jamais lus', 'src/snapshot.lua', "  if a.valid and (a.control or a.player) and a.tyresID", "  if a.valid and a.control and a.tyresID", 'INT:Beta 1.49 : composes du joueur'),
     ('1.49 ancien depot', 'src/update.lua', "M.repo='VincentChevalier44/AdvancedIA'", "M.repo='VincentChevalier44/ACAdvancedIA'", 'UPDATE_RELEASE_PARSE'),
-]
-
-
-# Beta 1.50 : ancres déplacées (départ en ligne droite, sortie de la voiture de sécurité par la voie des stands, rappel
-# des stands verrouillé), même intention.
-_MOVED_150 = {
-    'limite cachée pendant la sortie de la SC': ("   local merging=t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit\n", "   local merging=t.safetyPhase=='call'\n"),
-    'garée dans la voie des stands': ('  if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and', '  if not car.pit and not cmd.scHideWait and now>=s.teleportAt and'),
-    'voiture garée ramenée une seule fois': ('if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and', 'if not car.inPitBox and not cmd.scHideWait and not s.teleported and'),
-    '124 radar sans anticipation': ('   if closeTTC<K.radarWarnTTC and not launch and not straightRun then caution=caution*U.lerp(K.radarCaution,1,closeTTC/K.radarWarnTTC) end\n', ''),
-    '124 radar sans journal': ('    if not straightHold and s.radarBrake==0 and (now>=s.radarLogAt or s.radarLogAt-now>K.radarLogPeriod) then\n', '    if false then\n'),
-    '1.47 écart en mètres au premier tour': ('if close and not launch and not straightRun then timeFactor=', 'if false then timeFactor='),
-    '1.48 appel : SC encore conduite hors de son stand': ("  if go then toExit(t,now); note(t,'INFO','voiture de securite: liberee, sort par la voie des stands',t.safety) end\n", "  if go then t.safetyPhase='out'; t.safetySince=now; t.safetyLeft=false end\n"),
-    '1.49 rappel hors de la voie': ('  if player.pit or player.inPitBox then hint=true; p0.hintLatch=true\n', '  if false then hint=true; p0.hintLatch=true\n'),
-    '1.49 rappel sans entree connue': ('   else p0.hintLatch=false; hint=player.spline>=K.pitHintSector end\n', '   else p0.hintLatch=false; hint=false end\n'),
-    '125 lancement freiné par la prudence de suivi': ('  if not launch and not straightRun then\n   caution=caution*U.lerp(K.followCaution', '  if true then\n   caution=caution*U.lerp(K.followCaution'),
-    '125 prudence de départ jamais au freinage': ('  local wanted=(s.startBraked or freeBrake or s.startYawTime>=K.startYawHold) and 1 or 0\n', '  local wanted=0\n'),
-    '1.47 retour au lancement après un vrai freinage': ('  local wanted=(s.startBraked or freeBrake or', '  local wanted=(freeBrake or'),
-}
-MUTATIONS = [(m[0], m[1], *_MOVED_150[m[0]], *m[4:]) if m[0] in _MOVED_150 else m for m in MUTATIONS]
-# Beta 1.50 : départ en ligne droite, voiture de sécurité retenue et sortie par la voie des stands, repli hors de la vue
-# du joueur, annonces du pont, rappel des stands verrouillé.
-MUTATIONS += [
+    # Beta 1.50 : départ en ligne droite, voiture de sécurité retenue et sortie par la voie des stands, repli hors de la vue
+    # du joueur, annonces du pont, rappel des stands verrouillé.
     ('1.50 ligne droite ignoree', 'src/director.lua', ' local straightGeom=(starting or firstLap) and', ' local straightGeom=false and', 'FIRST_LAP_STRAIGHT_150'),
     ('1.50 pousse par derriere ignore', 'src/director.lua', '    local pushed=back~=nil and back.long<0 and back.ttc<closeTTC\n', '    local pushed=false\n', 'START_REPLAY_PUSHED_150'),
     ('1.50 couloir libre ignore', 'src/director.lua', '     local lane=(not row.left or not row.right)', '     local lane=false and (not row.left or not row.right)', 'FIRST_LAP_STRAIGHT_150'),
@@ -1736,11 +1691,10 @@ MUTATIONS += [
     ('1.50 freinage de suivi pris pour un virage', 'src/director.lua', ' local straightRun=straightGeom\n', ' local straightRun=straightGeom and ownBrake<=K.ruleBrake\n', 'START_REAL_1309_150'),
     ('1.50 raison absente du journal', 'src/director.lua', "..(why150~='' and ' ('..why150..')' or '')),i)", "),i)", 'START_REAL_1309_150'),
     ('1.50 strategie corrigee non annoncee', 'src/engine.lua', " if e.pitplan.fixed then e.pitplan.fixed=false; if owed then e.announce('pitPlanOk',fitted,e.pitplan.plannedIndex or -1) end end\n", '', 'PIT_PLAN_OK_150'),
-    ('1.50 avertissement garde apres correction', 'src/pitplan.lua', " if before=='same' and t.state=='ok' then t.fixed=true; t.noticeUntil=-math.huge end\n", " if before=='same' and t.state=='ok' then t.fixed=true end\n", 'PIT_PLAN_OK_150'),
     ('1.50 couloir libre jusqu au contact', 'src/director.lua', '     if closeTTC>=K.radarStraightTTC or lane then straightHold=true;', '     if closeTTC>=K.radarStraightTTC then straightHold=true;', 'FIRST_LAP_STRAIGHT_150'),
     ('1.50 ecart en temps en ligne droite', 'src/director.lua', 'if close and not launch and not straightRun then timeFactor=', 'if close and not launch then timeFactor=', 'FIRST_LAP_STRAIGHT_150'),
     ('1.50 levee pleine en ligne droite', 'src/director.lua', 'cmd.throttleLimit=min(cmd.throttleLimit or 1,U.lerp(K.radarStartLift,1,closeTTC/K.radarStraightTTC))', 'cmd.throttleLimit=min(cmd.throttleLimit or 1,K.radarStartLift)', 'FIRST_LAP_STRAIGHT_150'),
-    ('1.50 SC garee sans pilote', 'src/applier.lua', "  if cmd.parkReason=='sc' and (s.scEscapes or 0)<K.scEscapeMax and not s.parked then\n", '  if false then\n', 'SC_HOLD_150'),
+    ('1.50 SC garee sans pilote', 'src/applier.lua', "  local held=cmd.parkReason=='sc' and (s.scEscapes or 0)<K.scEscapeMax\n", '  local held=false\n', 'SC_HOLD_150'),
     ('1.50 attente non renouvelee', 'src/applier.lua', '     s.scHoldAt=now+K.scHoldPeriod;', '     s.scHoldAt=now+1e9;', 'SC_HOLD_150'),
     ('1.50 sorties malgre l attente ignorees', 'src/applier.lua', '    s.scHeld=false; s.scEscapes=(s.scEscapes or 0)+1\n', '    s.scHeld=false\n', 'SC_HOLD_150'),
     ('1.50 attente jamais levee a la restitution', 'src/applier.lua', "   if mine and s.scHeld and not keepParked then Caps.restoreCall(a.caps,'startDelay',car.index,0);", "   if false then Caps.restoreCall(a.caps,'startDelay',car.index,0);", 'SC_HOLD_150'),
@@ -1760,17 +1714,6 @@ MUTATIONS += [
     ('1.50 annonces SC affichees par AC', 'AdvancedIA.lua', ' if m and silentKinds[t.messageKind] then\n', ' if false then\n', 'INT:Beta 1.50 : annonces'),
     ('1.50 rappel non verrouille', 'src/engine.lua', '    hint=p0.hintLatch==true\n', '    hint=d>=0 and d/math.max(player.speed or 0,K.pitHintMinSpeed)<=K.pitHintTime\n', 'PIT_HINT_LATCH_150'),
     ('1.50 rappel apres le point', 'src/engine.lua', '    if p0.hintLatch and (d<0 or', '    if p0.hintLatch and (false or', 'PIT_HINT_LATCH_150'),
-    ('1.50 sortie par la voie jamais vue sur le banc CSP', 'src/incidents.lua', "  if sc.valid and not sc.inPitBox and not U.finite(t.exitLeftAt) then t.exitLeftAt=now;", "  if false then t.exitLeftAt=now;", 'INT:Beta 1.50 : voiture de'),
-]
-# Beta 1.50 : mutations devenues équivalentes (comportement inchangé par construction), retirées :
-#  - « sortie des stands non remise à zéro » : toExit remet déjà safetyPlaceSince à zéro avant toute pose ;
-#  - « voiture garée restituée au changement de session » : la voiture de sécurité est retenue par l'attente d'AC,
-#    plus garée sans pilote ; une réserve garée reste couverte par les cas de réserve ;
-#  - « 1.50 avertissement garde apres correction » : l'avertissement exige l'état 'same', déjà quitté ;
-#  - « 1.50 sortie par la voie jamais vue sur le banc CSP » : la même ligne est aussi écrite par l'applicateur.
-_EQUIV_150 = ['sortie des stands non remise à zéro', 'voiture garée restituée au changement de session', '1.50 avertissement garde apres correction', '1.50 sortie par la voie jamais vue sur le banc CSP']
-MUTATIONS = [m for m in MUTATIONS if m[0] not in _EQUIV_150]
-MUTATIONS += [
     ('1.50 place due jamais posee', 'src/penalties.lua', '  if neutral then owe(s,i,j,now) end\n', '', 'NEUTRAL_GIVEBACK_150'),
     ('1.50 place due sans limite', 'src/penalties.lua', '    else s.giveBack[i]=owed end\n', '    end\n', 'NEUTRAL_GIVEBACK_150'),
     ('1.50 place due sans delai', 'src/penalties.lua', " or now>=(s.oweUntil[i] or 0) and 'delai depasse'", '', 'NEUTRAL_GIVEBACK_150'),
@@ -1783,84 +1726,149 @@ MUTATIONS += [
     # Beta 1.51 : préréglage de la session, arrêt obligatoire oui/non, tours lancés en essais et qualifications.
     ('151 tour lancé sans priorité', 'src/director.lua', ' local trigger=c1 or c2 or c3 or c4 or c5 or blue or classYield or quali', ' local trigger=c1 or c2 or c3 or c4 or c5 or blue or classYield', 'QUALI_PRIORITY_YIELD_151'),
     ('151 file devant bloque la cession prioritaire', 'src/director.lua', 'if not ordinary and not blue and not classYield and not permittedFlash and not aiAccepted and not quali then return nil end', 'if not ordinary and not blue and not classYield and not permittedFlash and not aiAccepted then return nil end', 'QUALI_PRIORITY_YIELD_151'),
-    ('151 attaque d une voiture lancée', 'src/director.lua', 'if trigger and e.quali and e.quali.active and not e.quali.push[i] and e.quali.push[front.index] and not slowTarget and not invited then', 'if false then', 'QUALI_NO_ATTACK_151'),
+    ('151 attaque d une voiture lancée', 'src/director.lua', '      local qualiHold=qualiGuard(e,i,front.index) and not slowTarget and not invited', '      local qualiHold=false', 'QUALI_NO_ATTACK_151'),
     ('151 retenue pour toute voiture', 'src/merge.lua', 'and now-t.cars[j].exitAt>=K.mergeExitGrace and (not push or push[j]) then', 'and now-t.cars[j].exitAt>=K.mergeExitGrace then', 'QUALI_PIT_EXIT_HOLD_151'),
     ('151 pas de retenue en qualifications', 'src/merge.lua', " local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q')) and canStop==true", " local holds=profile=='J' and canStop==true", 'QUALI_PIT_EXIT_HOLD_151'),
     ('151 ligne juste après la sortie', 'src/quali.lua', '   if now-c.exitAt<K.qualiOutGrace then c.outLap=lap else c.out=false end', '   c.out=false', 'QUALI_PUSH_STATES_151'),
     ('151 refroidissement derrière une voiture', 'src/quali.lua', 'a.speed<ref*K.qualiCoolRatio and not held and', 'a.speed<ref*K.qualiCoolRatio and', 'QUALI_COOL_LAP_151'),
-    ('151 avis au joueur absent', 'src/quali.lua', '    if p.yellowMessage then require', '    if false then require', 'QUALI_PLAYER_WARNING_151'),
+    ('151 avis au joueur absent', 'src/quali.lua', "    if p.yellowMessage then Incidents.message(inc,'fastCar'", "    if false then Incidents.message(inc,'fastCar'", 'QUALI_PLAYER_WARNING_151'),
     ('151 2 ou 3 arrêts rejetés', 'src/config.lua', "  if s.key=='mandatoryStops' and U.finite(v) and v>1 and v<=3 then v=1 end", '', 'WEEKEND_SWITCHES'),
-    ('151 profil absent de la clé', 'src/engine.lua', " local sessionKey=tostring(frame.track)..'#'..tostring(frame.session)..'#'..tostring(e.profile)", " local sessionKey=tostring(frame.track)..'#'..tostring(frame.session)", 'SESSION_PRESET_151'),
+    ('151 profil absent de la clé', 'src/engine.lua', '  if not served:find(e.profile,1,true) and #served<K.presetSessionProfilesMax then\n', "  if served=='' and #served<K.presetSessionProfilesMax then\n", 'SESSION_PRESET_151'),
     ('151 règles du week-end écrasées', 'src/config.lua', ' if keepRules then for _,s in ipairs(M.ruleSchema) do kept[s.key]=p[s.key] end end', '', 'SESSION_PRESET_151'),
     ('151 préréglage personnel remplacé', 'src/config.lua', ' if mark==M.personalMark then return nil end', '', 'SESSION_PRESET_151'),
-    ('151 rechargement réapplique', 'src/engine.lua', '  if e.presetSession~=sessionKey then', '  if true then', 'SESSION_PRESET_151'),
+    ('151 rechargement réapplique', 'src/engine.lua', "  local served=#text>#base and text:sub(1,#base+1)==base..'#' and text:sub(#base+2) or ''\n", "  local served=''\n", 'SESSION_PRESET_151'),
+    ('151 refroidissement prévu jamais déclenché', 'src/quali.lua', 'c.pushLaps>=M.target(e.runtimeG.seed,i)', 'false', 'QUALI_AI_COOL_LAPS_151'),
+    ('151 niveau jamais abaissé au refroidissement', 'src/quali.lua', '  if drop>0 and a.control and not a.player then', '  if false then', 'QUALI_AI_COOL_LAPS_151'),
+    # Beta 1.52 : relecture adversariale (pilotage des IA, règles, couche hôte, réglages) et mise à jour de SpotterEnginer.
+    ('152 drapeaux de cession gardés', 'src/director.lua', ' if yieldStates[s.state] and not yieldStates[state] then s.yieldBlue=false; s.yieldQuali=false; s.yieldClass=false end\n', '', 'REVIEW_YIELD_FLAGS_CLEARED_152'),
+    ('152 enchaînement sur une voiture lancée', 'src/director.lua', '        elseif qualiGuard(e,i,front.index) and not slowNext then\n', '        elseif false then\n', 'REVIEW_CHAIN_GUARDS_152'),
+    ('152 voiture de sécurité retenue restituée au garage', 'src/applier.lua', '  -- image : quatre écritures natives, une ligne au journal et un point de reprise par image.\n  s.reset=false\n', '  -- image : quatre écritures natives, une ligne au journal et un point de reprise par image.\n', 'REVIEW152C_PARKED_NO_LOOP_RECOVER'),
+    ('152 voiture de sécurité retenue restituée au changement de session', 'src/applier.lua', '    s.reset=not s.parked and not s.scHeld; s.tyreVisit=-1\n', '    s.reset=not s.parked; s.tyreVisit=-1\n', 'REVIEW152C_SC_HELD_NO_LOOP_SESSION'),
+    ('152 réparation sautée à la session suivante', 'src/applier.lua', '  s.repairVisit=-1; s.scEscapes=nil\n', '  s.scEscapes=nil\n', 'REVIEW152C_REPAIR_NEXT_SESSION'),
+    ('152 pénalité sans attendre le composé', 'src/engine.lua', '  if pc.pendingCompound~=nil then e.pits.stopAwait=pc.identity else e.penalties.stopPending=true end\n', '  e.penalties.stopPending=true\n', 'STOP_PENDING_COMPOUND_152B'),
+    ('152 voiture de sécurité en escalade onglet Règles décoché', 'src/config.lua', '  out.safetyCarEscalation=false\n', '', 'REVIEW152D_RULES_OFF_SAFETY_CAR'),
+    ('152 marque Perso de la révision 22 absente', 'src/config.lua', ' if g.dataRevision<22 and customs then local profile=M.markPersonal(g,customs);', ' if false then local profile=M.markPersonal(g,customs);', 'REVIEW152D_MIGRATION_22_PERSONAL_MARK'),
+    ('152 état inconnu de SpotterEnginer accepté', 'src/applier.lua', ' if not companionStates[fields.state] or not companionVersion(fields.installed) then return nil end\n', ' if not companionVersion(fields.installed) then return nil end\n', 'COMPANION_UPDATE_PARSE_152'),
 ]
 
-# Beta 1.51 : ancres déplacées (chargement des préréglages intégrés dans C.applyBuiltin, tuiles sans les règles, curseur
-# du nombre d'arrêts retiré, garde des tours lancés, retenue de sortie en essais et qualifications) et ancres de la 1.50
-# (penalties.lua réécrit avec la neutralisation). (fichier, ancre, mutation[, test]).
-_MOVED_151 = {
-    'préréglage qui efface les préférences': ('src/config.lua', ' M.preset(name,profile,p)\n for key,value in pairs(kept) do p[key]=value end\n', ' M.preset(name,profile,p)\n'),
-    'signature avec les préférences': ('src/ui.lua', 'Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues,C.presetMatchSkip)==expected', 'Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues)==expected'),
-    'Endurance sans ses règles': ('src/config.lua', "if name=='Endurance' and profile=='C' then M.applyRules('Endurance',profiles) else", "if false then M.applyRules('Endurance',profiles) else"),
-    'valeurs par défaut décochent tout': ('src/config.lua', ' M.validate(profile,M.defaults(profile),p)\n for key,value in pairs(kept) do p[key]=value end\n', ' M.validate(profile,M.defaults(profile),p)\n'),
-    'voiture hors piste encore suivie': ('src/penalties.lua', '    for j in pairs(ahead) do if passable(frame.cars[j],inc.cars[j],p,now) or spare and serving(t,j,now,frame.player) then ahead[j]=nil end end\n', ''),
-    'IA sanctionnée non dépassable': ('src/penalties.lua', ' or spare and serving(t,j,now,frame.player) then ahead[j]=nil end end', ' then ahead[j]=nil end end'),
-    'file derrière la voiture qui doit la place': ('src/director.lua', '  local owes=Penalties.mayPass(e.penalties,i,j,now,frame.player,e.incidents.neutral and not e.incidents.red)\n', '  local owes=false\n'),
-    'IA hors piste sans régime': ('src/penalties.lua', '   local regime=states[i].yellow or whole or relaunch or a.offtrack and s.regime[i]==true\n', '   local regime=states[i].yellow or relaunch\n'),
-    'droit de reprise jamais accordé entre IA': ('src/penalties.lua', 'else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral)', 'else if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral)'),
-    'file derrière une voiture sanctionnée': ('src/penalties.lua', ' or not neutral and serving(t,j,now,player) or entitled(t,i,j)\n', ' or entitled(t,i,j)\n'),
-    # Curseur du nombre d'arrêts retiré de la vue (1.51) : la mutation le remet.
-    'arrêts encore dans la vue principale': ('src/ui.lua', 'local ruleViews={stops={pitWindowOpenPct=true,', 'local ruleViews={stops={mandatoryStops=true,pitWindowOpenPct=true,'),
-    'cession dans une file': ('src/director.lua', " local ordinary=p.yieldEnabled and profile~='C' and clear and not (e.quali", " local ordinary=p.yieldEnabled and profile~='C' and not (e.quali"),
-    '129 préréglage intégré qui garde les règles': ('src/config.lua', ' for key in pairs(M.presetKeptKeySet) do kept[key]=p[key] end\n', ' for key in pairs(M.keptKeySet) do kept[key]=p[key] end\n'),
-    '129 règles du préréglage limitées à son profil': ('src/config.lua', ' else M.spreadRules(profile,profiles) end end\n', ' end end\n'),
-    '129 préréglage personnel limité à son profil': ('src/ui.lua', 'C.spreadRules(profile,e.profiles); C.setMark(e.g,profile,C.personalMark); presetTarget(v,profile)', 'C.setMark(e.g,profile,C.personalMark); presetTarget(v,profile)'),
-    '129 marques non enregistrées': ('src/config.lua', "loadedPreset='',builtinMarks='',presetBySession=true,presetsUsed=false,", "loadedPreset='',presetBySession=true,presetsUsed=false,"),
-    '1.35 pénalités: sanction pendant la formation': ('src/penalties.lua', "local relaunch=inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights'", 'local relaunch=inc.cars[i].restart==true'),
-    '1.41r retenue de sortie en course': ('src/merge.lua', "local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q')) and canStop==true", 'local holds=canStop==true'),
-    '1.41r retenue sans arrêt natif': ('src/merge.lua', "local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q')) and canStop==true", "local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q'))"),
-    '1.41r attente de paire sur drapeau bleu': ('src/director.lua', 'and now<s.yieldIgnoreUntil and not blue and not classYield and not quali then return nil end', 'and now<s.yieldIgnoreUntil then return nil end'),
-    '1.41r paire jamais attendue par la cible': ('src/director.lua', ' if s.yieldIgnore==back.index and now<s.yieldIgnoreUntil and not blue and not classYield and not quali then return nil end\n', ''),
-    '1.44 voiture sortie des stands prise pour une arrivée': ('src/merge.lua', ' and now-t.cars[j].exitAt>=K.mergeExitGrace and (not push or push[j]) then\n', ' and (not push or push[j]) then\n'),
-    '1.47 drapeau bleu refusé par le plafond': ('src/director.lua', "or not blue and not quali and not directionBudget(s,now,p) and 'trop de", "or not directionBudget(s,now,p) and 'trop de"),
-}
-MUTATIONS = [(m[0], *_MOVED_151[m[0]][:3], *(_MOVED_151[m[0]][3:] or m[4:])) if m[0] in _MOVED_151 else m for m in MUTATIONS]
+
+# Durée maximale d'un cas d'intégration (s) : un mutant qui boucle échoue au lieu de bloquer la campagne.
+INT_TIMEOUT = 600
+
+
+def mutated(raw, old, new):
+    """Texte muté avec les fins de ligne du fichier, ou None si l'ancre n'apparaît pas exactement une fois."""
+    crlf = '\r\n' in raw
+    text = raw.replace('\r\n', '\n') if crlf else raw
+    if text.count(old) != 1:
+        return None
+    text = text.replace(old, new)
+    return text.replace('\n', '\r\n') if crlf else text
+
+
+def copy_tree(stage, root):
+    shutil.copytree(stage / 'src', root / 'src', ignore=shutil.ignore_patterns('__pycache__'))
+    for name in ('AdvancedIA.lua', 'manifest.ini'):
+        shutil.copyfile(stage / name, root / name)
+    shutil.copytree(stage / 'tests', root / 'tests', ignore=shutil.ignore_patterns('_vendor', '__pycache__'))
+
 
 def run(root, name):
+    """Vrai si le test nommé passe dans l'arbre root."""
     if name.startswith('INT:'):
-        import os, subprocess
         env = dict(os.environ, INT_FILTER=name[4:], PYTHONIOENCODING='utf-8')
-        done = subprocess.run([sys.executable, str(root / 'tests' / 'integration.py')], cwd=str(root / 'tests'), env=env, capture_output=True)
+        try:
+            done = subprocess.run([sys.executable, str(root / 'tests' / 'integration.py')], cwd=str(root / 'tests'),
+                                  env=env, capture_output=True, timeout=INT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return False
         return done.returncode == 0
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.execute("package.path = ... .. '/?.lua;' .. package.path", root.as_posix())
-    lua.execute("script={}; HUMANAI=false; ac={}; physics={}; ui={}")
-    scenarios = lua.execute((root / 'tests/scenarios.lua').read_text(encoding='utf-8'))
-    extended = lua.execute((root / 'tests/extended.lua').read_text(encoding='utf-8'))
-    fn = extended[name] or scenarios[name]
+    from test_pdr import runtime
     try:
-        fn(); return True
+        lua = runtime(root)
+        scenarios = lua.execute((root / 'tests/scenarios.lua').read_text(encoding='utf-8'))
+        extended = lua.execute((root / 'tests/extended.lua').read_text(encoding='utf-8'))
+        fn = extended[name] or scenarios[name]
+        fn()
+        return True
     except Exception:
         return False
 
 
-results = stage / 'tests' / 'integration-results.json'
-saved = results.read_bytes() if results.exists() else None
-ok = True
-for label, path, old, new, test in MUTATIONS:
-    tmp = Path(tempfile.mkdtemp())
-    root = tmp / 'app'
-    shutil.copytree(stage, root, ignore=shutil.ignore_patterns('_vendor', 'dist', '__pycache__'))
-    shutil.copytree(stage / 'tests' / '_vendor', root / 'tests' / '_vendor')
-    source = (root / path).read_text(encoding='utf-8')
-    assert source.count(old) == 1, (label, source.count(old))
-    (root / path).write_text(source.replace(old, new), encoding='utf-8')
-    passes_clean = run(stage, test)
-    passes_mutant = run(root, test)
-    verdict = 'DÉTECTÉE' if passes_clean and not passes_mutant else 'NON DÉTECTÉE'
-    ok = ok and verdict == 'DÉTECTÉE'
-    print(f'{verdict:13} {label} -> {test}')
-    shutil.rmtree(tmp, ignore_errors=True)
-if saved is not None: results.write_bytes(saved)
-print('TOUTES DÉTECTÉES' if ok else 'ÉCHEC')
+_ROOT = None
+
+
+def _worker(roots):
+    global _ROOT
+    _ROOT = roots.get()
+
+
+def clean(name):
+    return name, run(_ROOT, name)
+
+
+def mutant(index):
+    label, path, old, new, test = MUTATIONS[index]
+    target = _ROOT / path
+    original = target.read_bytes()
+    try:
+        target.write_bytes(mutated(original.decode('utf-8'), old, new).encode('utf-8'))
+        return index, run(_ROOT, test)
+    finally:
+        target.write_bytes(original)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('stage', nargs='?', default=str(Path(__file__).resolve().parent.parent))
+    parser.add_argument('--jobs', type=int, default=min(8, os.cpu_count() or 1))
+    parser.add_argument('--only', default='')
+    args = parser.parse_args()
+    stage = Path(args.stage).resolve()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    selected = [i for i, m in enumerate(MUTATIONS) if args.only in m[0] or args.only in m[4]]
+    # Inventaire d'abord : une ancre absente ou en double arrête tout, avant la moindre exécution.
+    bad = [m for m in MUTATIONS if mutated((stage / m[1]).read_bytes().decode('utf-8'), m[2], m[3]) is None]
+    for m in bad:
+        print(f'ANCRE INTROUVABLE OU EN DOUBLE : {m[0]} ({m[1]})')
+    if bad:
+        raise SystemExit(1)
+    tests = sorted({MUTATIONS[i][4] for i in selected})
+    jobs = max(1, min(args.jobs, len(selected) or 1))
+    tmp = Path(tempfile.mkdtemp(prefix='mutate-'))
+    try:
+        import multiprocessing
+        roots = multiprocessing.Manager().Queue() if jobs > 1 else None
+        for k in range(jobs):
+            copy_tree(stage, tmp / f'app{k}')
+            if roots is not None:
+                roots.put(tmp / f'app{k}')
+        if jobs == 1:
+            global _ROOT
+            _ROOT = tmp / 'app0'
+            passes_clean = dict(map(clean, tests))
+            outcomes = map(mutant, selected)
+            pool = None
+        else:
+            from concurrent.futures import ProcessPoolExecutor
+            pool = ProcessPoolExecutor(jobs, initializer=_worker, initargs=(roots,))
+            passes_clean = dict(pool.map(clean, tests))
+            outcomes = pool.map(mutant, selected)
+        detected = 0
+        for index, passes_mutant in outcomes:
+            label, test = MUTATIONS[index][0], MUTATIONS[index][4]
+            verdict = 'DÉTECTÉE' if passes_clean[test] and not passes_mutant else 'NON DÉTECTÉE'
+            detected += verdict == 'DÉTECTÉE'
+            note = '' if passes_clean[test] else ' (échoue déjà sur le code propre)'
+            print(f'{verdict:13} {label} -> {test}{note}', flush=True)
+        if pool is not None:
+            pool.shutdown()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f'{detected} / {len(selected)} mutations détectées')
+    print('TOUTES DÉTECTÉES' if detected == len(selected) else 'ÉCHEC')
+    raise SystemExit(0 if detected == len(selected) else 1)
+
+
+if __name__ == '__main__':
+    main()

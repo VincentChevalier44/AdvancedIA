@@ -147,6 +147,35 @@ tests.SESSION_PRESET_151=function()
  -- Profil manuel : rien.
  local e6,f6=scene(2); e6.g.autoProfile=false; e6.g.manualProfile='Q'; e6.profiles.Q.levelPct=60; E.step(e6,f6,1/60); assert(e6.profiles.Q.levelPct==60,'manual profile: nothing')
 end
+-- Tours de refroidissement des IA (qualifications) : après sa série de tours lancés, l'IA fait un tour au niveau abaissé,
+-- n'est plus lancée (elle cède aux voitures lancées), puis repart ; jamais en essais, jamais pour le joueur, jamais en fin
+-- de séance.
+tests.QUALI_AI_COOL_LAPS_151=function()
+ local Q=require('src/quali')
+ local function run(profile,left)
+  local e,f=F.scene(profile,3); e.profiles[profile].qualiTraffic=true; e.profiles[profile].qualiCoolLaps=true; E.changed(e)
+  f.left=left or 0; F.tick(e,f,1/60)
+  local c=e.quali.cars[2]; c.out=false; c.cool=false; F.tick(e,f,1/60)
+  assert(e.quali.push[2],'AI 2 pushing')
+  local n=Q.target(e.runtimeG.seed,2); assert(n>=K.qualiPushMin and n<=K.qualiPushMax,'target drawn in range')
+  local a=f.cars[2]
+  for _=1,n do a.lap=a.lap+1; F.tick(e,f,1/60) end
+  return e,f,c,a
+ end
+ local e,f,c,a=run('Q')
+ assert(c.cool and c.planned and not e.quali.push[2] and (e.stats.qualiCool or 0)==1,'cool-down lap after the flying laps')
+ F.tick(e,f,K.qualiCoolRamp+0.1)
+ assert(math.abs(e.commands[2].levelScale-(1-K.qualiCoolLevel))<1e-6,'level lowered: '..e.commands[2].levelScale)
+ a.lap=a.lap+1; F.tick(e,f,1/60)
+ assert(not c.cool and e.quali.push[2] and e.commands[2].levelScale<1,'line: pushing again, level coming back')
+ F.tick(e,f,K.qualiCoolRelease+0.1); assert(e.commands[2].levelScale==1,'level back')
+ -- Joueur : jamais de refroidissement prévu.
+ local pc=e.quali.cars[1]; assert(not pc.planned,'never for the player')
+ -- Essais : jamais ; fin de séance (moins de qualiCoolLate tours) : jamais.
+ local e2,f2,c2=run('P'); assert(not c2.planned and e2.quali.push[2],'never in practice')
+ local e3,f3,c3=run('Q',100); assert(not c3.planned and e3.quali.push[2],'not at the end of the session')
+ assert(C.hidden('P','qualiCoolLaps') and not C.hidden('Q','qualiCoolLaps') and C.defaults('Q').qualiCoolLaps,'qualifying only, on by default')
+end
 -- Scène animée de qualifications (20 min, 20 IA, rythmes variés, passages aux stands, joueur qui ralentit un tour sur
 -- trois) avec le préréglage de la session et les tours lancés actifs : le nouveau code tourne vraiment (sans erreur),
 -- cessions prioritaires et refroidissements observés.
@@ -156,7 +185,7 @@ tests.QUALI_SOAK_151=function()
  f.length=math.pi*2000; f.commands=e.commands
  for i=1,f.count do local a=f.cars[i]; a.distance=(i-1)*f.length/f.count; a.pace=90+(i%5)*20; a.lap=0 end
  E.step(e,f,1/30)
- local dt=1/30; local yields,cools,pushes=0,0,0
+ local dt=1/30; local yields,cools,pushes,planned=0,0,0,0
  for n=1,20*60*30 do
   local t=n*dt
   W.animate(f,t,dt)
@@ -166,8 +195,9 @@ tests.QUALI_SOAK_151=function()
   for i=2,f.count do if e.states[i].yieldQuali and F.yielding(e.states[i].state) then yields=yields+1 end end
   if e.quali.cars[1].cool then cools=cools+1 end
   if e.quali.push[2] then pushes=pushes+1 end
+  for i=2,f.count do if e.quali.cars[i].planned then planned=planned+1 end end
  end
  assert(e.profile=='Q' and C.mark(e.g,'Q')=='Qualifications','session preset applied')
- assert(e.quali.active and pushes>0 and yields>0 and cools>0,'flying laps, cool-down laps and priority yields happen: '..pushes..' / '..cools..' / '..yields)
+ assert(e.quali.active and pushes>0 and yields>0 and cools>0 and planned>0,'flying laps, cool-down laps (player, AI) and priority yields happen: '..pushes..' / '..cools..' / '..planned..' / '..yields)
 end
 return tests

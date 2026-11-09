@@ -219,7 +219,7 @@ local function restartInfo(panel,t,frame,kind)
 end
 -- lights : état des panneaux lumineux (véhicule lent devant, dégâts du joueur), facultatif.
 function M.update(panel,t,frame,p,profile,now,lights)
- if not p.flagPanel then return M.native(panel,frame,now,p) end
+ if not p.flagPanel then return M.native(panel,frame,now,p,profile) end
  if now<panel.at then return end
  panel.at=now+K.panelPeriod
  local kind,value,double='none',0,false

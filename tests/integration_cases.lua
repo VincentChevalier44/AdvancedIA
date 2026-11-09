@@ -4,6 +4,9 @@ local E=require('src/engine')
 local L=require('src/lang')
 local ffi=require('ffi')
 return function(source)
+ -- Beta 1.51 : les cas réglés à la main partent sans préréglage de la session (comme la fixture) ; le dernier cas joue
+ -- la vraie première installation avec l'interrupteur allumé (défaut de l'app).
+ local presetDefault=C.globalDefaults.presetBySession; C.globalDefaults.presetBySession=false
  -- Filtre facultatif (mutations ciblées) : seuls les cas dont le nom contient INT_FILTER sont joués.
  local filter=rawget(_G,'INT_FILTER')
  local results={}; local function check(name,fn) if filter and not name:find(filter,1,true) then return end; fn()
@@ -198,9 +201,11 @@ return function(source)
     -- qualifications) : commande masquée, explication affichée, valeur par défaut.
     if s.group=='rules' and (stopsKeys[s.key] or safetyKeys[s.key]) and profile~='C' then
      -- Beta 1.19 : arrêts aux stands et voiture de sécurité, réglages du profil Course seul (vérifiés avec lui).
+    elseif s.key=='mandatoryStops' then
+     -- Beta 1.51 : arrêt obligatoire oui ou non, réglé par son interrupteur seul (vérifié avec les interrupteurs de course).
     elseif C.hidden(profile,s.key) then
      HUMANAI.engine.p['section_'..s.group]=true; section(s.group,s.key); redraw()
-     local note=(C.penaltyKeys[s.key] or C.sanctionKeys[s.key] and C.solo(profile)) and L.penaltiesTrackDay or (C.raceKeys[s.key] or C.sanctionRaceKeys[s.key]) and L.raceOnlySetting or C.spawnKeys[s.key] and (C.hidden(profile,'spawnMode') and L.spawnNotAvailable or L.floodNotAvailable) or L.enduranceNotAvailable; local shown=false
+     local note=(C.penaltyKeys[s.key] or C.sanctionKeys[s.key] and C.solo(profile)) and L.penaltiesTrackDay or (C.raceKeys[s.key] or C.sanctionRaceKeys[s.key]) and L.raceOnlySetting or C.spawnKeys[s.key] and (C.hidden(profile,'spawnMode') and L.spawnNotAvailable or L.floodNotAvailable) or s.key=='qualiTraffic' and L.qualiOnlySetting or s.key=='qualiCoolLaps' and (C.hidden(profile,'qualiTraffic') and L.qualiOnlySetting or L.qualifyingOnlySetting) or L.enduranceNotAvailable; local shown=false
      for _,t in ipairs(HOST.drawnTexts) do if #t>15 and note:find(t,1,true)==1 then shown=true end end
      assert(shown and not drawn('set_'..s.key),profile..': '..s.key..' hidden')
      assert(C.validate(profile,HUMANAI.engine.p)[s.key]==s.defaults[profile],profile..': '..s.key..' back to its default')
@@ -371,12 +376,16 @@ return function(source)
  check('veille sans lectures de voitures, reprise avec identités fraîches et arrêt restauré',function()
   HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))()
   -- Veille : aucun onglet coché dans aucun profil (la première installation coche Essais, Qualifications et Course).
-  local e=HUMANAI.engine; for _,p in pairs(e.profiles) do for _,group in ipairs(C.sections) do p['section_'..group]=false end end; E.changed(e); H.tick(HOST,2)
-  assert(HOST.carReads==0 and HOST.calls==0)
+  local e=HUMANAI.engine; for _,p in pairs(e.profiles) do for _,group in ipairs(C.sections) do p['section_'..group]=false end end; E.changed(e)
+  -- Beta 1.52 (relecture de la couche hôte) : en veille, la voiture du joueur seule est relue, une fois par image (place
+  -- aux stands pour la mise à jour, pont), après une première lecture complète ; aucune commande.
+  H.tick(HOST,1/60); local first=HOST.carReads; H.tick(HOST,2)
+  assert(HOST.carReads-first==120 and HOST.calls==0,'standby: player only ('..(HOST.carReads-first)..')')
   e.profiles.J.section_general=true; E.changed(e); H.tick(HOST,1/60)
   assert(HOST.carReads>=4 and e.frame.cars[2].identity~=nil and e.frame.cars[1].player)
+  -- Beta 1.52 : app coupée : la voiture du joueur seule est relue (une par image).
   e.g.enabled=false; H.tick(HOST,2); HOST.carReads=0; local calls=HOST.calls; H.tick(HOST,1)
-  assert(HOST.carReads==0 and HOST.calls==calls and math.abs(HOST.cars[1].aiLevel-0.9)<1e-6)
+  assert(HOST.carReads==60 and HOST.calls==calls and math.abs(HOST.cars[1].aiLevel-0.9)<1e-6)
  end)
  check('gauche/droite : cession à droite = offset SDK positif, repère indirect et repère direct d’AC',function()
   for _,rightHanded in ipairs({false,true}) do
@@ -655,22 +664,22 @@ return function(source)
   ac.getTrackAISplineSides=sides
   assert(e.incidents.red and HOST.pitRequests[1]==true,'red flag: AI called to the pits')
   HOST.transparent={}; script.HUMANAI__HUD(); assert(e.panel.kind=='red' and HOST.transparent.AdvancedIA_overlay,'overlay drawn on the red flag')
-  HOST.draws=0; HOST.panelTexts={}; HOST.textTop=nil; HOST.circles=0; script.HUMANAI__FLAGS()
+  HOST.draws=0; HOST.panelTexts={}; HOST.textTop=nil; HOST.circles=0; HUMANAI.drawFlags()
   assert(HOST.draws>=2 and HOST.fontDepth==0 and HOST.styleDepth==0 and has(HOST.panelTexts,L.flagTitles.red),'red flag drawn')
   assert(has(HOST.panelTexts,L.deltaLabel) and has(HOST.panelTexts,L.pitPill) and e.delta.kind=='red','red flag: delta box to the pits and PIT pill')
   -- Beta 1.38 (maquette) : plus de version en haut à droite de l'overlay.
   assert(not has(HOST.panelTexts,string.format(L.panelVersion,C.release)),'no version text at the top of the flags panel')
   assert(HOST.textTop>=34,'text placed under the CSP title bar, never behind it')
   -- Fenêtre basse : titre en police normale, toujours sous la barre de titre ; police toujours rendue.
-  HOST.windowHeight=110; HOST.textTop=nil; script.HUMANAI__FLAGS(); assert(HOST.textTop>=34 and HOST.fontDepth==0); HOST.windowHeight=nil
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,e.panel.short) and e.panel.short~='','one-line instruction drawn')
+  HOST.windowHeight=110; HOST.textTop=nil; HUMANAI.drawFlags(); assert(HOST.textTop>=34 and HOST.fontDepth==0); HOST.windowHeight=nil
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,e.panel.short) and e.panel.short~='','one-line instruction drawn')
   -- Beta 1.39 (maquette) : pastilles en capitales.
   local noPass; for k,text in ipairs(HOST.panelTexts) do if text==W.upper(L.noPassing) then noPass=HOST.panelColors[k] end end
   -- Refonte Racing 26 : vert du kit #2EE07F (composante verte 0,88).
   assert(noPass and noPass.g>0.8 and noPass.r<0.5,'no overtaking line drawn in green')
   -- Temps delta en direct : positif en vert, négatif en rouge (valeur signée, virgule décimale).
   local function deltaShown(value)
-   e.delta.course.delta=value; H.tick(HOST,1/60); HOST.panelTexts={}; HOST.panelColors={}; script.HUMANAI__FLAGS()
+   e.delta.course.delta=value; H.tick(HOST,1/60); HOST.panelTexts={}; HOST.panelColors={}; HUMANAI.drawFlags()
    for k,text in ipairs(HOST.panelTexts) do if text:match('^[%+%-]%d+[,%.]%d%d$') then return text,HOST.panelColors[k] end end
   end
   local text,color=deltaShown(0.8)
@@ -678,7 +687,7 @@ return function(source)
   text,color=deltaShown(-0.5)
   assert(text and text:sub(1,1)=='-' and color.r>0.9 and color.g<0.5,'negative delta in red: '..tostring(text))
   -- Valeur arrondie à zéro : « +0,00 » en vert (le signe lu est celui du centième affiché).
-  e.delta.value=-0.003; HOST.panelTexts={}; HOST.panelColors={}; script.HUMANAI__FLAGS()
+  e.delta.value=-0.003; HOST.panelTexts={}; HOST.panelColors={}; HUMANAI.drawFlags()
   local zero; for k,shown in ipairs(HOST.panelTexts) do if shown=='+0'..L.decimalMark..'00' then zero=HOST.panelColors[k] end end
   assert(zero and zero.g>0.8 and zero.r<0.5,'rounded to zero: shown green')
   e.delta.course.delta=2
@@ -853,7 +862,7 @@ return function(source)
   assert(#HOST.penalties==1 and HOST.penalties[1]==e.run.penaltySeconds and e.penalties.reason=='delta','one native penalty written')
   local found=false; for _,m in ipairs(HOST.messages) do if m:find(L.messages.penaltyDelta[1],1,true) then found=true end end
   assert(found,'penalty announced on screen')
-  HOST.draws=0; HOST.panelTexts={}; script.HUMANAI__FLAGS()
+  HOST.draws=0; HOST.panelTexts={}; HUMANAI.drawFlags()
   assert(has(HOST.panelTexts,W.upper(e.panel.notice)),'penalty pill on the flag panel')
   H.tick(HOST,3); assert(#HOST.penalties==1,'never written twice for one decision')
  end)
@@ -865,9 +874,9 @@ return function(source)
   assert(HOST.played==1 and HOST.sounds[1]=='apps/lua/AdvancedIA/sounds/drs-available-beep.wav','beep played from the app folder')
   assert(HOST.beepInterior==1 and HOST.beepVolume==2 and HOST.beepChannel=='main','full level in the cockpit view (CSP default 25 %), main channel')
   HOST.transparent={}; script.HUMANAI__HUD(); assert(e.panel.kind=='drs' and HOST.transparent.AdvancedIA_overlay,'DRS shown on the overlay')
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,L.flagTitles.drs),'DRS title drawn')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,L.flagTitles.drs),'DRS title drawn')
   -- Beta 1.38 (maquette) : aplat clair, « DRS » à l'encre, sans cadre.
-  HOST.outlines=0; HOST.panelTexts={}; script.HUMANAI__FLAGS()
+  HOST.outlines=0; HOST.panelTexts={}; HUMANAI.drawFlags()
   local drsTexts=0; for _,t in ipairs(HOST.panelTexts) do if t=='DRS' then drsTexts=drsTexts+1 end end
   assert(drsTexts>=2 and HOST.fontDepth==0 and HOST.outlines==0,'DRS badge (title and badge text): light fill, no frame')
   HOST.cars[0].drsAvailable=false; H.tick(HOST,0.5); HOST.cars[0].drsAvailable=true; H.tick(HOST,0.5)
@@ -875,7 +884,7 @@ return function(source)
   e.profiles.C.drsBeepVolume=400; E.changed(e); HOST.cars[0].drsAvailable=false; H.tick(HOST,0.5); HOST.cars[0].drsAvailable=true; H.tick(HOST,0.5)
   assert(HOST.played==3 and HOST.beepVolume==4,'beep volume setting applied')
   -- Drapeau jaune natif dans la zone DRS : drapeau affiché, DRS interdit, pas de bip ; bip à la fin du drapeau.
-  HOST.sim.raceFlagType=C.K.flagCaution; H.tick(HOST,0.5); HOST.panelTexts={}; script.HUMANAI__FLAGS()
+  HOST.sim.raceFlagType=C.K.flagCaution; H.tick(HOST,0.5); HOST.panelTexts={}; HUMANAI.drawFlags()
   local blocked=false; for _,text in ipairs(HOST.panelTexts) do if text==W.upper(L.drsBlocked) then blocked=true end end
   assert(e.panel.kind=='native' and blocked and HOST.played==3,'native yellow over DRS, DRS blocked line drawn, no beep')
   HOST.sim.raceFlagType=0; H.tick(HOST,0.5); assert(HOST.played==4,'beep once the flag is over in the DRS zone')
@@ -899,7 +908,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))(); H.tick(HOST,1)
   -- Beta 1.25 : sans drapeau, seule la ligne de session (si elle est cochée) ; décochée, rien du tout.
   local g=HUMANAI.engine.g; g.overlaySession=false
-  HOST.draws=0; HOST.transparent={}; script.HUMANAI__FLAGS(); script.HUMANAI__HUD()
+  HOST.draws=0; HOST.transparent={}; HUMANAI.drawFlags(); script.HUMANAI__HUD()
   assert(HOST.draws==0 and HUMANAI.engine.panel.kind=='none' and not HOST.transparent.AdvancedIA_overlay,'nothing drawn without a flag nor session line')
   g.overlaySession=true
   assert(not HUMANAI.engine.panic)
@@ -1097,7 +1106,7 @@ return function(source)
   local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); C.applyRules('Endurance',e.profiles); E.changed(e); H.tick(HOST,1)
   local t=e.incidents; t.neutral=true; t.neutralMode='fcy'; t.neutralSince=e.time; t.neutralUntil=e.time+1e6; H.tick(HOST,0.5)
   assert(t.pitsClosed and e.panel.kind=='fcy','FCY, pits closed')
-  HOST.panelTexts={}; script.HUMANAI__FLAGS()
+  HOST.panelTexts={}; HUMANAI.drawFlags()
   local found=false; for _,text in ipairs(HOST.panelTexts) do if text==L.pitClosedPill then found=true end end
   assert(found,'pits closed pill drawn')
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
@@ -1175,12 +1184,12 @@ return function(source)
  -- Beta 1.11 : drapeaux d'AC dessinés par le panneau (damier, pénalité, noir), lus dans l'état CSP du joueur.
  check('Beta 1.11 : drapeaux et pénalités d AC dans le panneau',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,1)
-  HOST.sim.raceFlagType=C.K.flagFinished; H.tick(HOST,0.5); HOST.panelTexts={}; script.HUMANAI__FLAGS()
+  HOST.sim.raceFlagType=C.K.flagFinished; H.tick(HOST,0.5); HOST.panelTexts={}; HUMANAI.drawFlags()
   HOST.transparent={}; script.HUMANAI__HUD(); assert(has(HOST.panelTexts,L.flagTitles.checkered) and HOST.transparent.AdvancedIA_overlay,'checkered drawn on the overlay')
   HOST.sim.raceFlagType=C.K.flagNone; HOST.cars[0].currentPenaltyType=C.K.penaltyMandatoryPits; HOST.cars[0].currentPenaltyParameter=2; H.tick(HOST,0.5)
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,L.flagTitles.penalty),'penalty drawn')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,L.flagTitles.penalty),'penalty drawn')
   HOST.cars[0].currentPenaltyType=0; HOST.sim.raceFlagType=C.K.flagStop; H.tick(HOST,0.5)
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,L.flagTitles.black),'black drawn')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,L.flagTitles.black),'black drawn')
   assert(HOST.fontDepth==0 and HUMANAI.host.errors==0)
   -- Option CSP lue à l'ouverture du menu : point à vérifier tant que les drapeaux d'origine restent affichés. Beta 1.40 :
   -- masquage par l'app coupé (sinon option écrite par l'app) ; option changée en jeu : CSP relit gui.ini.
@@ -1197,9 +1206,9 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,1); pause(true)
   local g=HUMANAI.engine.g; section('overlay')
   press('panel_show'); assert(g.panelShow=='always','always shown'); pause(false); H.tick(HOST,0.5)
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); HOST.transparent={}; script.HUMANAI__HUD(); assert(has(HOST.panelTexts,L.flagTitles.clear) and HOST.transparent.AdvancedIA_overlay,'clear track state shown')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); HOST.transparent={}; script.HUMANAI__HUD(); assert(has(HOST.panelTexts,L.flagTitles.clear) and HOST.transparent.AdvancedIA_overlay,'clear track state shown')
   pause(true); section('overlay'); drag('panel_opacity',0); assert(g.panelOpacity==0,'transparent'); drag('panel_info_time',1); assert(g.panelInfoTime==60)
-  pause(false); H.tick(HOST,0.5); HOST.draws=0; script.HUMANAI__FLAGS(); assert(HOST.fontDepth==0)
+  pause(false); H.tick(HOST,0.5); HOST.draws=0; HUMANAI.drawFlags(); assert(HOST.fontDepth==0)
   assert(HOST.storage['humanai:g:'].panelShow=='always' or true)
   HUMANAI.release()
  end)
@@ -1251,7 +1260,7 @@ return function(source)
   assert(e.panel.double and e.panel.title=='DOUBLE DRAPEAU JAUNE','French flag title: '..e.panel.title)
   pause(true); press('lang_en'); pause(false); H.tick(HOST,0.5)
   assert(e.panel.title=='DOUBLE WAVED YELLOW' and (e.panel.short==L.flagShort.zone or e.panel.short:find('Double yellow in',1,true)),'flag re-texted in English: '..e.panel.title..' / '..e.panel.short)
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,'DOUBLE WAVED YELLOW'),'flags window in English')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,'DOUBLE WAVED YELLOW'),'flags window in English')
   HUMANAI.release()
   -- Installation existante (Beta 1.15, révision 8) : reste en français, enregistré.
   HOST=H.create(true); HOST.storage['humanai:g:']={schemaVersion=3,dataRevision=8,presetsUsed=true,loadedPreset='builtin:Course'}
@@ -1360,10 +1369,11 @@ return function(source)
   press('rules_view_stops'); redraw(); assert(lit('rules_view_stops'),'race view: pit stop title selected')
   -- Essais affichés : la vue Arrêt obligatoire règle toujours le profil Course, le seul où elle agit.
   go('home'); press('profile_P'); go('rules'); press('rules_view_stops'); redraw()
-  local race,practice=P.C.mandatoryStops,P.P.mandatoryStops
-  assert(lit('rules_view_stops') and drawn('set_mandatoryStops'),'pit stop settings shown from practice')
-  press('set_mandatoryStops_plus'); assert(P.C.mandatoryStops==race+1 and P.P.mandatoryStops==practice,'race profile edited from practice')
-  press('set_mandatoryStops_minus'); assert(P.C.mandatoryStops==race)
+  -- Beta 1.51 : arrêt obligatoire oui ou non (interrupteur seul) ; fenêtre réglée depuis les essais.
+  local race,practice=P.C.pitWindowOpenPct,P.P.pitWindowOpenPct
+  assert(lit('rules_view_stops') and drawn('set_pitWindowOpenPct') and not drawn('set_mandatoryStops'),'pit stop settings shown from practice')
+  press('set_pitWindowOpenPct_plus'); assert(P.C.pitWindowOpenPct>race and P.P.pitWindowOpenPct==practice,'race profile edited from practice')
+  press('set_pitWindowOpenPct_minus'); assert(math.abs(P.C.pitWindowOpenPct-race)<1e-9)
   for _,view in ipairs({'J','H'}) do
    go('home'); press('profile_'..view); go('rules'); press('rules_view_stops'); redraw()
    assert(lit('profile_'..view) and lit('rules_view_all') and not drawn('set_mandatoryStops') and not lit('mandatory_stop') and noted(L.raceSwitchesSolo),'race pit stop settings not shown: '..view)
@@ -1495,8 +1505,10 @@ return function(source)
   t.neutral=true; t.neutralMode='sc'; t.safetyPhase='out'; t.safetyLeft=false; t.neutralSince=e.time; t.neutralUntil=e.time+1e6; t.safetySince=e.time
   HOST.startDelays[3]=nil; HOST.stops[3]=nil; HOST.pitRequests[3]=nil; H.tick(HOST,0.5)
   assert(not HOST.parked[3] and (HOST.awakes[3] or 0)==1 and HOST.startDelays[3]==0 and HOST.stops[3]==0 and HOST.pitRequests[3]==false,'released: woken, start now, no brake, no pit request')
-  H.tick(HOST,4.6); local woken=HOST.awakes[3]
-  assert(woken>=3 and woken<=4,'repeated while still in its box ('..woken..')')
+  -- Relance répétée : réveil et départ immédiat à chaque fois (le premier départ immédiat peut venir de la retenue
+  -- levée, Beta 1.52).
+  HOST.startDelays[3]=nil; H.tick(HOST,4.6); local woken=HOST.awakes[3]
+  assert(woken>=3 and woken<=4 and HOST.startDelays[3]==0,'repeated while still in its box ('..woken..'), start now each time')
   car.isInPit=false; car.isInPitlane=true; H.tick(HOST,0.5)
   local found=false
   for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find('voiture de securite: sortie de son stand apres',1,true) then found=true end end
@@ -1691,10 +1703,10 @@ return function(source)
   pause(false)
   local e=HUMANAI.engine
   e.lights.meatballUntil=e.time+10; H.tick(HOST,0.5)
-  HOST.panelTexts={}; HOST.circles=0; script.HUMANAI__FLAGS()
+  HOST.panelTexts={}; HOST.circles=0; HUMANAI.drawFlags()
   assert(e.panel.kind=='meatball' and has(HOST.panelTexts,L.flagTitles.meatball) and HOST.circles>0,'damaged car: black flag with an orange disc')
   e.lights.meatballUntil=-math.huge; e.panel.giveBackDue=false; require('src/panel').warn(e.panel); H.tick(HOST,0.5)
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(e.panel.kind=='warning' and has(HOST.panelTexts,L.flagTitles.warning),'final warning drawn')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(e.panel.kind=='warning' and has(HOST.panelTexts,L.flagTitles.warning),'final warning drawn')
   HUMANAI.release()
  end)
  -- Beta 1.33 : mise à jour depuis GitHub, app complète sur une imitation de CSP (réseau, empreinte, zips, fichiers).
@@ -1796,7 +1808,7 @@ return function(source)
    HOST.cars[0].isInPit=false; HOST.cars[0].isInPitlane=true; H.tick(HOST,1); assert(not HUMANAI.host.updateStopped,'pit lane at speed: not stopped')
    HOST.cars[0].isInPit=true; HOST.cars[0].speedKmh=0; H.tick(HOST,1)
    assert(HUMANAI.host.updateStopped and e.panel.updateUntil>e.time and e.panel.kind=='update','notice in the pits')
-   HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,L.flagTitles.update),'overlay notice drawn')
+   HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,L.flagTitles.update),'overlay notice drawn')
    HOST.cars[0].isInPit=false; HOST.cars[0].isInPitlane=false; HOST.cars[0].speedKmh=108; H.tick(HOST,1); assert(e.panel.kind~='update','removed when leaving the pits')
    HOST.cars[0].isInPit=true; HOST.cars[0].isInPitlane=true; HOST.cars[0].speedKmh=0; H.tick(HOST,1); assert(e.panel.kind~='update','once per launch')
    -- Fenêtre dessinée hors de l'arrêt (état forcé) : boutons d'installation grisés et sans effet ; à l'arrêt, le même
@@ -1986,7 +1998,7 @@ return function(source)
    panel.kind=kind; panel.title=kind..' title'; panel.short=kind..' short'; panel.explain=''; panel.changedAt=e.time; panel.noPass=false; panel.drsBlocked=false
    panel.lit=kind=='lights' and 3 or 0; panel.slotText=kind=='standing' and 'P4' or nil; panel.slotDistance=kind=='standing' and 380 or nil
    panel.slotPlaced=false; panel.slotPassed=false
-   HOST.panelTexts={}; HOST.circles=0; HOST.draws=0; script.HUMANAI__FLAGS()
+   HOST.panelTexts={}; HOST.circles=0; HOST.draws=0; HUMANAI.drawFlags()
    assert(has(HOST.panelTexts,kind..' title') and HOST.fontDepth==0 and HOST.dwriteDepth==0,'drawn: '..kind)
    if kind=='rolling' then assert(has(HOST.panelTexts,'RS'),'RS badge') end
    if kind=='standing' then assert(has(HOST.panelTexts,'SS') and has(HOST.panelTexts,string.format(L.placeLabel,'P4')) and has(HOST.panelTexts,string.format(L.placeMeters,380)),'SS badge, slot and distance') end
@@ -1995,10 +2007,10 @@ return function(source)
   end
   -- Beta 1.35 (fusion) : au mètre près sous 20 m (valeur de la grille), puis « en place » et « place dépassée ».
   panel.kind='standing'; panel.slotText='P4'; panel.slotDistance=7; panel.slotPlaced=false; panel.slotPassed=false
-  HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,string.format(L.placeMeters,7)),'exact metres below 20 m')
-  panel.slotPlaced=true; HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,L.gridPlaced) and not has(HOST.panelTexts,string.format(L.placeMeters,7)),'in position')
-  panel.slotPlaced=false; panel.slotPassed=true; HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,string.format(L.gridPassedBy,7)),'slot passed, metres behind')
-  panel.slotDistance=0; HOST.panelTexts={}; script.HUMANAI__FLAGS(); assert(has(HOST.panelTexts,L.gridPassed),'slot passed, no distance')
+  HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,string.format(L.placeMeters,7)),'exact metres below 20 m')
+  panel.slotPlaced=true; HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,L.gridPlaced) and not has(HOST.panelTexts,string.format(L.placeMeters,7)),'in position')
+  panel.slotPlaced=false; panel.slotPassed=true; HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,string.format(L.gridPassedBy,7)),'slot passed, metres behind')
+  panel.slotDistance=0; HOST.panelTexts={}; HUMANAI.drawFlags(); assert(has(HOST.panelTexts,L.gridPassed),'slot passed, no distance')
   HUMANAI.release()
  end)
  -- Beta 1.35 (relecture de l'interface) : sélecteur de profil jamais masqué (900 px, polices de secours, français),
@@ -2133,7 +2145,7 @@ return function(source)
   HOST.repeatPushes=0; HOST.lastPushed=nil; HOST.fontDepthMax=0; HOST.fontPushes=0; HOST.transparent={}; script.HUMANAI__HUD()
   assert(HOST.transparent.AdvancedIA_overlay and HOST.dwriteDepth==0 and HOST.repeatPushes==0 and HOST.fontDepthMax==1 and HOST.fontPushes<=6,'overlay fonts: '..HOST.fontPushes..' pushes ('..HOST.repeatPushes..' repeated)')
   local clipped=ui.dwriteDrawTextClipped; ui.dwriteDrawTextClipped=function() error('draw failure (test)') end
-  script.HUMANAI__FLAGS(); ui.dwriteDrawTextClipped=clipped
+  HUMANAI.drawFlags(); ui.dwriteDrawTextClipped=clipped
   assert(HOST.dwriteDepth==0 and HUMANAI.host.errors>0,'overlay fonts unwound after a drawing error')
   -- Hôte refait : l'erreur provoquée n'est pas comptée dans le cas.
   HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))()
@@ -2306,7 +2318,7 @@ return function(source)
   press('profile_C'); redraw(); assert(lit('builtin_Endurance'),'lit in its own profile')
   -- A11, B1 : restauration du profil affiché ; nom de préréglage refusé.
   assert(drawnText(W.upper(L.restoreShort..L.profiles.C)),'restore names the profile')
-  HOST.inputEdits['##aai_preset_name']=''; main(); press('save_preset'); redraw(); assert(begins(L.invalidPresetName),'invalid preset name message')
+  HOST.inputEdits['##aai_preset_name']=''; main(); press('save_preset'); redraw(); assert(begins(string.format(L.invalidPresetName,C.K.presetNameBytes)),'invalid preset name message')
   -- A3, A9 : options globales (titre, bonus de grip sous son interrupteur, nouveau tirage, défaut du mode de niveau).
   local q=e.profiles.C; q.section_globals=true; go('settings'); press('cat_globals'); redraw()
   local h=HOST.hits
@@ -2349,7 +2361,7 @@ return function(source)
   press('pattern_add'); redraw(); assert(drawn('pattern_clear_'..(rows+1)),'row added')
   -- A4 : diagnostic (libellés courts, noms des capacités).
   go('diagnostic'); redraw()
-  assert(drawnText(W.upper(L.learnShort)) and drawnText(W.upper(L.markStartShort)) and drawnText(W.upper(L.exportZones)) and drawnText(W.upper(L.calibrateShort)),'short Diagnostic buttons')
+  assert(drawnText(W.upper(string.format(L.learnShort,C.K.flashLearnTime))) and drawnText(W.upper(L.markStartShort)) and drawnText(W.upper(L.exportZones)) and drawnText(W.upper(L.calibrateShort)),'short Diagnostic buttons')
   assert(drawnText(L.capNames.level) and drawnText(W.upper(L.apiList)),'capability names, AI functions heading')
   -- C : barre de défilement saisissable (accueil, fenêtre basse).
   HOST.space={x=1000,y=420}; go('home'); redraw()
@@ -2360,7 +2372,7 @@ return function(source)
   assert(after==nil or after.y<before.y-1,'dragging the rail scrolls')
   HOST.space={x=1000,y=780}
   -- B10 : overlay (infractions sous l'avertissement, stands sous la voiture endommagée, version dans le drapeau).
-  local panel=e.panel; local function flag(kind) panel.kind=kind; panel.decided=kind; panel.title=L.flagTitles[kind] or ''; panel.short=''; panel.explain=''; panel.changedAt=e.time; HOST.panelTexts={}; script.HUMANAI__FLAGS() end
+  local panel=e.panel; local function flag(kind) panel.kind=kind; panel.decided=kind; panel.title=L.flagTitles[kind] or ''; panel.short=''; panel.explain=''; panel.changedAt=e.time; HOST.panelTexts={}; HUMANAI.drawFlags() end
   panel.infractions=1; panel.infractionMax=5; flag('warning'); assert(has(HOST.panelTexts,string.format(L.infractionPill,1,5)),'offence count pill')
   flag('meatball'); assert(has(HOST.panelTexts,L.pitPill),'pit pill under car damaged')
   panel.updateVersion='Beta 1.39'; flag('update'); assert(has(HOST.panelTexts,'1.39'),'version in the update flag')
@@ -2425,7 +2437,7 @@ return function(source)
  check('Beta 1.39 : derniers écarts de la maquette',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.space={x=1000,y=3000}; assert(loadstring(source))(); H.tick(HOST,1); pause(true)
   local e=HUMANAI.engine; local panel=e.panel; local P=require('src/panel')
-  local function flag(kind) panel.kind=kind; panel.decided=kind; panel.title=L.flagTitles[kind] or ''; panel.short=''; panel.explain=''; panel.changedAt=e.time; HOST.panelTexts={}; script.HUMANAI__FLAGS() end
+  local function flag(kind) panel.kind=kind; panel.decided=kind; panel.title=L.flagTitles[kind] or ''; panel.short=''; panel.explain=''; panel.changedAt=e.time; HOST.panelTexts={}; HUMANAI.drawFlags() end
   -- N1 : pastilles en capitales ; N6 : PIT sous l'arrêt obligatoire ; N3 : écart du bleu dans sa case, sans pastilles.
   P.infractions(panel,1,5); panel.noPass=true; panel.passed=false; flag('yellow'); assert(has(HOST.panelTexts,W.upper(panel.passOk)),'pills in capitals')
   panel.noPass=false; flag('pit'); assert(has(HOST.panelTexts,W.upper(L.pitPill)),'pit pill under the mandatory stop')
@@ -2510,7 +2522,7 @@ return function(source)
   -- Manager), valeurs d'origine gardées.
   g.cspHideMessages=false; H.tick(HOST,0.2); assert(HOST.files[gui]==original)
   g.cspHideMessages=true; H.tick(HOST,0.2); assert(HOST.files[gui]==hidden)
-  H.reloadGui(HOST); H.tick(HOST,C.K.cspReloadRelease+0.5)
+  H.reloadGui(HOST); H.tick(HOST,2.5)
   assert(count('gui.ini relu par CSP en cours de partie')==1,'live reload logged')
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
   assert(HOST.files[gui]==hidden and HOST.files[state]~=nil and #HOST.guiWatchers==0,'kept ticked on unload, watcher closed')
@@ -2565,7 +2577,7 @@ return function(source)
   local e=HUMANAI.engine; local panel=e.panel; local S=require('src/sanctions'); local HI=require('src/hudinfo'); local UIm=package.loaded['src/ui']
   e.g.overlayMessages=true
   local function notice(kind,what,driver,x,text) S.aiNotice(e.sanctions,kind,text,what,driver,x); HI.update(e.hud,e.frame,e,e.time) end
-  local function draw(kind) panel.kind=kind; panel.decided=kind; panel.title=L.flagTitles[kind] or ''; panel.short=''; panel.explain=''; panel.changedAt=e.time-10; HOST.panelTexts={}; script.HUMANAI__FLAGS() end
+  local function draw(kind) panel.kind=kind; panel.decided=kind; panel.title=L.flagTitles[kind] or ''; panel.short=''; panel.explain=''; panel.changedAt=e.time-10; HOST.panelTexts={}; HUMANAI.drawFlags() end
   notice('aiSanction','drive','Lorenzo Brazzoli',L.sanctionTexts.reasons.jumpStart,'Lorenzo Brazzoli : drive-through (faux départ)')
   draw('none')
   assert(UIm.overlayParts(HUMANAI.panel).ai,'band free: dedicated notice')
@@ -2774,7 +2786,7 @@ return function(source)
   HOST.wrappedTexts={}; script.HUMANAI__MAIN()
   local inWindow=table.concat(HOST.wrappedTexts,'|')
   assert(inWindow:find(Old.textFr,1,true) and inWindow:find(Old.textEn,1,true),'window alone: instruction in French and English')
-  script.HUMANAI__MENU(); script.HUMANAI__FLAGS()
+  script.HUMANAI__MENU(); HUMANAI.drawFlags()
   HOST.transparent={}; script.HUMANAI__HUD()
   assert(HOST.calls==0 and HOST.offsetCalls==0,'inert: no AI command')
   assert(not HOST.guiWrites and not HOST.stateWrites and not HOST.cfgWrites and not HOST.bakDeleted,'inert: no CSP option, state or AI flood write')
@@ -2940,5 +2952,32 @@ return function(source)
   assert(not logged('restee dans la voie des stands') and not logged('pose en piste impossible') and not logged('neutralisation: fcy'),'no FCY fallback')
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end))
+ check('Beta 1.52 : mise à jour de SpotterEnginer signalée à l accueil (publiée par lui), lien vers sa fenêtre, jamais installée',function()
+  if HUMANAI then HOST.releasing=true; HUMANAI.release(); HOST.releasing=false end
+  HOST=H.create(true); assert(loadstring(source))(); H.tick(HOST,0.5)
+  local host=HUMANAI.host; local opened=0; host.openCompanion=function() opened=opened+1; return true end
+  host.companionUpdate=require('src/applier').parseCompanionUpdate('v=1;installed=1.1.0;latest=1.2.0;state=available')
+  pause(true); redraw()
+  assert(begins(string.format(L.companionAvailable,'1.2.0','1.1.0')),'shown on HOME')
+  press('warn_spotter'); assert(opened==1,'link opens the SpotterEnginer window')
+  host.companionUpdate=require('src/applier').parseCompanionUpdate('v=1;installed=1.1.0;state=uptodate'); redraw()
+  assert(not begins(string.format(L.companionAvailable,'1.2.0','1.1.0')),'up to date: nothing')
+  host.companionUpdate=require('src/applier').parseCompanionUpdate('v=1;installed=1.1.0;latest=1.3.0;state=incompatible;needs=Beta 1.53'); redraw()
+  assert(begins(string.format(L.companionNeeds,'Beta 1.53')),'incompatible: AdvancedIA to update first')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ check('Beta 1.51 : première installation, préréglage intégré de la session appliqué et allumé (journée circuit : Nordschleife), interrupteur à l accueil',function()
+  C.globalDefaults.presetBySession=presetDefault
+  if HUMANAI then HOST.releasing=true; HUMANAI.release(); HOST.releasing=false end
+  HOST=H.create(true); assert(loadstring(source))(); H.tick(HOST,2)
+  local e=HUMANAI.engine
+  assert(e.g.presetBySession and e.profile=='J' and C.mark(e.g,'J')=='Nordschleife' and C.on(e.profiles.J,'yield'),'track day: Nordschleife applied')
+  local found=false; for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find('preset_session: Nordschleife',1,true) then found=true end end
+  assert(found,'logged')
+  pause(true); main(); press('global_presetBySession'); assert(not e.g.presetBySession,'switch on HOME')
+  press('global_presetBySession'); assert(e.g.presetBySession,'switch back on')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ C.globalDefaults.presetBySession=presetDefault
  return results
 end

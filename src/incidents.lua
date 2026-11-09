@@ -36,8 +36,16 @@ local function clearOrder(t)
  t.restartRank=0; t.restartAhead=0; t.restartState=''; t.restartTarget=0
 end
 M.clearOrder=clearOrder
+-- Relecture 1.52 : rappels et avis des stands du joueur (écrits par engine.lua, lus par le panneau et le pont) vidés au
+-- changement de session et app à l'arrêt (jamais ceux de la session précédente).
+local noTyres={}
+function M.clearPlayerPit(t)
+ t.playerPitDue=0; t.playerPitRemind=false; t.playerPitCompound=false; t.playerPitHint=false; t.playerTyre=''; t.playerTyreOthers=noTyres
+ t.playerPlan=''; t.playerPlanned=''; t.playerPlanNotice=false; t.playerPitNotice=''; t.playerPitFrom=''; t.playerPitTo=''
+end
 function M.reset(t)
  t.heldKind=nil
+ M.clearPlayerPit(t)
  for i=1,K.maxCars do clearCar(t.cars[i]) end
  t.zoneCount=0; t.activeCount=0; t.holdCount=0; t.neutral=false; t.neutralUntil=0; t.playerFlag=false; t.playerYellow=false; t.safetyPhase='none'; t.red=false; t.onTrack=0; t.playerZone=false; t.playerInside=false; t.slipperyUntil=-math.huge
  t.safetyStill=0; t.safetyFailed=false; t.safetyLeft=false; t.exitLeftAt=-math.huge; t.safetyReturnAt=-math.huge; t.safetyHide=false; t.scLeadAnnounced=false; t.restartWas=''; t.restartTargetWas=0; t.escalated=false; t.relaunch=false; t.ending=false; t.restart=false; t.playerRestart=false; t.pitsClosed=false
@@ -59,6 +67,8 @@ function M.rebase(t,amount)
  if U.finite(t.exitLeftAt) then t.exitLeftAt=t.exitLeftAt-amount end
  if U.finite(t.safetyReturnAt) then t.safetyReturnAt=t.safetyReturnAt-amount end
  if U.finite(t.parkingSince) then t.parkingSince=t.parkingSince-amount end
+ -- Relecture 1.52 : annonce de l'arrêt F1 en attente (M.flushHeld) décalée aussi.
+ if U.finite(t.heldAt) then t.heldAt=t.heldAt-amount end
  for i=1,K.maxCars do
   local c=t.cars[i]
   for _,key in ipairs({'since','clearedAt','windowStart','crashAt','holdUntil','holdMax','lastCrash','holdStart'}) do if U.finite(c[key]) then c[key]=c[key]-amount end end
@@ -280,7 +290,7 @@ local function queued(frame,i,p)
  if length<=0 then return false end
  for j=1,frame.count do
   local b=frame.cars[j]
-  if j~=i and b.valid and not b.pit and b.splineValid and b.kmh<p.obstacleSpeedKmh+5 and a.lx*b.lx+a.lz*b.lz>K.sameDirection then
+  if j~=i and b.valid and not b.pit and b.splineValid and b.kmh<p.obstacleSpeedKmh+K.queueSpeedMargin and a.lx*b.lx+a.lz*b.lz>K.sameDirection then
    local ahead=U.spline(b.spline-a.spline)*length
    if ahead>0 and ahead<K.queueGap then return true end
   end

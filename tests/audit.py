@@ -1,10 +1,16 @@
-"""Traceable inventory of settings and functions, without claiming to prove CSP physics."""
-import hashlib
-import json
+"""Traceable inventory of the settings, without claiming to prove CSP physics: every profile parameter and every
+global option is linked to the runtime modules that read it (docs/PARAMETER_AUDIT.md). Modules only, no line numbers:
+the page changes when a setting or its readers change, not at every commit. The source hashes of a release are in
+docs/RELEASE_STATUS.json (tests/report.py)."""
 import re
 from test_pdr import APP, runtime, VERSION
-from luaparser import ast
-from luaparser.astnodes import Function, LocalFunction, Method, AnonymousFunction
+
+PROFILES = ['J', 'P', 'Q', 'C', 'H']
+# Declarations, texts, presets and the settings layout: never a runtime reader. The interface (src/ui.lua) counts as
+# a reader: overlay, language, presets and the purely visual settings live there.
+DECLARATIONS = {'config.lua', 'lang.lua', 'lang_en.lua', 'presets.lua', 'tips.lua', 'tips_en.lua', 'groups.lua'}
+# Bookkeeping stored with the global options, read only by src/config.lua (migrations): not a setting.
+INTERNAL = {'dataRevision', 'schemaVersion'}
 
 
 def main():
@@ -13,75 +19,55 @@ def main():
     english = lua.eval("require('src/lang_en')")
     files = [APP/'AdvancedIA.lua', *sorted((APP/'src').glob('*.lua'))]
     sources = {p: p.read_text(encoding='utf-8') for p in files}
-    functions = []
-    for path, source in sources.items():
-        for node in ast.walk(ast.parse(source)):
-            if isinstance(node, (Function, LocalFunction, Method, AnonymousFunction)):
-                name = ast.to_lua_source(node.name).strip() if hasattr(node, 'name') else '(anonymous)'
-                functions.append({'file': path.relative_to(APP).as_posix(),
-                                  'line': node._first_token.line, 'name': name})
 
-    def consumers(key):
-        found = []
-        for path, source in sources.items():
-            if path.name in {'config.lua', 'ui.lua', 'lang.lua', 'presets.lua', 'tips.lua'}:
-                continue
-            for line, text in enumerate(source.splitlines(), 1):
-                if re.search(r'\b'+re.escape(key)+r'\b', text):
-                    found.append(f'{path.relative_to(APP).as_posix()}:{line}')
-        return found
+    def consumers(pattern, skip):
+        return [p.relative_to(APP).as_posix() for p, source in sources.items()
+                if p.name not in skip and re.search(pattern, source)]
 
     rows = []
     for s in config['schema'].values():
         key = s['key']
-        refs = consumers(key)
+        refs = consumers(r'\b'+re.escape(key)+r'\b', DECLARATIONS)
         assert refs, f'No runtime consumer for {key}'
         choices = list(s['choices'].values()) if s['choices'] else None
-        defaults = {p: s['defaults'][p] for p in ['J', 'P', 'Q', 'C']}
         label = english['labels'][key] if english['labels'] and english['labels'][key] else s['label']
-        rows.append({'key': key, 'label': label, 'group': s['group'],
-                     'min': s['min'], 'max': s['max'], 'choices': choices,
-                     'defaults': defaults, 'consumers': refs})
+        rows.append({'key': key, 'label': label, 'group': s['group'], 'min': s['min'], 'max': s['max'],
+                     'choices': choices, 'defaults': {p: s['defaults'][p] for p in PROFILES}, 'consumers': refs})
     assert len({r['key'] for r in rows}) == len(rows)
-    global_keys = ['levelMode', 'useGripBoost', 'gripPerLevelPct', 'useBrakeAssist', 'overrideAwareness',
-                   'occLatMin', 'occLatMax', 'occMargin', 'occSpeedGain', 'seed', 'debugLog']
     globals_rows = []
-    for key in global_keys:
-        refs = consumers(key)
+    for key in sorted(config['globalDefaults'].keys()):
+        if key in INTERNAL:
+            continue
+        refs = consumers(r'\.'+re.escape(key)+r'\b', DECLARATIONS)
         assert refs, f'No runtime consumer for global {key}'
         bounds = config['globalBounds'][key]
         choices = config['globalChoices'][key]
         globals_rows.append({'key': key, 'default': config['globalDefaults'][key],
                              'bounds': list(bounds.values()) if bounds else None,
                              'choices': list(choices.values()) if choices else None, 'consumers': refs})
-    result = {'version': VERSION, 'scope': 'Static inventory + UI/storage checks and engine bounds; no physical certification.',
-              'globalParameters': globals_rows,
-              'parameters': rows, 'functions': sorted(functions, key=lambda r: (r['file'], r['line'])),
-              'sources': {p.relative_to(APP).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
-    (APP/'docs/PARAMETER_AUDIT.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-    lines = [f'# Settings and functions inventory {VERSION}', '',
-             'This inventory links every declared parameter to its consumers. A static reference shows a connection, not proof of a physical result. The `PARAMETER_BOUNDARY_ENGINE` tests and the two full walks through the interface complete this trace.', '',
-             '| Section | Parameter | Range | Default J / P / Q / C | Consumers |',
-             '|---|---|---|---|---|']
+
     def show(value):
-        return str(value).lower() if isinstance(value, bool) else str(value)
+        return str(value).lower() if isinstance(value, bool) else repr(value) if isinstance(value, str) else str(value)
+
+    lines = [f'# Settings inventory {VERSION}', '',
+             'Generated by `python tests/audit.py`. This inventory links every declared parameter to the runtime modules that read it, the interface (`src/ui.lua`) included. A static reference shows a connection, not proof of a physical result. The `PARAMETER_BOUNDARY_ENGINE` tests and the two full walks through the interface complete this trace.', '',
+             '## Profile parameters', '',
+             f'Defaults per profile: {" / ".join(PROFILES)} (Track day, Practice, Qualifying, Race, Hotlap). A value shown for a profile where the setting is hidden is the stored default, never applied.', '',
+             f'| Section | Parameter | Range | Default {" / ".join(PROFILES)} | Read by |',
+             '|---|---|---|---|---|']
     for r in rows:
         domain = ', '.join(r['choices']) if r['choices'] else (f"{r['min']} to {r['max']}" if r['min'] is not None else 'boolean')
-        defaults = ' / '.join(show(r['defaults'][p]) for p in ['J', 'P', 'Q', 'C'])
+        defaults = ' / '.join(show(r['defaults'][p]) for p in PROFILES)
         lines.append(f"| {r['group']} | `{r['key']}` — {r['label']} | {domain} | {defaults} | {', '.join(r['consumers'])} |")
-    lines += ['', '## Adjustable global options', '',
-              '| Key | Default | Range | Consumers |', '|---|---|---|---|']
+    lines += ['', '## Global options', '',
+              'Shared by every profile (sidebar **Global options** and **Overlay**, header, presets and diagnostics).', '',
+              '| Key | Default | Range | Read by |', '|---|---|---|---|']
     for r in globals_rows:
-        domain = ', '.join(r['choices']) if r['choices'] else (str(r['bounds']) if r['bounds'] else 'boolean')
+        domain = ', '.join(c or "''" for c in r['choices']) if r['choices'] else (f"{r['bounds'][0]} to {r['bounds'][1]}" if r['bounds'] else 'boolean' if isinstance(r['default'], bool) else 'text')
         lines.append(f"| `{r['key']}` | {show(r['default'])} | {domain} | {', '.join(r['consumers'])} |")
-    lines += ['', 'The section switches go through `C.on`/`C.effective` and are walked by the interface tests. `classPatterns` uses the `C.patterns` parser, `Classes.configure/update`, the eight dedicated rows and validated storage. The manual/automatic choice, the main button, panic, presets and the diagnostics tools are examined in AUDIT_V1.md.', '',
-              '## Functions examined', '',
-              f'List taken from the AST of the {len(files)} active files, including local and anonymous functions. The review, fixes and limits are in AUDIT_V1.md. This list does not mean 100% branch coverage.', '',
-              '| File | Line | Function |', '|---|---|---|']
-    for row in result['functions']:
-        lines.append(f"| {row['file']} | {row['line']} | `{row['name']}` |")
+    lines += ['', 'The section switches go through `C.on`/`C.effective` and are walked by the interface tests. `classPatterns` uses the `C.patterns` parser, `Classes.configure/update`, the eight dedicated rows and validated storage.']
     (APP/'docs/PARAMETER_AUDIT.md').write_text('\n'.join(lines)+'\n', encoding='utf-8')
-    print(f"{len(rows)} profile + {len(globals_rows)} global parameters with runtime consumers; {len(functions)} functions inventoried; {len(files)} runtime files")
+    print(f"{len(rows)} profile + {len(globals_rows)} global parameters with runtime consumers; {len(files)} runtime files")
 
 
 if __name__ == '__main__':

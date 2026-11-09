@@ -10,17 +10,20 @@ local function clear(c)
  c.passBox=false; c.deferred=false
 end
 function M.new()
- local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false}
+ local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false}
  for i=1,K.maxCars do local c={identity='',lastStop=0}; clear(c); t.cars[i]=c end
  return t
 end
 function M.reset(t,now)
  for i=1,K.maxCars do local c=t.cars[i]; clear(c); c.identity=''; c.lastStop=now end
  t.opened=false; t.openedAt=-math.huge; t.justClosed=false; t.state='off'; t.dirty=true; t.wetRace=false; t.waived=false
+ -- Relecture 1.52 : pénalité du joueur en attente du composé (engine.lua) et départ vu, oubliés avec la session.
+ t.stopAwait=false; t.wasStarted=false
  t.entrySpline=-1; t.playerNotice=''; t.playerNoticeUntil=-math.huge; t.hintFor=-2
 end
 function M.rebase(t,amount)
- for i=1,K.maxCars do local c=t.cars[i]; c.boxSince=c.boxSince-amount; c.lastStop=c.lastStop-amount; c.lapAt=c.lapAt-amount; if c.pendingUntil then c.pendingUntil=c.pendingUntil-amount end end
+ -- Relecture 1.52 : dépannage récent (towedAt) décalé aussi.
+ for i=1,K.maxCars do local c=t.cars[i]; c.boxSince=c.boxSince-amount; c.lastStop=c.lastStop-amount; c.lapAt=c.lapAt-amount; if c.pendingUntil then c.pendingUntil=c.pendingUntil-amount end; if c.towedAt then c.towedAt=c.towedAt-amount end end
  if t.playerNoticeUntil>-math.huge then t.playerNoticeUntil=t.playerNoticeUntil-amount end
  if t.openedAt>-math.huge then t.openedAt=t.openedAt-amount end
 end
@@ -79,10 +82,16 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
   if p.pitMessage and announce then if csp then announce('pitOpenCsp') else announce('pitOpen',opening*100,closing*100) end end
  end
  t.done=0; t.total=0
+ -- Relecture 1.52 : relais maximal compté depuis le départ (front montant de frame.started), jamais depuis l'attente sur
+ -- la grille.
+ local started=frame.started==true
+ if started and not t.wasStarted then for i=1,K.maxCars do t.cars[i].lastStop=now end end
+ t.wasStarted=started
  -- Appels simultanés limités : les IA déjà appelées gardent leur place, les nouvelles attendent.
  local requested=0
- -- Relecture 1.42 : la stratégie (image précédente, cmd.stratCalled) partage la même limite d'appels.
- for i=1,frame.count do local a=frame.cars[i]; if (t.cars[i].wanted and t.cars[i].identity==(a.identity or a.id) or commands[i].stratCalled or commands[i].sanCalled) and not a.pit then requested=requested+1 end end
+ -- Relecture 1.42 : la stratégie (image précédente, cmd.stratCalled) partage la même limite d'appels. Relecture 1.52 :
+ -- l'appel d'une IA lente et endommagée (engine.lua, cmd.slowCalled) aussi.
+ for i=1,frame.count do local a=frame.cars[i]; if (t.cars[i].wanted and t.cars[i].identity==(a.identity or a.id) or commands[i].stratCalled or commands[i].sanCalled or commands[i].slowCalled) and not a.pit then requested=requested+1 end end
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local cmd=commands[i]
   local identity=a.identity or a.id
@@ -117,8 +126,9 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
     c.stops=c.stops+1
     -- Arrêt sous drapeau rouge : compté seulement si les règles y permettent un changement de pneus (F1), même avant
     -- l'ouverture de la fenêtre (Beta 1.48 : la F1 n'en a pas) ; jamais sinon. Joueur et changement de composé
-    -- obligatoire : compté à la sortie de l'emplacement, seulement si le composé a changé.
-    local counts=mandatory and (underRed and p.redFlagWork or not underRed and position>=opening) and not closed and not (dq and dq[i])
+    -- obligatoire : compté à la sortie de l'emplacement, seulement si le composé a changé. Relecture 1.52 : jamais après
+    -- la fermeture de la fenêtre.
+    local counts=mandatory and position<=closing and (underRed and p.redFlagWork or not underRed and position>=opening) and not closed and not (dq and dq[i])
     c.pendingCompound=nil; c.pendingUntil=nil
     if counts and a.player and p.pitCompoundChange and a.compoundIndex~=nil then c.pendingCompound=a.compoundIndex
     elseif counts then c.windowStops=c.windowStops+1; t.dirty=true end
@@ -159,14 +169,16 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
    if mandatory then
     t.total=t.total+1
     if c.windowStops>=p.mandatoryStops then t.done=t.done+1
-    else
-     local span=(closing-opening)/p.mandatoryStops; local k=c.windowStops
-     want=position>=opening+span*k+span*K.pitSpread*U.unit(seed,i,K.pitSalt+k)
+    -- Relecture 1.52 : appel seulement fenêtre ouverte (jamais une fois fermée) ; un seul arrêt obligatoire depuis la
+    -- 1.51, placé dans la fenêtre selon la graine.
+    elseif t.state=='open' then
+     local span=closing-opening
+     want=position>=opening+span*K.pitSpread*U.unit(seed,i,K.pitSalt)
      -- Beta 1.42 (stratégie individuelle) : arrêt obligatoire aligné sur l'arrêt prévu par le stratège s'il tombe plus
-     -- tard dans la fenêtre (avancement relu de l'image précédente) ; jamais au-delà de la fin de la fenêtre.
+     -- tard dans la fenêtre (avancement relu de l'image précédente) ; jamais au-delà de la fin de la fenêtre (moins la
+     -- marge de la stratégie).
      local planAt=cmd.stratPlanAt or -1
-     -- Relecture 1.42 : au plus jusqu'à la fin de la tranche de cet arrêt (deux arrêts obligatoires ou plus : pas tassés).
-     if want and not csp and not c.wanted and planAt>position and planAt<opening+span*(k+1)-span*K.strategyWindowMargin then want=false end
+     if want and not csp and not c.wanted and planAt>position and planAt<closing-span*K.strategyWindowMargin then want=false end
     end
    end
    if p.maxStintMin>0 and not c.boxed and now-c.lastStop>=p.maxStintMin*60 and (progress<0 or progress<K.pitLastStint) then want=true end
@@ -191,22 +203,32 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
 end
 -- Carburant (Beta 1.12). Consommation et durée du tour apprises sur chaque tour complet sans passage aux stands ;
 -- gardées par modèle et par circuit pour les sessions suivantes (plein du départ) ; sinon l'estimation d'AC.
-local function learn(t,c,a,frame,now)
+-- Relecture 1.52 : clé du modèle (circuit|voiture) gardée par voiture, refaite seulement quand l'un ou l'autre change
+-- (jamais une chaîne par IA et par image).
+local function modelKey(c,frame,a)
+ if c.keyTrack~=frame.track or c.keyId~=a.id then c.keyTrack=frame.track; c.keyId=a.id; c.key=frame.track..'|'..a.id end
+ return c.key
+end
+-- Relecture 1.52 : durée du tour apprise quel que soit le réglage du carburant (fuel faux : carburant laissé à AC,
+-- consommation coupée ou inconnue) ; la consommation seulement avec fuel.
+local function learn(t,c,a,frame,now,fuel)
  if a.lap~=c.fuelLap then
-  if c.fuelLap>=0 and a.lap==c.fuelLap+1 and not c.pitLap and c.fuelAt>0 and not a.pit then
-   local used=c.fuelAt-a.fuel
-   if used>0 and used<a.maxFuel*K.fuelLapShare then c.perLap=c.perLap>0 and c.perLap+(used-c.perLap)*K.fuelAlpha or used end
+  if c.fuelLap>=0 and a.lap==c.fuelLap+1 and not c.pitLap and not a.pit then
+   if fuel and c.fuelAt>0 then
+    local used=c.fuelAt-a.fuel
+    if used>0 and used<a.maxFuel*K.fuelLapShare then c.perLap=c.perLap>0 and c.perLap+(used-c.perLap)*K.fuelAlpha or used end
+   end
    local lap=now-c.lapAt
    if lap>=K.fuelLapTimeMin then c.lapTime=c.lapTime>0 and c.lapTime+(lap-c.lapTime)*K.fuelAlpha or lap end
-   if c.perLap>0 and c.lapTime>0 then
-    local key=frame.track..'|'..a.id; local model=t.models[key]
+   if fuel and c.perLap>0 and c.lapTime>0 then
+    local key=modelKey(c,frame,a); local model=t.models[key]
     if not model then model={}; t.models[key]=model end
     model.perLap=c.perLap; model.lapTime=c.lapTime
    end
   end
   -- Relecture 1.42 : un tour neutralisé (voiture de sécurité, VSC, FCY, drapeau rouge ; t.neutral mis par strategy.lua)
   -- n'apprend rien : sa consommation ferait arriver l'arrêt trop tard ensuite.
-  c.fuelLap=a.lap; c.fuelAt=a.fuel; c.lapAt=now; c.pitLap=a.pit==true or t.neutral==true
+  c.fuelLap=a.lap; c.fuelAt=fuel and a.fuel or -1; c.lapAt=now; c.pitLap=a.pit==true or t.neutral==true
  elseif a.pit or t.neutral then c.pitLap=true end
 end
 -- Tours restants de la voiture : course aux tours, sinon temps restant au rythme appris (+1 tour : la ligne après la
@@ -217,16 +239,10 @@ local function lapsLeft(frame,a,lapTime)
  return -1
 end
 M.lapsLeft=lapsLeft
--- Ravitaillement : tours jusqu'au prochain arrêt prévu (milieu de la tranche suivante d'arrêts obligatoires, relais
--- maximal), sinon jusqu'à l'arrivée.
-local function stintLaps(t,frame,c,p,lapTime,left)
+-- Ravitaillement : tours jusqu'au prochain arrêt prévu (relais maximal), sinon jusqu'à l'arrivée. Relecture 1.52 : un
+-- seul arrêt obligatoire depuis la 1.51, aucune tranche suivante à viser.
+local function stintLaps(p,lapTime,left)
  local laps=left
- if p.mandatoryStops>0 and not t.csp and t.state~='off' and t.position>=0 and c.windowStops+1<p.mandatoryStops then
-  local span=(t.close-t.open)/p.mandatoryStops
-  local nextAt=t.open+span*(c.windowStops+1.5)
-  local total=frame.sessionLaps>0 and not frame.timedRace and frame.sessionLaps or lapTime>0 and frame.sessionMinutes*60/lapTime or 0
-  if total>0 then laps=math.min(laps,math.max(1,math.ceil((nextAt-t.position)*total))) end
- end
  if p.maxStintMin>0 and lapTime>0 then laps=math.min(laps,math.max(1,math.floor(p.maxStintMin*60/lapTime))) end
  return laps
 end
@@ -235,13 +251,19 @@ end
 -- Sous drapeau rouge, rien n'est ajouté sauf pour finir (ravitaillement interdit en F1 et en WEC).
 function M.fuel(t,frame,commands,p,profile,now,red)
  local mode=p.pitFuel
- local on=profile=='C' and mode~='ac' and frame.fuelRate>0 and not frame.online and not frame.replay
+ local learning=profile=='C' and not frame.online and not frame.replay
+ local on=learning and mode~='ac' and frame.fuelRate>0
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local cmd=commands[i]
   cmd.fuelTarget=-1; cmd.fuelLaps=0; cmd.fuelSet=-1
-  if on and a.valid and a.control and not a.player and not a.safetyCar and not a.finished and (a.fuel or -1)>=0 and (a.maxFuel or -1)>0 then
-   learn(t,c,a,frame,now)
-   local model=t.models[frame.track..'|'..a.id]
+  local eligible=learning and a.valid and a.control and not a.player and not a.safetyCar and not a.finished
+  local fuel=eligible and (a.fuel or -1)>=0 and (a.maxFuel or -1)>0
+  -- Relecture 1.52 : durée du tour apprise pour toute IA en course (tours restants d'une course chronométrée, ici et
+  -- dans strategy.lua), même carburant laissé à AC ou consommation coupée.
+  if eligible and not (on and fuel) then learn(t,c,a,frame,now,false) end
+  if on and fuel then
+   learn(t,c,a,frame,now,true)
+   local model=t.models[modelKey(c,frame,a)]
    local perLap=c.perLap>0 and c.perLap or model and model.perLap or a.fuelPerLap or 0
    local lapTime=c.lapTime>0 and c.lapTime or model and model.lapTime or 0
    local left=lapsLeft(frame,a,lapTime)
@@ -254,7 +276,7 @@ function M.fuel(t,frame,commands,p,profile,now,red)
      end
     elseif cmd.rulePit or cmd.weatherManaged and cmd.weatherPit then
      local laps=left
-     if mode=='refuel' and not red then laps=stintLaps(t,frame,c,p,lapTime,left) end
+     if mode=='refuel' and not red then laps=stintLaps(p,lapTime,left) end
      -- Beta 1.42 : arrêt du stratège, carburant pour son relais suivant (marge réglée comprise), au plus jusqu'à l'arrivée.
      if mode=='refuel' and not red and (cmd.stratLaps or 0)>0 then laps=math.min(left,cmd.stratLaps+math.ceil(p.strategyFuelMarginLaps or 0)) end
      local target=U.clamp(laps*perLap*K.fuelMargin+reserve,a.fuel,a.maxFuel)
@@ -275,6 +297,7 @@ function M.forget(t) t.restored={}; t.restoredSession=-1 end
 function M.restore(t,text,session)
  if type(text)~='string' or #text>K.maxZoneBytes or tonumber(text:match('^(%d+)'))~=session then return end
  t.restoredSession=session
- for identity,stops in text:gmatch('\n([%w_%-]+),(%d+)') do t.restored[identity]=math.min(10,tonumber(stops)) end
+ -- Relecture 1.52 : un seul arrêt obligatoire depuis la 1.51.
+ for identity,stops in text:gmatch('\n([%w_%-]+),(%d+)') do t.restored[identity]=math.min(1,tonumber(stops)) end
 end
 return M

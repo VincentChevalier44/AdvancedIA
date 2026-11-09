@@ -26,7 +26,8 @@ function M.reset(t)
 end
 function M.rebase(t,amount)
  if t.lastAt>-math.huge then t.lastAt=t.lastAt-amount end
- if t.regimeAt>-math.huge then t.regimeAt=t.regimeAt-amount end; t.giveBackUntil=t.giveBackUntil-amount
+ -- Relecture 1.52 : giveBackUntil n'est pas décalé, il est recalculé à chaque image (M.update).
+ if t.regimeAt>-math.huge then t.regimeAt=t.regimeAt-amount end
  for j,v in pairs(t.waiting) do t.waiting[j]=v-amount end
  for _,pend in pairs(t.ai.waiting) do for j,v in pairs(pend) do pend[j]=v-amount end end
  if t.wholeAt>-math.huge then t.wholeAt=t.wholeAt-amount end

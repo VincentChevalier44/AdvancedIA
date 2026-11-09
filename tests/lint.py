@@ -1,5 +1,6 @@
 """Analyse lexicale des portées Lua via luaparser (pas une recherche par regex)."""
 from pathlib import Path
+import json
 import sys
 sys.path.insert(0,str(Path(__file__).parent/'_vendor'))
 from luaparser import ast
@@ -103,7 +104,7 @@ class Checker:
 
 # Champs lus sur les structures FFI de CSP : un membre non déclaré lève une erreur dans le jeu (pas dans l'hôte de test).
 def sdk_fields():
-    import json, re
+    import re
     declared=json.loads((APP/'tests/sdk-fields.json').read_text(encoding='utf-8'))
     source=(APP/'src/snapshot.lua').read_text(encoding='utf-8')
     errors=[]
@@ -135,7 +136,9 @@ def main():
     errors=[error for file in files for error in Checker(file).run()]+[error for file in files for error in duplicates(file)]+sdk_fields()
     for error in errors: print(error)
     print(f'{len(files)} Lua files, {len(errors)} lint errors')
-    (APP/'tests/lint-results.txt').write_text('\n'.join(errors) if errors else f'{len(files)} fichiers : aucune globale interdite, aucune variable locale inutilisée.\n',encoding='utf-8')
+    # Résultat structuré, lu par report.py.
+    result={'ok':not errors,'files':len(files),'errors':errors}
+    (APP/'tests/lint-results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     raise SystemExit(bool(errors))
 
 if __name__=='__main__': main()

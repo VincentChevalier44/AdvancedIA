@@ -1,10 +1,14 @@
-"""Mesure reproductible du noyau (9, 30 et 60 IA, 30 000 images après chauffe) ; la version précédente se mesure avec
-son propre banc, sur la même machine, et son résultat est copié en tests/performance-previous-results.json."""
+"""Mesure reproductible du noyau (9, 30 et 60 IA, 20 000 images après chauffe par défaut ; la publication mesure
+RELEASE_FRAMES images avec --frames). La version précédente a été mesurée par son propre banc, sur la même machine :
+report.py relit sa mesure dans docs/RELEASE_STATUS.json."""
 import argparse
 import hashlib
 import json
 import time
 from test_pdr import runtime, APP, VERSION
+
+# Images mesurées pour la publication (python tests/performance.py --frames 30000), exigées par report.py.
+RELEASE_FRAMES = 30000
 
 def plain(value):
     if hasattr(value, 'items'):
