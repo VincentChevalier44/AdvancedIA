@@ -28,6 +28,12 @@ The real log `Documents/Assetto Corsa/logs/custom_shaders_patch.log`, consulted 
 
 ## In-game tests still open
 
+### Beta 1.50 checks in game
+- Race start (25 cars): no AI lifting or braking on the straight for no reason; minute summary « ligne droite : pied tenu N fois (dont voiture de derriere plus pres M) »; no rear-end of an AI by a car at full throttle behind it. Every remaining « radar avant: … » line of the start must give a reason in brackets; a lift on the main straight with « (anticipation du freinage) » far from the first chicane would mean the pack's first braking point is still wrong.
+- Safety Car: at the session start « voiture de securite: retenue a son emplacement (attente d AC) » (no more « garee sans pilote » for the Safety Car itself); at a deployment « liberee, sort par la voie des stands », « sortie de son stand apres X s », « sortie en piste devant <name> », « en tete de la file », « rentre ce tour », « rentree a son stand »; it is seen driving out of the pit lane. Any « ne quitte pas son emplacement » / « restee dans la voie des stands, posee en piste hors de la vue du joueur » means AC did not release it: report it.
+- Red-flag relaunch: the Safety Car leaves first, the overlay says « Attendez » until then, the AI follow in order.
+- SpotterEnginer: announcements `scOut`, `scLeading`, `restartPlace`, `restartRetake` received once each; the « change compound » reminder (`pitCompound`) is announced once per approach, even when braking before the pit entry.
+
 To check first (Beta 1.49), new name AdvancedIA:
 
 - [ ] `custom_shaders_patch.log`: `App: AdvancedIA loaded and ready to run`; no second app loaded from `apps/lua/ACAdvancedIA`.

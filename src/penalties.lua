@@ -10,7 +10,7 @@ local M={}
 function M.new()
  return {lastAt=-math.huge,requestId=0,seconds=0,reason='',count=0,ahead={},regime=false,passedUnder=false,passMade=false,
   redBefore=false,redPending=false,stopPending=false,jumpPending=false,waiting={},regimeAt=-math.huge,whole=false,wholeAt=-math.huge,giveBack=0,giveBackUntil=0,deltaKind='',deltaValue=0,passed=0,kind='slow',disqualified=false,
-  ai={count={},slowUntil={},slowKmh={},slowFrom={},slowAt={},dq={},ahead={},regime={},passed={},lastAt={},waiting={},giveBack={},giveFrom={},giveAt={}},
+  ai={count={},slowUntil={},slowKmh={},slowFrom={},slowAt={},dq={},ahead={},regime={},passed={},lastAt={},waiting={},giveBack={},giveFrom={},giveAt={},owe={},oweUntil={},notes={}},
   retake={},rel={index=0,long=0,lat=0,gap=0,sa=0,ttc=math.huge,same=false,alongside=false}}
 end
 local function clear(map) for k in pairs(map) do map[k]=nil end end
@@ -34,6 +34,7 @@ function M.rebase(t,amount)
  for i,v in pairs(t.ai.slowUntil) do t.ai.slowUntil[i]=v-amount end
  for i,v in pairs(t.ai.lastAt) do t.ai.lastAt[i]=v-amount end
  for i,v in pairs(t.ai.slowAt) do t.ai.slowAt[i]=v-amount end
+ for i,v in pairs(t.ai.oweUntil) do t.ai.oweUntil[i]=v-amount end
 end
 -- Voiture qu'il est permis de doubler sous drapeau jaune : accidentée (ou tout juste repartie, le temps du maintien
 -- de la zone), arrêtée ou très lente, aux stands, hors piste.
@@ -44,9 +45,10 @@ local function serving(t,j,now,player)
  return now<(t.ai.slowUntil[j] or 0) or j==player and (t.disqualified or t.kind=='slow' and now<t.lastAt+t.seconds)
 end
 -- Voiture j qu'il est permis de doubler pour la voiture i sous drapeau : elle doit lui rendre la place, purge une
--- sanction, ou i reprend la place qu'elle lui a prise (file d'attente du pilotage sous drapeau).
-function M.mayPass(t,i,j,now,player)
- return (t.ai.waiting[j] and t.ai.waiting[j][i] or 0)>now or j==player and (t.waiting[i] or 0)>now or serving(t,j,now,player) or entitled(t,i,j)
+-- sanction, ou i reprend la place qu'elle lui a prise (file d'attente du pilotage sous drapeau). Beta 1.50 : sous
+-- neutralisation (neutral), une voiture qui purge une sanction reste dans la file : jamais doublée.
+function M.mayPass(t,i,j,now,player,neutral)
+ return (t.ai.waiting[j] and t.ai.waiting[j][i] or 0)>now or j==player and (t.waiting[i] or 0)>now or not neutral and serving(t,j,now,player) or entitled(t,i,j)
 end
 -- Escalade : coupure des gaz jusqu'au nombre d'infractions toléré, puis disqualification (drapeau noir).
 local function decide(t,reason,seconds,now,p)
@@ -143,10 +145,20 @@ end
 -- (sanctions des IA).
 function M.giveBackLimit(fromKmh,at,now,otherKmh,decel) return max(max(K.trafficMinSpeed,otherKmh-K.giveBackDrop),fromKmh-decel*3.6*(now-at)) end
 -- Sanction d'une IA : pied levé quelques secondes ; au-delà du nombre toléré, disqualification.
-local function sanction(t,s,i,j,a,p,now,events)
+-- Beta 1.50 (neutralisation du 5 novembre 14:57 : IA passées devant le joueur en tête) : sous neutralisation ou au tour de
+-- relance (owe), la place est aussi RENDUE : levée de pied sous l'allure de la voiture doublée jusqu'à ce qu'elle repasse,
+-- au plus K.aiGiveBackMax s.
+-- Place due (une à la fois : la première voiture doublée).
+local function owe(s,i,j,now)
+ if s.owe[i] or s.dq[i] then return end
+ s.owe[i]=j; s.oweUntil[i]=now+K.aiGiveBackMax; s.notes[#s.notes+1]={kind='owe',i=i,j=j}
+end
+local function sanction(t,s,i,j,a,p,now,events,neutral)
  s.lastAt[i]=now; s.count[i]=(s.count[i] or 0)+1; s.passed[i]=j
  if s.count[i]>p.penaltyDisqualify then s.dq[i]=true
- else s.slowUntil[i]=now+p.penaltySeconds; s.slowKmh[i]=math.max(K.trafficMinSpeed,a.kmh*K.aiPenaltyFactor); s.slowFrom[i]=a.kmh; s.slowAt[i]=now end
+ else s.slowUntil[i]=now+p.penaltySeconds; s.slowKmh[i]=math.max(K.trafficMinSpeed,a.kmh*K.aiPenaltyFactor); s.slowFrom[i]=a.kmh; s.slowAt[i]=now
+  if neutral then owe(s,i,j,now) end
+ end
  events=events or {}; events[#events+1]=i; t.dirty=true
  return events
 end
@@ -172,7 +184,25 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
    -- même hors piste. Un dépassement en attente survit à la fin du régime (place rendue ou sanction à l'échéance).
    -- Hors piste, le drapeau jaune de l'IA est suspendu par le pilotage : le régime est gardé (couper la piste pour
    -- doubler reste un dépassement sous drapeau).
-   local regime=states[i].yellow or whole or inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights' or a.offtrack and s.regime[i]==true
+   local relaunch=inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights'
+   local regime=states[i].yellow or whole or relaunch or a.offtrack and s.regime[i]==true
+   -- Beta 1.50 : neutralisation (VSC, FCY, voiture de sécurité) ou tour de relance : la place prise est à rendre.
+   local neutral=inc.neutral and not inc.red or relaunch
+   -- Place due après un dépassement interdit sous neutralisation : rendue dès que la voiture doublée est de nouveau
+   -- devant ; abandonnée si elle sort de la course, rentre aux stands, est accidentée ou disqualifiée, ou au bout du délai
+   -- (suivie même après la fin de la neutralisation).
+   local owed=s.owe[i]
+   if owed then
+    local b=frame.cars[owed]
+    local why=(not b.valid or b.finished) and 'hors course' or b.pit and 'aux stands' or (inc.cars[owed] and inc.cars[owed].incident) and 'accidentee'
+     or s.dq[owed] and 'disqualifiee' or now>=(s.oweUntil[i] or 0) and 'delai depasse'
+    local back=P.relative(a,b,frame.length,t.rel)
+    if not why and back.same and back.long>(a.length+b.length)*0.5 then
+     s.notes[#s.notes+1]={kind='given',i=i,j=owed}; s.owe[i]=nil; s.oweUntil[i]=nil
+    elseif why then
+     s.notes[#s.notes+1]={kind='dropped',i=i,j=owed,why=why}; s.owe[i]=nil; s.oweUntil[i]=nil
+    else s.giveBack[i]=owed end
+   end
    local was=s.regime[i]; s.regime[i]=regime
    if not regime and t.retake[i] then clear(t.retake[i]) end
    -- Hors régime, déjà sortie du précédent et sans dépassement en attente : rien à suivre (la liste « devant » est
@@ -182,8 +212,10 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
     if regime and not was then clear(ahead) end
     -- Voitures suivies devenues dépassables (hors piste, aux stands, accidentées, sanctionnées) : oubliées, même hors
     -- de la perception (une voiture hors piste n'y figure pas) ; doublées pendant ce temps, ce n'est pas une infraction.
-    for j in pairs(ahead) do if passable(frame.cars[j],inc.cars[j],p,now) or serving(t,j,now,frame.player) then ahead[j]=nil end end
-    for j in pairs(waiting) do if passable(frame.cars[j],inc.cars[j],p,now) or serving(t,j,now,frame.player) then waiting[j]=nil end end
+    -- Beta 1.50 : sous neutralisation, une voiture qui purge une sanction n'est pas dépassable (file).
+    local spare=not (whole and not inc.red)
+    for j in pairs(ahead) do if passable(frame.cars[j],inc.cars[j],p,now) or spare and serving(t,j,now,frame.player) then ahead[j]=nil end end
+    for j in pairs(waiting) do if passable(frame.cars[j],inc.cars[j],p,now) or spare and serving(t,j,now,frame.player) then waiting[j]=nil end end
     local row=rows[i]
     for k=1,row.count do
      local r=row.neighbors[k]; local j=r.index; local b=frame.cars[j]
@@ -204,7 +236,7 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
         if transition then waiting[j]=deadline(t.wholeAt,now)
         -- Une infraction au plus par délai, comme pour le joueur : plusieurs voitures doublées d'un coup, une sanction ;
         -- la voiture doublée peut reprendre sa place dans tous les cas.
-        else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events) end end
+        else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral) elseif neutral then owe(s,i,j,now) end end
        end
        ahead[j]=false
       end
@@ -214,12 +246,13 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
     for j,due in pairs(waiting) do
      if now>=due then
       waiting[j]=nil; grant(t,j,i)
-      if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events) end
+      if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral) elseif neutral then owe(s,i,j,now) end
      elseif due<earliest then earliest=due; s.giveBack[i]=j end
     end
    end
   -- Voie des stands : rien n'est suivi (places gagnées par un arrêt).
   elseif a.pit then clear(ahead); clear(waiting)
+   if s.owe[i] then s.notes[#s.notes+1]={kind='dropped',i=i,j=s.owe[i],why='aux stands'}; s.owe[i]=nil; s.oweUntil[i]=nil end
   end
  end
  return events

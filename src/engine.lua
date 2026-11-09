@@ -23,13 +23,14 @@ local Grid=require('src/grid')
 local Merge=require('src/merge')
 -- Beta 1.47 : premier tour attentif (départ et relances, course).
 local FirstLap=require('src/firstlap')
+local Quali=require('src/quali')
 local K=C.K
 local M={}
 -- Journal du départ (Beta 1.24) : maintien de ligne (IA mesurées, décalées de la trajectoire) et pneus de chaque IA,
 -- pour vérifier en jeu le premier virage et les gommes montées.
 local function startReport(e,frame,now)
  local n,measured,offset,held,sides=0,0,0,0,0; local tyres,order={},{}
- e.startRadar=0; e.startLift=0; e.startSpeedLogged=false
+ e.startRadar=0; e.startLift=0; e.startHold=0; e.startSpeedLogged=false
  for i=1,frame.count do
   local a=frame.cars[i]
   if a.valid and a.control and not a.player and not a.safetyCar then
@@ -126,6 +127,10 @@ function M.new(g,profiles)
  -- Beta 1.41 : sortie des stands (jonction, retenue au bout de la voie).
  e.merge=Merge.new()
  e.fl=FirstLap.new()
+ -- Beta 1.51 : session (circuit#indice) dont le préréglage intégré est appliqué ; tampon des réglages gardés.
+ e.presetSession=''; e.presetSessionDirty=false; e.presetKept={}
+ -- Beta 1.51 : tours lancés en essais et qualifications.
+ e.quali=Quali.new()
  -- Beta 1.42 : stratégie et sanctions des IA ; avancement de la course (tours restants, -1 inconnu).
  e.strategy=Strategy.new(); e.sanctions=Sanctions.new(); e.race={progress=-1,lapsLeft=-1,known=false}
  for i=1,K.maxCars do
@@ -152,7 +157,7 @@ function M.rebase(e,amount)
  e.classes.nextAt=e.classes.nextAt-amount; e.classes.bopAt=e.classes.bopAt-amount
  e.traffic.nextAt=e.traffic.nextAt-amount
  e.weather.pendingAt=e.weather.pendingAt-amount
- Incidents.rebase(e.incidents,amount); Pits.rebase(e.pits,amount); Pitplan.rebase(e.pitplan,amount); Strategy.rebase(e.strategy,amount); Sanctions.rebase(e.sanctions,amount)
+ Incidents.rebase(e.incidents,amount); Pits.rebase(e.pits,amount); Pitplan.rebase(e.pitplan,amount); Strategy.rebase(e.strategy,amount); Sanctions.rebase(e.sanctions,amount); Quali.rebase(e.quali,amount)
  for i=1,K.maxCars do
   local s=e.states[i]
   for _,key in ipairs(C.timerFields) do if U.finite(s[key]) then s[key]=s[key]-amount end end
@@ -409,7 +414,7 @@ function M.step(e,frame,dt)
   M.reset(e,now,true); e.wasStarted=frame.started; e.startedAt=frame.started and now-frame.time or now; e.launchAt=nil; e.jumpDue=false
   e.classes.nextAt=0; e.flash=Flash.new()
   e.weather=Weather.new(); Incidents.reset(e.incidents); Pits.reset(e.pits,now); Pitplan.reset(e.pitplan); Penalties.reset(e.penalties); Delta.reset(e.delta); Mistakes.reset(e.mistakes); Lights.reset(e.lights); Grid.reset(e.grid); e.slowLogged=0; e.panel.warnPending=false; e.panel.warnUntil=-math.huge; e.drsRule={restart=false,started=false,seen=false,travel={},last={},leader=0,reason=''}
-  e.configuredRevision=-1; Merge.reset(e.merge); Strategy.reset(e.strategy,now); Sanctions.reset(e.sanctions,now)
+  e.configuredRevision=-1; Merge.reset(e.merge); Strategy.reset(e.strategy,now); Sanctions.reset(e.sanctions,now); Quali.reset(e.quali)
   FirstLap.reset(e.fl); e.fl.restartSerial=e.incidents.restartSerial or 0
   for i=1,K.maxCars do local s=e.states[i]; s.flOn=false; s.flW=0; s.flCare=0; s.flApproach=false end
   for i=1,K.maxCars do
@@ -433,8 +438,25 @@ function M.step(e,frame,dt)
   e.loggedSession=e.session; e.loggedProfile=e.profile
  end
  local selected=e.profiles[e.profile]
+ -- Beta 1.51 (demande du pilote) : profil automatique, préréglage intégré de la session appliqué et allumé dès qu'une
+ -- nouvelle session est détectée (circuit et indice de session), une seule fois par session : un rechargement de l'app
+ -- dans le même lancement (repère e.presetSession, gardé par ac.store) ne refait rien, les retouches du pilote restent.
+ -- Règles de championnat du profil gardées. Hotlap et préréglage personnel : rien (C.sessionPreset).
+ -- Profil compris dans la clé : une détection qui arrive après la première image (journée circuit d'abord, puis
+ -- qualifications) donne encore son préréglage au bon profil.
+ local sessionKey=tostring(frame.track)..'#'..tostring(frame.session)..'#'..tostring(e.profile)
+ if e.g.autoProfile and e.g.presetBySession and selected and not frame.replay and not frame.online then
+  if e.presetSession~=sessionKey then
+   e.presetSession=sessionKey; e.presetSessionDirty=true
+   local name=C.sessionPreset(e.g,e.profile)
+   if name then
+    C.applyBuiltin(e.g,e.profiles,name,e.profile,true,e.presetKept)
+    e.settingsChanged=true; M.changed(e)
+    U.log(e.log,now,'INFO',string.format('preset_session: %s (profil %s%s)',name,e.profile,tostring(frame.track):lower():find('nordschleife',1,true) and ', circuit Nordschleife' or ''),-1)
+   else U.log(e.log,now,'INFO','preset_session: aucun (profil '..e.profile..(C.mark(e.g,e.profile)==C.personalMark and ', preset personnel garde)' or ')'),-1) end
+  end
  -- Profil Hotlap : aucun préréglage recommandé (sessions sans IA), il reste neutre.
- if e.g.presetsUsed and selected and not selected.configured and not C.anySection(selected) and C.recommended[e.profile] then
+ elseif e.g.presetsUsed and selected and not selected.configured and not C.anySection(selected) and C.recommended[e.profile] then
   -- Profil jamais réglé : son préréglage intégré recommandé, une seule fois. Un profil déjà réglé n'est jamais modifié.
   local name=C.recommended[e.profile]
   -- Beta 1.29 : règles de championnat du week-end gardées (copiées par le préréglage d'une autre session).
@@ -631,6 +653,7 @@ function M.step(e,frame,dt)
  for i=1,frame.count do local cmd=e.commands[i]; cmd.levelScale=1; cmd.throttleLimit=1 end
  raceInfo(e,frame)
  FirstLap.update(e,frame,now,dt)
+ Quali.update(e.quali,e,frame,now,dt)
  local first=1
  while first<=frame.count do
   local last=e.batchCars and frame.count or first
@@ -796,6 +819,17 @@ function M.step(e,frame,dt)
    end
   end
  end
+ -- Beta 1.50 : place rendue après un dépassement interdit sous neutralisation ou au tour de relance.
+ local notes=e.penalties.ai.notes
+ if notes and #notes>0 then
+  for k=1,#notes do
+   local n=notes[k]; local a,b=frame.cars[n.i],frame.cars[n.j]
+   if n.kind=='owe' then U.log(e.log,now,'WARN',string.format('sanction IA: %s rend la place a %s (au plus %.0f s)',a.name,b.name,K.aiGiveBackMax),n.i)
+   elseif n.kind=='given' then U.log(e.log,now,'INFO',string.format('place rendue IA: %s a %s (neutralisation)',a.name,b.name),n.i)
+   else U.log(e.log,now,'INFO',string.format('place a rendre IA: %s a %s, abandonnee (%s)',a.name,b.name,n.why or ''),n.i) end
+  end
+  for k=#notes,1,-1 do notes[k]=nil end
+ end
  -- Bip du DRS : jamais sous drapeau (le DRS y est interdit) ; il retentit à la fin du drapeau si la zone est encore active.
  local flagged=e.incidents.red or e.incidents.neutral or e.incidents.playerZone or frame.flag==K.flagCaution and not frame.flagOwned
  drsBeep(e,frame,flagged or (e.incidents.drsReason or '')~='',e.run.drsAssist,e.run.drsBeepVolume)
@@ -833,7 +867,7 @@ function M.step(e,frame,dt)
  if e.weather.wet and e.profile=='C' and frame.started then e.pits.wetRace=true end
  Pits.update(e.pits,frame,e.commands,e.run,e.profile,now,e.runtimeG.seed,e.announce,red,e.penalties.ai.dq,e.incidents.pitsClosed)
  -- Beta 1.41 : sortie des stands, IA retenue au bout de la voie tant qu'une voiture en piste arrive à la jonction.
- Merge.update(e.merge,frame,e.commands,now,dt,e.log,red,e.profile,e.stopCap~=false)
+ Merge.update(e.merge,frame,e.commands,now,dt,e.log,red,e.profile,e.stopCap~=false,e.quali.active and e.quali.push or nil)
  -- Beta 1.42 : stratégie individuelle des IA (arrêts, carburant, pneus, pannes, tour de sortie).
  Strategy.update(e.strategy,e,frame,now,dt)
  -- Arrêts obligatoires du joueur : rappel sur le panneau à l'ouverture et vers la fin de la fenêtre ; arrêt manqué
@@ -853,14 +887,25 @@ function M.step(e,frame,dt)
  e.incidents.playerPitCompound=f1
  if e.pitSpinners then Pitplan.update(e.pitplan,frame,now,owed,f1,frame.started and e.incidents.standing~='grid' and e.incidents.standing~='lights',e.pitSpinners,e.note) end
  local hint=false
+ -- Beta 1.50 (course du 5 novembre, 11:22 : « pitCompound » annoncé deux fois à 10 s d'écart) : rappel verrouillé dès
+ -- qu'il apparaît, jusqu'au point d'entrée des stands (un freinage dans la fenêtre faisait baisser le temps restant
+ -- sous le seuil, puis remonter) ; jamais après le point (distance négative) ; point passé sans entrer : fini pour ce
+ -- tour ; dans la voie des stands, il continue ; à la sortie, levé.
+ local p0=e.pits
  if owed and e.pits.state=='open' and player.valid then
-  if player.pit or player.inPitBox then hint=true
+  if player.pit or player.inPitBox then hint=true; p0.hintLatch=true
   elseif player.splineValid then
    local entry=e.pits.entrySpline
-   if entry>=0 and frame.length>0 then hint=U.spline(entry-player.spline)*frame.length/math.max(player.speed or 0,K.pitHintMinSpeed)<=K.pitHintTime
-   else hint=player.spline>=K.pitHintSector end
+   if entry>=0 and frame.length>0 then
+    local d=U.spline(entry-player.spline)*frame.length
+    -- Verrou levé aussi si la voiture s'éloigne de l'entrée de plus de K.pitHintLatchSlack m (déplacée, demi-tour).
+    if p0.hintLatch and (d<0 or d>(p0.hintLatchD or d)+K.pitHintLatchSlack) then p0.hintLatch=false end
+    if not p0.hintLatch and d>=0 and d/math.max(player.speed or 0,K.pitHintMinSpeed)<=K.pitHintTime then p0.hintLatch=true; p0.hintLatchD=d end
+    if p0.hintLatch then p0.hintLatchD=math.min(p0.hintLatchD or d,d) end
+    hint=p0.hintLatch==true
+   else p0.hintLatch=false; hint=player.spline>=K.pitHintSector end
   end
- end
+ else p0.hintLatch=false end
  if owed and player.compoundIndex~=e.pits.hintFor then
   local p0=e.pits; p0.hintFor=player.compoundIndex; p0.hintTyre=player.compoundIndex~=nil and player.tyreNames and player.tyreNames[player.compoundIndex] or ''
   local others={}
@@ -871,6 +916,8 @@ function M.step(e,frame,dt)
  -- stratégie au départ ; stratégie au même composé : celle-ci à la place du rappel.
  local planNotice=owed and e.pitplan.state=='same' and now<e.pitplan.noticeUntil
  local fitted=player and player.compoundIndex or -1
+ -- Beta 1.50 : stratégie corrigée (même composé, puis un autre) : annoncée une fois au pont (SpotterEnginer).
+ if e.pitplan.fixed then e.pitplan.fixed=false; if owed then e.announce('pitPlanOk',fitted,e.pitplan.plannedIndex or -1) end end
  if hint and not e.incidents.playerPitHint then
   if owed and e.pitplan.state=='same' then e.announce('pitPlanSame',fitted,e.pitplan.plannedIndex or fitted) else e.announce('pitCompound',fitted,-1) end
  elseif planNotice and not e.incidents.playerPlanNotice then e.announce('pitPlanSame',fitted,e.pitplan.plannedIndex or fitted) end

@@ -11,7 +11,7 @@ local M={}
 function M.new() return {checkAt=-math.huge,dumped=false,unreadable=false,lastPit=false,key='',state='',planned='',fitted='',value=0,noticeUntil=-math.huge,assumed=false} end
 function M.reset(t)
  t.checkAt=-math.huge; t.dumped=false; t.unreadable=false; t.lastPit=false; t.key=''; t.state=''; t.planned=''; t.fitted=''; t.value=0
- t.noticeUntil=-math.huge; t.assumed=false
+ t.noticeUntil=-math.huge; t.assumed=false; t.fixed=false
 end
 function M.rebase(t,amount)
  if t.checkAt>-math.huge then t.checkAt=t.checkAt-amount end
@@ -96,5 +96,7 @@ function M.update(t,frame,now,due,f1,started,read,note)
  t.state=same and 'same' or 'ok'
  if note then note('INFO',string.format('strategie des stands: compose prevu %s (valeur %s, correspondance %s), monte %s%s',t.planned,tostring(spinner.value),how,t.fitted,same and ' : meme compose, avertissement' or ' : arret valable'),-1) end
  if same and before~='same' then t.noticeUntil=now+K.pitPlanNotice end
+ -- Beta 1.50 : stratégie corrigée pendant la course (même composé, puis un autre) : avertissement levé, annoncé une fois.
+ if before=='same' and t.state=='ok' then t.fixed=true; t.noticeUntil=-math.huge end
 end
 return M

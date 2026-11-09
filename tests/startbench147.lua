@@ -84,7 +84,7 @@ return function(trackName,setName,opts)
  f.started=true
  local dt=1/60; local t=0
  local R={radarStraight=0,radarBefore=0,liftStraight=0,liftBefore=0,maxBrakeStraight=0,contacts=0,contactsApp=0,contactsFirst=0,
-  side=0,sideApp=0,avoid=0,avoidPack=0,yellowCars=0,yellowFar=0,yellowFarTime=0,deficit=0,deficitN=0,lap1Mean=0,lap1Last=0,
+  side=0,sideApp=0,avoid=0,avoidPack=0,avoidWave=0,yellowCars=0,yellowFar=0,yellowFarTime=0,deficit=0,deficitN=0,lap1Mean=0,lap1Last=0,
   defend=0,brakeOnsets=0,held=0,appSlow=0}
  local pair={}; local spair={}; local lastBrake,lastLift,lastAvoid,yellowSeen={}, {}, {}, {}
  local firstBrakeAt={}
@@ -315,6 +315,9 @@ return function(trackName,setName,opts)
      R.avoid=R.avoid+1
      local tg=s.target and cars[s.target]
      if not tg or tg.v>0.3*packV then R.avoidPack=R.avoidPack+1 end
+     -- Beta 1.50 : évitement d'une voiture qui roule au-dessus du seuil de la règle du premier tour (vitesse d'obstacle ou
+     -- K.firstLapAvoidPct de l'allure de l'IA qui évite) : une vague de freinage, jamais une voiture vraiment lente.
+     if not tg or tg.v*3.6>max(e.p.obstacleSpeedKmh,K.firstLapAvoidPct*c.v*3.6)+5 then R.avoidWave=R.avoidWave+1 end
     end
     lastAvoid[k]=av
     if s.state=='DEFEND' then R.defend=R.defend+1 end

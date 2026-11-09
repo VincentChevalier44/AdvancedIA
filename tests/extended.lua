@@ -1092,6 +1092,8 @@ tests.SAFETY_CAR_WRITES=function()
  local host=require('tests/host').create(true); local e,f=F.scene('C'); local a=A.new(); assert(A.access(a))
  for _,cmd in ipairs(e.commands) do cmd.active=false end
  local cmd=e.commands[3]; cmd.scPark=true; cmd.scSpeed=C.K.unlimitedSpeed
+ -- Beta 1.50 : garée sans pilote seulement en repli (sorties de son emplacement malgré l'attente d'AC, SC_HOLD_150).
+ a.cars[3].scEscapes=C.K.scEscapeMax
  -- Beta 1.48 : jamais garée hors de son emplacement (retour au stand manqué : en travers de la piste).
  A.apply(a,f,e.commands,e.g,1); assert(host.teleports==1 and host.parked[2]==nil,'brought back to its pit, not parked on track')
  f.cars[3].pit=true; f.cars[3].inPitBox=true; A.apply(a,f,e.commands,e.g,1.2); assert(host.teleports==1 and host.parked[2]==true,'parked in its box')
@@ -3709,7 +3711,13 @@ tests.QUEUE_NOT_BEHIND_SERVING=function()
   return e.commands[2].yellowLimit
  end
  local queued,free=run(false),run(true)
- assert(free>queued+5,'no queue behind a car serving a sanction ('..queued..' / '..free..')')
+ -- Beta 1.50 (voiture de sécurité du 5 novembre) : sous neutralisation, file derrière la voiture la plus proche devant,
+ -- sanction en cours comprise ; seule une voiture accidentée se double (Penalties.mayPass, neutral). Test aligné en 1.51.
+ assert(math.abs(free-queued)<1,'under a neutralisation, queued even behind a car serving a sanction ('..queued..' / '..free..')')
+ -- Hors neutralisation (drapeau jaune local), la voiture qui purge une sanction reste dépassable.
+ local e,f=F.scene('C',3); local s=e.penalties.ai; s.slowUntil[3]=e.time+100
+ local Pen=require('src/penalties')
+ assert(Pen.mayPass(e.penalties,2,3,e.time,1,false) and not Pen.mayPass(e.penalties,2,3,e.time,1,true),'serving car passable outside a neutralisation only')
 end
 -- Beta 1.10 : profil Hotlap : choisi en hotlap, time attack, drift et drag ; neutre (aucun préréglage recommandé) ;
 -- pénalités masquées et règles de championnat sans objet, comme en journée circuit.
@@ -4175,7 +4183,9 @@ tests.WEEKEND_SWITCHES=function()
  for _,x in ipairs(C.ruleProfiles) do assert(profiles[x].mandatoryStops==0 and profiles[x].configured,x..': no mandatory stop') end
  assert(C.ruleCategory('C',profiles.C)==nil and profiles.J.mandatoryStops==0,'custom rules, track day untouched')
  C.weekendSwitch(profiles,'mandatoryStops',true); assert(profiles.C.mandatoryStops==1 and C.ruleCategory('C',profiles.C)=='F1','back to F1')
- profiles.C.mandatoryStops=2; C.weekendSwitch(profiles,'mandatoryStops',true); assert(profiles.C.mandatoryStops==2 and profiles.P.mandatoryStops==1,'number of stops kept')
+ -- Beta 1.51 : arrêt obligatoire oui ou non (un seul arrêt imposé) ; 2 ou 3 enregistrés deviennent 1.
+ profiles.C.mandatoryStops=1; C.weekendSwitch(profiles,'mandatoryStops',true); assert(profiles.C.mandatoryStops==1 and profiles.P.mandatoryStops==1,'one stop kept')
+ do local old=C.defaults('C'); old.mandatoryStops=3; local out,errors=C.validate('C',old); assert(out.mandatoryStops==1 and errors==0,'3 saved stops become 1, no error') end
  C.weekendSwitch(profiles,'safetyCarEscalation',false); for _,x in ipairs(C.ruleProfiles) do assert(profiles[x].safetyCarEscalation==false,x) end
  C.weekendSwitch(profiles,'safetyCarEscalation',true); assert(profiles.Q.safetyCarEscalation==true)
  local fresh={}; for _,x in ipairs(C.profiles) do fresh[x]=C.validate(x,C.defaults(x)) end
@@ -4648,8 +4658,15 @@ tests.START_LAUNCH_FLAT_OUT=function()
  assert(c2>c3,'after the start: follow caution back ('..c2..' vs '..c3..')')
  local _,b4=scene(true,6,20)
  assert(b4==0,'launch: 1.1 s from the car ahead, no brake')
+ -- Beta 1.50 : 0,54 s avec un couloir libre à côté : pied tenu ; contact vraiment imminent (moins de K.firstLapLastTTC s) :
+ -- léger freinage, comme avant.
  local _,b5=scene(true,3,20)
- assert(b5>0,'launch: contact imminent, light brake')
+ assert(b5==0,'launch: 0.54 s with a free lane: foot kept down')
+ local _,b5b=scene(true,1.2,20)
+ assert(b5b>0,'launch: contact really imminent, light brake')
+ -- Approche rapide (+70 km/h, hors règle de la ligne droite) à 1 s : rien au lancement (contact à moins de 0,8 s seulement).
+ local _,b7=scene(true,19.4,70)
+ assert(b7==0,'launch: fast approach 1 s away, nothing yet')
  local _,b6=scene(false,6,20)
  assert(b6>0,'after the start: radar as usual')
 end
@@ -6107,6 +6124,21 @@ for name,test in pairs(require('tests/player144')) do assert(tests[name]==nil,na
 for name,test in pairs(require('tests/fix147')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.47 (départs, défense, boucles, usure)
 for name,test in pairs(require('tests/firstlap147')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.47 (premier tour attentif)
 for name,test in pairs(require('tests/pits149')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.49 (arrêt F1 : composé, rappels, stratégie des stands)
+for name,test in pairs(require('tests/start150')) do assert(tests[name]==nil,name); tests[name]=test end
+for name,test in pairs(require('tests/quali151')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.51 (préréglage de la session, arrêt obligatoire, tours lancés) -- Beta 1.50 (départ en ligne droite, sortie de la voiture de sécurité, annonces)
+-- Beta 1.50 : pose en piste de la voiture de sécurité (Beta 1.48) gardée en repli ; ces scènes l'exercent avec une voiture
+-- de sécurité qui ne quitte jamais son emplacement, libérée dès la fin de l'appel, sans règle de vue du joueur (testées
+-- dans tests/start150.lua).
+local function placeFallback(fn)
+ return function()
+  local K=C.K; local keep={K.scLeaveMax,K.scExitLead,K.scHideAhead,K.scHideBehind}
+  K.scLeaveMax=0; K.scExitLead=1e9; K.scHideAhead=0; K.scHideBehind=0
+  local ok,err=pcall(fn)
+  K.scLeaveMax,K.scExitLead,K.scHideAhead,K.scHideBehind=keep[1],keep[2],keep[3],keep[4]
+  if not ok then error(err,0) end
+ end
+end
+for _,name in ipairs({'SAFETY_CAR_CYCLE','SAFETY_CAR_STAYS_OUT','SAFETY_CAR_ESCALATION','SAFETY_CAR_PIT_EXIT','RED_FLAG_RELAUNCH_SC','SAFETY_CAR_STUCK','DRS_LATE_LOAD_AND_SC_QUEUE'}) do assert(tests[name],name); tests[name]=placeFallback(tests[name]) end
 -- Beta 1.48 : reprendre sa place de l'ordre figé au drapeau rouge n'est pas un dépassement sous drapeau ; doubler une
 -- voiture mieux classée l'est ; la voiture de sécurité jamais ; plus rien après la ligne.
 tests.RED_FLAG_ORDER_EXEMPTION=function()

@@ -7,6 +7,9 @@ function M.scene(profile,count)
  local g=C.validateGlobals(C.globalDefaults); g.offsetSign=1; g.sideSign=1
  local profiles={J=C.defaults('J'),P=C.defaults('P'),Q=C.defaults('Q'),C=C.defaults('C')}
  for _,p in pairs(profiles) do for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end end
+ -- Beta 1.51 : scènes réglées à la main : ni préréglage de la session (g.presetBySession), ni tours lancés des essais
+ -- et qualifications (qualiTraffic) ; leurs propres tests les activent.
+ g.presetBySession=false; profiles.P.qualiTraffic=false; profiles.Q.qualiTraffic=false
  local e=E.new(g,profiles); local f=S.new()
  f.count=count or 3; f.player=1; f.session=0; f.type=profile=='C' and 3 or profile=='Q' and 2 or 1
  -- Essais : session d'essais déclarée dans race.ini, hors Journée circuit.

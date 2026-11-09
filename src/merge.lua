@@ -41,11 +41,12 @@ end
 -- Voiture en piste (joueur compris) qui arrive à la jonction dans les window s, ou la passe à moins de K.mergeClear m :
 -- la plus proche (indice, secondes). Beta 1.44 : jamais une voiture sortie des stands depuis moins de K.mergeExitGrace s
 -- (elle vient de la voie, devant l'IA qui attend : relevé du 4 novembre, attente de 0,0 s sur la voiture qui sortait).
-local function arriving(t,frame,i,window,now)
+-- Beta 1.51 : push (essais et qualifications) : seulement une voiture en tour lancé.
+local function arriving(t,frame,i,window,now,push)
  local length=frame.length; local best,soonest=0,math.huge
  for j=1,frame.count do
   local b=frame.cars[j]
-  if j~=i and b.valid and not b.pit and b.splineValid and b.kmh>=K.mergeTrafficKmh and now-t.cars[j].exitAt>=K.mergeExitGrace then
+  if j~=i and b.valid and not b.pit and b.splineValid and b.kmh>=K.mergeTrafficKmh and now-t.cars[j].exitAt>=K.mergeExitGrace and (not push or push[j]) then
    local d=M.before(t,b.spline,length)
    local time=d>0 and d/max(b.speed,1) or 0
    if d>=-K.mergeClear and time<=window and time<soonest then best=j; soonest=time end
@@ -58,9 +59,11 @@ end
 -- circuit seulement (profile 'J' ; en course, essais et qualifications, la sortie des stands reste celle d'AC) et
 -- seulement si l'arrêt natif répond (canStop) ; commencée seulement pour une IA qui roule vers la sortie après avoir
 -- dépassé son emplacement (jamais une voiture qui roule vers le sien, au bout de la voie).
-function M.update(t,frame,commands,now,dt,log,red,profile,canStop)
+-- Beta 1.51 (qualifications : une IA sortie des stands juste devant le joueur en tour rapide) : push (essais et
+-- qualifications, tours lancés actifs) : retenue aussi, seulement pour une voiture en tour lancé qui arrive.
+function M.update(t,frame,commands,now,dt,log,red,profile,canStop,push)
  local length=frame.length
- local holds=profile=='J' and canStop==true
+ local holds=(profile=='J' or push~=nil and (profile=='P' or profile=='Q')) and canStop==true
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local cmd=commands[i]
   if c.wasPit and not a.pit and a.valid and a.splineValid and not a.teleport and c.pitFor>=K.mergeLearnPit and a.kmh<=K.mergeLearnKmh and length>0 then
@@ -76,11 +79,11 @@ function M.update(t,frame,commands,now,dt,log,red,profile,canStop)
    and (c.holding or c.boxSeen and d<=M.before(t,c.boxSpline,length)-K.mergeBoxClear and a.kmh>=K.mergeHoldStartKmh)
   if zone then
    local window=min(K.mergeWindowMax,K.mergeWindow+d/max(a.speed,K.mergeCrawl))
-   local j,time=arriving(t,frame,i,window,now)
+   local j,time=arriving(t,frame,i,window,now,profile~='J' and push or nil)
    if j>0 and c.holdFor<K.mergeHoldMax then
     if not c.holding then
-     c.holding=true; t.holds=t.holds+1
-     U.log(log,now,'INFO',string.format('jonction des stands: %s attend %s (a la jonction dans %.1f s, %.0f m avant elle)',a.name,frame.cars[j].name,time,d),i)
+     c.holding=true; t.holds=t.holds+1; if profile~='J' then t.qualiHolds=(t.qualiHolds or 0)+1 end
+     U.log(log,now,'INFO',string.format('jonction des stands: %s attend %s%s (a la jonction dans %.1f s, %.0f m avant elle)',a.name,frame.cars[j].name,profile~='J' and ' en tour lance' or '',time,d),i)
     end
     c.holdFor=c.holdFor+dt
    elseif c.holding then

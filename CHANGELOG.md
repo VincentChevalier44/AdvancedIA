@@ -1,5 +1,113 @@
 # Changelog
 
+## Beta 1.51 — 9 November 2026
+
+### Built-in preset for the session detected (driver's request)
+- With the automatic profile, each new session (track and session index) gets its built-in preset, applied and lit at
+  once: practice → **Free practice**, qualifying → **Flying-lap qualifying**, race → **Realistic race**, track day (the
+  Nordschleife included) → **Nordschleife Touristenfahrten**; hotlap: none. Another built-in preset chosen for that
+  profile (Multi-class endurance) is kept; a custom preset loaded into that profile (new mark `Perso`) is never replaced.
+- The profile's championship rules (rule set, mandatory stop, Safety Car), the driver's preferences and class patterns
+  are kept; the driver's changes during the session stay until the next one; reloading the app in the same game launch
+  does nothing (session key kept in `ac.store`, `humanai:presetsession`).
+- New switch **Built-in preset for the session detected** (HOME › BUILT-IN PRESETS, global `presetBySession`, on by
+  default). Off, or with a manual profile: the Beta 1.29 rule (recommended preset once for a profile never set, nothing
+  lit). This reverses the Beta 1.29 decision.
+- A built-in preset tile now lights without comparing the championship rules (`C.presetMatchSkip`). One shared code path
+  for the tile click and the session (`C.applyBuiltin`).
+- Log: `preset_session: <name> (profil <P>[, circuit Nordschleife])`, `preset_session: aucun (...)`.
+
+### Mandatory stop: on or off (driver's request)
+- **Mandatory stop in the race** is now on or off: one stop is required in the window, then every car (AI strategy and
+  player) makes as many stops as it needs. The 0–3 slider is gone (the switch stays); profiles and custom presets saved
+  with 2 or 3 stops read back as 1, without a validation error.
+
+### Practice and qualifying: flying laps first (in-game report: an AI leaving the pits forced its way past the player on a flying lap)
+- New module `src/quali.lua` and setting **Practice and qualifying: flying laps first** (`qualiTraffic`, Yielding tab, on
+  in Practice and Qualifying, hidden elsewhere). Each car is on a flying lap or not: out-lap from the pit exit to the line
+  (one more lap if the line comes within 30 s of the pit exit), cool-down or aborted lap (under 75 % of the fleet's pace
+  there, corrected by the car's long pace, for 4 s, until the line), in-lap (called in), damaged car.
+- An AI not on a flying lap yields to the closest flying car within 3 s behind it that is closing in (or within 30 m), like
+  under a blue flag: through the queue rule (car ahead within 60 m), the follower-stall and pair-ignore rules, and a
+  slower car closer behind no longer hides it; the flying AI takes the gap at once.
+- It never attacks a flying car ahead (unless invited, or that car is abnormally slow). A flying AI does no standard
+  yielding for a car that is not on a flying lap (the player's headlight flash is still honoured).
+- Pit exit: the end-of-pit-lane hold (track day since 1.41) now also applies in Practice and Qualifying, for flying cars
+  only.
+- Player on an out-lap or cool-down lap: message **Flying lap — <driver> is coming on a flying lap: let them by** when a
+  flying AI is within 3 s behind (once per AI every 30 s), new bridge kind `fastCar` (shown; value = AC index, extra = gap
+  in s).
+- Log: `cede a <name> en tour lance (...)`, `tour lance: <name> arrive derriere le joueur (...)`, `jonction des stands: X
+  attend Y en tour lance`, and in the minute summary `tours lances : cessions N (abouties N, perdues N), attaques retenues
+  N, retenues a la jonction N, avis au joueur N`.
+
+### Tests
+- `tests/quali151.lua` (7 tests). The fixture keeps hand-set scenes free of the session preset and of the flying-lap
+  rules (`g.presetBySession=false`, `qualiTraffic=false`), which their own tests switch on.
+- Known before 1.51 (also fails on the installed 1.50 sources): `QUEUE_NOT_BEHIND_SERVING` (65.3 / 65.3).
+
+## Beta 1.50 — 5 November 2026
+
+### Start and first lap: no more lifting on the straight (Monza, 25 cars, 5 November 11:23)
+- In the start and the first lap, on a straight (driver not braking, car straight, outside the anticipation window of a
+  braking point), an AI keeps its foot down in the slipstream: no time-gap caution and no radar caution there.
+- The front radar lifts only when contact is less than 0.6 s away, by a graded amount, with no free lane alongside,
+  and **never** when the car behind is closer to hitting it than it is to hitting the car ahead (the player at full
+  throttle 6 m behind an AI that lifted rear-ended it). Real obstacles (closing faster than 60 km/h) keep the previous
+  behaviour; the anticipation before braking zones is unchanged.
+- The straight is judged on geometry only (car straight, outside the anticipation of the pack's first braking or of a
+  learnt braking point): AC's own following brake in the pack no longer turns the straight into a corner approach (in
+  the 13:09 start with the first 1.50 build it did, so the rule almost never applied). Only a free brake (no car within
+  the free headway ahead) sets the pack's first braking point; a following brake no longer ends the launch phase.
+  No follow caution on the straight during the start and the first lap either.
+- Log: minute summary « ligne droite : pied tenu N fois (dont voiture de derriere plus pres M) »; every radar lift or
+  brake of the start and the first lap now says why: « (anticipation du freinage) », « (courbe) », « (approche
+  rapide) », « (contact X s, aucun couloir libre) », « (contact X s, dernier recours) ».
+
+### Safety Car leaves the pits by itself
+- In service the Safety Car is held in its pit box by AC's own wait (start delay and brake counter, renewed) instead of
+  being parked without a driver; released, it drives down the pit lane and joins the track. Normal deployment: released
+  when the leader is about 20 s from the pit exit (at most 90 s after the call); red-flag restart: it leaves first and
+  the AI follow 3 s later in the frozen order.
+- If it does not leave its box within 40 s, or the pit lane within 45 s, it is placed on track as in 1.48, but never
+  within the player's sight (800 m ahead, 300 m behind). In the first real deployment (5 November 14:57) it still did
+  not leave its box (the fallback placed it after 10 s); every 5 s the journal now writes « voiture de securite: sortie
+  en cours X s (V km/h, emplacement oui/non, voie des stands oui/non) » so the next deployment shows why. Recalled after the green flag without entering the pits, it is
+  sent back to its box only once out of the player's sight (at most 60 s).
+- Log lines: « retenue a son emplacement », « liberee, sort par la voie des stands », « sortie de son stand »,
+  « sortie en piste devant <name> », « en tete de la file », « rentre ce tour », « rentree a son stand ».
+- Bridge: the new internal phase `exit` is published as `call` (as `place` already was).
+
+### No overtaking under VSC, FCY, Safety Car and the restart lap (5 November 14:57)
+- In the first real Safety Car the AI passed the leading player one after another, and some passed the Safety Car
+  itself; the player finished 15th. Under neutralisation every AI now queues behind the nearest car ahead on the track
+  within 60 m, whatever its lane — the player, an AI or the Safety Car — matching its speed (the limit is set at once
+  within 30 m). Only a crashed car may be passed; a slow player or the Safety Car is never « passable » any more.
+- A car serving a penalty (the player's throttle cut, an AI's 5 s lift) stays in the queue under neutralisation:
+  passing it is an infraction, as for any car (outside neutralisation, a car serving a penalty may still be passed).
+- An AI that passes illegally under neutralisation or on the restart lap now also **gives the place back**: it slows
+  below the passed car's pace until that car is ahead again (at most 30 s), on top of the 5 s lift and the strike. The
+  passed car may retake the place without penalty. Dropped if the passed car leaves the race, enters the pits or
+  crashes. Log: « sanction IA: X rend la place a Y (au plus 30 s) », « place rendue IA: X a Y (neutralisation) »,
+  « place a rendre IA: X a Y, abandonnee (raison) ». Local yellow zones are unchanged.
+- With the fallback placement, the queue forms behind the race leader (the player when he leads): « en tete de la
+  file » names the first car behind the Safety Car.
+
+### Companion bridge announcements (SpotterEnginer)
+- New kinds, silent (never a top-of-screen message), re-emitted on the next frame if dropped: `scOut`, `scLeading`,
+  `restartPlace`, `restartRetake`, and `pitPlanOk` (the player fixed his Quick Pitstop strategy after a « same
+  compound » warning; the warning is cleared at once) (see README, « Companion app bridge »).
+
+### F1 mandatory stop: reminder latched
+- The « change compound » reminder before the pit entry is latched until the entry point: braking inside the window no
+  longer hides it and announces it a second time (it is released if the car moves more than 200 m away from the
+  entry).
+- The player's tyre catalogue is now read (it was read for the AI only): compound names in the journal, the overlay
+  and the announcements (« SS → S »), and the Quick Pitstop strategy is finally checked. Mapping confirmed in game:
+  the compound spinner goes from -1 (no change) to 3, 0..3 = SS, S, M, H.
+
+**Verification**: {{VERIFICATION150}}
+
 ## Beta 1.49 — 5 November 2026
 
 The app is renamed **AdvancedIA** (it was ACAdvancedIA). Driving and rules are unchanged.

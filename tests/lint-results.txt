@@ -1,1 +1,1 @@
-47 fichiers : aucune globale interdite, aucune variable locale inutilisée.
+48 fichiers : aucune globale interdite, aucune variable locale inutilisée.

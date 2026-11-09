@@ -65,20 +65,27 @@ end
 -- Radar : levée de pied d'abord ; frein léger à moins de K.firstLapBrakeTTC s au freinage du pilote, jamais en ligne
 -- droite ni avec une voiture collée derrière ; plein freinage en dernier recours (moins de K.firstLapLastTTC s).
 tests.FIRST_LAP_RADAR_LIFT_FIRST_147=function()
- local function run(mode,ahead,behind,pedal)
+ local function run(mode,ahead,behind,pedal,narrow)
   local e,f
   if mode then e,f=careful(4) else e,f=F.scene('C',4); C.preset('Course','C',e.profiles.C); E.changed(e); F.tick(e,f,1/60) end
   F.place(f,1,-3000,100); F.place(f,2,0,150); F.place(f,3,ahead,100); F.place(f,4,behind or -3500,behind and 150 or 100)
+  -- Beta 1.50 : piste étroite (pas de couloir libre à côté) : la levée de pied de la ligne droite reste possible.
+  if narrow then f.cars[2].leftWidth=2; f.cars[2].rightWidth=2 end
+  -- Beta 1.50 : freinage du pilote pour un virage : point de freinage appris juste devant (un freinage de suivi en ligne
+  -- droite n'est plus une approche de virage, FIRST_LAP_STRAIGHT_150).
+  if pedal and mode then e.fl.points[1]=(40/f.length)%1; e.fl.count=1 end
   for i=2,4 do e.states[i].nextPerception=0 end
   for _=1,30 do if pedal then f.cars[2].brake=math.max(pedal,e.commands[2].brake or 0) end; F.tick(e,f,1/60) end
   return e.commands[2],e.states[2],e
  end
  -- Contact à 1,1 s (15,6 m, +50 km/h).
  local cmd=run(false,20); assert(cmd.brake>0,'reference: the radar brakes')
- cmd=run(true,20); assert(cmd.brake==0 and cmd.throttleLimit<=K.radarStartLift+1e-9,'careful lap: lift only')
- -- Contact à 0,55 s : en ligne droite, levée de pied ; au freinage du pilote, frein léger ; voiture collée derrière :
- -- levée de pied.
- cmd=run(true,12); assert(cmd.brake==0 and cmd.throttleLimit<=K.radarStartLift+1e-9,'straight: lift only')
+ -- Beta 1.50 : en ligne droite, pied tenu au-delà de K.radarStraightTTC s (le peloton du départ ne freine plus pour rien).
+ cmd=run(true,20); assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'careful lap, straight, 1.1 s: foot kept down')
+ -- Contact à 0,55 s : en ligne droite, pied tenu avec un couloir libre, levée dosée sans couloir ; au freinage du
+ -- pilote, frein léger ; voiture collée derrière : levée de pied.
+ cmd=run(true,12); assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'straight, free lane alongside: foot kept down')
+ cmd=run(true,12,nil,nil,true); assert(cmd.brake==0 and cmd.throttleLimit<1 and cmd.throttleLimit>K.radarStartLift,'straight, no lane: graded lift only')
  cmd=run(true,12,nil,0.6); assert(cmd.brake>0 and cmd.brake<=K.radarStartBrakeMax+1e-9,'braking: light brake under K.firstLapBrakeTTC')
  cmd=run(true,12,-8,0.6); assert(cmd.brake==0 and cmd.throttleLimit<=K.radarStartLift+1e-9,'car right behind: lift only')
  -- Suiveur à 15 m à 150 km/h (0,25 s) : collé en temps (K.radarStartFollowTime s), au-delà du plancher en mètres.
@@ -119,6 +126,8 @@ tests.FIRST_LAP_TIME_GAP_147=function()
  local function factor(kmh,headway,point,frontBrake)
   local e,f=careful(3); local v=kmh/3.6
   F.place(f,1,-3000,kmh); F.place(f,2,0,kmh); F.place(f,3,headway*v+4.4,kmh); e.states[2].nextPerception=0
+  -- Beta 1.50 : en courbe (l'écart en temps ne joue plus en ligne droite, voir FIRST_LAP_STRAIGHT_150).
+  f.cars[2].yawRate=e.p.cornerYawRef*0.5
   if point then e.fl.points[1]=(point/f.length)%1; e.fl.count=1 end
   if frontBrake then f.cars[3].brake=frontBrake end
   F.tick(e,f,4)
@@ -189,6 +198,8 @@ tests.FIRST_LAP_CAUTION_CAP_147=function()
    local e,f
    if mode then e,f=careful(3) else e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); E.changed(e); F.tick(e,f,1/60) end
    F.place(f,1,-3000,100); F.place(f,2,0,150); F.place(f,3,14,100); for i=2,3 do e.states[i].nextPerception=0 end
+   -- Beta 1.50 : en courbe (en ligne droite, plus de prudence de suivi à plafonner).
+   f.cars[2].yawRate=e.p.cornerYawRef*0.5
    F.tick(e,f,3)
    return e.commands[2].caution,e.states[2].baseCaution
   end
@@ -253,7 +264,9 @@ tests.START_SCENES_147=function()
    local r=run(tr,st,{mode='app',seed=1}); local scene=tr..'/'..st
    assert(r.finished==24,scene..': lap 1 completed by every AI ('..r.finished..')')
    assert(r.radarStraight-(r.radarLast or 0)<=5,scene..': no braking wave on the straights ('..r.radarStraight..', last resort '..(r.radarLast or 0)..')')
-   assert(r.avoidPack<=2,scene..': no avoidance in the pack ('..r.avoidPack..')')
+   -- Beta 1.50 : la règle du premier tour (évitement d'une voiture vraiment lente seulement) jugée sur l'IA qui évite ;
+   -- les évitements d'une voiture à 18-24 km/h par des IA à 36-106 km/h (urbain, voitures de route) sont permis.
+   assert(r.avoidWave==0 and r.avoidPack<=4,scene..': no avoidance of a car at pack speed ('..r.avoidWave..', pack '..r.avoidPack..')')
    assert(r.lap1Mean<=r.soloMean*1.12,scene..': no jam ('..r.lap1Mean..' s, alone '..r.soloMean..' s)')
   end
  end

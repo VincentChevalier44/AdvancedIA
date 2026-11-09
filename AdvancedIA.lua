@@ -108,11 +108,26 @@ local nativeFlagNames={[0]='aucun',[1]='depart',[2]='jaune',[3]='glissant',[5]='
 local lastCheckpoint=0
 local shownMessage=0
 -- Messages à l'écran : drapeaux, neutralisations, météo ; un seul affichage par événement.
+-- Beta 1.50 : annonces de la voiture de sécurité (en piste, file formée) et de la reprise du joueur (place, place à
+-- reprendre) : seulement pour le pont des apps compagnes (texte prêt, nom du pilote), jamais en message en haut de
+-- l'écran : l'overlay les montre déjà.
+local silentKinds={scOut=true,scLeading=true,restartPlace=true,restartRetake=true}
+local function carName(value)
+ local k=math.floor(tonumber(value) or -1)+1
+ return frame and k>=1 and k<=frame.count and frame.cars[k].name or ''
+end
 local function announce()
  local t=engine.incidents
  if t.messageId==shownMessage then return end
  shownMessage=t.messageId
  local m=Lang.messages[t.messageKind]
+ if m and silentKinds[t.messageKind] then
+  local kind=t.messageKind; local text
+  if kind=='scOut' then local who=carName(t.messageValue); text=who~='' and string.format(m[2],who) or Lang.messages.scOutAlone[2]
+  elseif kind=='scLeading' or kind=='restartRetake' then text=string.format(m[2],carName(t.messageValue))
+  else local who=carName(t.messageExtra); text=who~='' and string.format(m[2],t.messageValue,who) or string.format(Lang.messages.restartPlaceSc[2],t.messageValue) end
+  engine.ownTitle=m[1]; engine.ownText=text; engine.ownAi=false; return
+ end
  -- Beta 1.49 : avis de l'arrêt F1 (rappel, stratégie, arrêt validé ou non compté) : seulement pour le pont des apps
  -- compagnes (texte du panneau), jamais en message en haut de l'écran ni en double sur l'overlay.
  local quiet=m and Panel.pitAnnounce(t,t.messageKind)
@@ -343,6 +358,8 @@ local function update(dt)
   Penalties.restore(engine.penalties,Applier.loadText('humanai:penalties'),frame.session)
   Strategy.restore(engine.strategy,Applier.loadText('humanai:strategy'),frame.session)
   Sanctions.restore(engine.sanctions,Applier.loadText('humanai:sanctions'),frame.session)
+  -- Beta 1.51 : session dont le préréglage intégré est déjà appliqué (rechargement de l'app dans le même lancement).
+  do local key=Applier.loadText('humanai:presetsession'); if type(key)=='string' and #key<=256 and not key:find('%c') then engine.presetSession=key end end
   Applier.register(host,function() local ok=pcall(release); if not ok then host.errors=host.errors+1 end end,
    function() local ok=pcall(session); if not ok then host.errors=host.errors+1 end end)
  end
@@ -353,6 +370,7 @@ local function update(dt)
  engine.stopCap=host.caps.stop.available==true
  engine.pitCap=host.caps.pit.available==true
  local ready=Engine.step(engine,frame,dt)
+ if engine.presetSessionDirty then engine.presetSessionDirty=false; Applier.storeText('humanai:presetsession',engine.presetSession) end
  Applier.reportCaps(host)
  if engine.settingsChanged then engine.settingsChanged=false; dirty() end
  writeJournal(false)

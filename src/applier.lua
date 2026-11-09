@@ -274,6 +274,8 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
    local mine=s.owned and car.valid and car.control and not car.player and (car.identity or car.id)==s.id
    if mine and s.stop and Caps.restoreCall(a.caps,'stop',car.index,0) then s.stop=false; a.recoveryDirty=true end
    if mine and s.parked and not keepParked and Caps.restoreCall(a.caps,'park',car.index,false) then s.parked=false; s.parkAt=-math.huge; a.recoveryDirty=true end
+   -- Beta 1.50 : voiture de sécurité retenue par l'attente d'AC : attente levée à la restitution.
+   if mine and s.scHeld and not keepParked then Caps.restoreCall(a.caps,'startDelay',car.index,0); Caps.restoreCall(a.caps,'stop',car.index,0); s.scHeld=false; s.scHoldAt=-math.huge; a.recoveryDirty=true end
    -- Frein additionnel relâché aussi hors conduite (stands, hors piste) : seule écriture de frein admise aux stands.
    if mine and s.brake~=0 and Caps.restoreCall(a.caps,'brake',car.index,0) then s.brake=0; a.recoveryDirty=true end
    if mine and (final or not car.offtrack) then
@@ -724,16 +726,30 @@ local function safety(a,s,car,cmd,now)
   -- Ramenée à son emplacement depuis la piste comme depuis la voie des stands (jamais garée en travers) ; de nouveau si
   -- elle en ressort (Beta 1.22 : garée sans pilote, une IA peut quitter son emplacement, Content Manager la placer en
   -- piste), au plus toutes les K.parkReturnPeriod s.
-  if not car.inPitBox and now>=s.teleportAt and a.caps.teleport.available and Caps.call(a.caps,'teleport',car.index,'PIT') then s.teleported=true; s.teleportAt=now+K.parkReturnPeriod; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: ramenee a son stand' or cmd.parkReason=='spare' and 'voiture de securite en reserve: ramenee a son stand' or 'voiture de securite: ramenee a son stand',car.index+1) end
+  if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and a.caps.teleport.available and Caps.call(a.caps,'teleport',car.index,'PIT') then s.teleported=true; s.teleportAt=now+K.parkReturnPeriod; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: ramenee a son stand' or cmd.parkReason=='spare' and 'voiture de securite en reserve: ramenee a son stand' or 'voiture de securite: ramenee a son stand',car.index+1) end
   -- Relecture : une IA disqualifiée n'est garée qu'aux stands (ramenée par le moteur si le déplacement échoue).
   -- Beta 1.48 : voiture de sécurité (ou de réserve) garée seulement à son emplacement (jamais en travers de la piste
   -- après un retour au stand manqué), sauf retour au stand impossible (CSP) ; IA disqualifiée : aux stands.
   local where=cmd.parkReason=='dq' and (car.pit or car.inPitBox) or cmd.parkReason~='dq' and (car.inPitBox or not a.caps.teleport.available)
-  if now>=s.parkAt and a.caps.park.available and where and Caps.call(a.caps,'park',car.index,true) then
+  -- Beta 1.50 : voiture de sécurité en service retenue à son emplacement par l'attente native d'AC (départ différé de
+  -- K.scHoldTime s, freinage forcé de K.scHoldStop s, renouvelés toutes les K.scHoldPeriod s), jamais garée sans pilote : libérée, elle
+  -- repart d'elle-même par la voie des stands (garée sans pilote, elle n'en sortait jamais). Garée sans pilote seulement
+  -- après K.scEscapeMax sorties de son emplacement malgré l'attente.
+  if cmd.parkReason=='sc' and (s.scEscapes or 0)<K.scEscapeMax and not s.parked then
+   if car.inPitBox then
+    if now>=(s.scHoldAt or -math.huge) or s.scHoldAt-now>K.scHoldPeriod then
+     s.scHoldAt=now+K.scHoldPeriod; Caps.call(a.caps,'startDelay',car.index,K.scHoldTime); Caps.call(a.caps,'stop',car.index,K.scHoldStop)
+     if not s.scHeld then s.scHeld=true; a.recoveryDirty=true; note(a,'INFO','voiture de securite: retenue a son emplacement (attente d AC), prete a sortir par la voie des stands',car.index+1) end
+    end
+   elseif s.scHeld then
+    s.scHeld=false; s.scEscapes=(s.scEscapes or 0)+1
+    note(a,'WARN',string.format('voiture de securite: a quitte son emplacement malgre l attente (%d / %d)%s',s.scEscapes,K.scEscapeMax,s.scEscapes>=K.scEscapeMax and ', garee sans pilote desormais' or ''),car.index+1)
+   end
+  elseif now>=s.parkAt and a.caps.park.available and where and Caps.call(a.caps,'park',car.index,true) then
    if not s.parked then a.recoveryDirty=true; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: garee jusqu a la fin de la session' or cmd.parkReason=='spare' and 'voiture de securite en reserve: garee sans pilote' or 'voiture de securite: garee sans pilote',car.index+1) end; s.parked=true; s.parkAt=now+K.parkPeriod
   end
  else
-  s.teleported=false; s.teleportAt=-math.huge
+  s.teleported=false; s.teleportAt=-math.huge; s.scHeld=false; s.scHoldAt=-math.huge
   if s.parked and Caps.restoreCall(a.caps,'park',car.index,false) then s.parked=false; s.parkAt=-math.huge; a.recoveryDirty=true end
   -- Beta 1.25 : libérée mais encore à son emplacement (en course, elle n'en sortait jamais seule) : réveillée, départ
   -- immédiat, aucun freinage forcé, aucun arrêt demandé, toutes les K.scKickPeriod s tant qu'elle y reste ; sa sortie

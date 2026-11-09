@@ -86,11 +86,12 @@ local function pitTexts(panel,t,extra,value)
   else short=H.generic; detail=short end
  elseif extra==3 then short=string.format(H.same,t.playerPitFrom or '?',t.playerPitTo or '?'); detail=string.format(H.sameDetail,t.playerPitFrom or '?',t.playerPitTo or '?')
  elseif extra==4 then short=string.format(H.counted,t.playerPitFrom or '?',t.playerPitTo or '?'); detail=short
+ elseif extra==6 then short=string.format(H.planFixed,(t.playerPlanned or '')~='' and t.playerPlanned or '?'); detail=short
  else short=planSame; detail=planSameDetail end
  panel.pitShort=short; panel.pitDetail=detail; panel.pitExplain=extra==4 and '' or L.flagExplain.pitCompound
 end
 -- Texte d'une annonce de l'arrêt F1 (pont des apps compagnes), celui de la consigne du panneau ; nil pour une autre.
-local announceExtra={pitCompound=2,pitPlanSame=5,pitNotCounted=3,pitValidated=4}
+local announceExtra={pitCompound=2,pitPlanSame=5,pitNotCounted=3,pitValidated=4,pitPlanOk=6}
 function M.pitAnnounce(t,kind)
  local extra=announceExtra[kind]
  if not extra then return nil end
@@ -242,7 +243,7 @@ function M.update(panel,t,frame,p,profile,now,lights)
   else kind=t.safetyPhase~='in' and 'rolling' or p.restartOvertake=='scIn' and 'rollingGreen' or 'rollingIn' end
  elseif t.neutral then
   if t.neutralMode=='sc' then
-   local merging=t.safetyPhase=='call' or t.safetyPhase=='place' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit
+   local merging=t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit
    kind=t.safetyPhase=='in' and 'scIn' or merging and 'scCall' or 'sc'
   elseif t.neutralMode=='vsc' then kind=t.ending and 'vscEnd' or 'vsc'; value=p.vscDeltaPct
   else kind='fcy'; value=p.fcyDeltaPct end

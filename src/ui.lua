@@ -65,7 +65,7 @@ local function globalTips()
 end
 -- Vues de l'onglet Règles de course (Beta 1.19) : les arrêts aux stands et la voiture de sécurité n'apparaissent que
 -- sous le titre de leur interrupteur ; « Règles de course actives » montre tout le reste des règles.
-local ruleViews={stops={mandatoryStops=true,pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true},
+local ruleViews={stops={pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true},
  safety={safetyCarSpeedKmh=true,safetyCarEscalation=true,restartOvertake=true}}
 -- Interrupteurs indépendants des jeux de règles (Beta 1.19) : le jeu choisi reste surligné quand on les change.
 local switchKeys={mandatoryStops=true,safetyCarEscalation=true}
@@ -186,17 +186,13 @@ end
 -- Essais, Qualifications et Course : ses règles valent pour tout le week-end ; Endurance multi-classes en course y met
 -- les règles Endurance (FCY, Slow Zone, BoP, Pro-Am). Journée circuit : le week-end de course reste tel quel.
 local function loadBuiltin(v,name,profile)
- local e=v.e; local p=e.profiles[profile]; local kept=v.keptRules
- for key in pairs(C.presetKeptKeySet) do kept[key]=p[key] end
- C.preset(name,profile,p)
- for key,value in pairs(kept) do p[key]=value end
- C.validate(profile,p,p)
- if name=='Endurance' and profile=='C' then C.applyRules('Endurance',e.profiles) else C.spreadRules(profile,e.profiles) end
+ local e=v.e
+ C.applyBuiltin(e.g,e.profiles,name,profile,false,v.keptRules)
  -- Beta 1.38 (demande du pilote) : préréglage visant un autre profil (Endurance depuis les essais, Course depuis les
  -- qualifications...) : appliqué à ce profil, le profil affiché reste et aucune tuile ne s'allume.
  if profile==v.view then presetTarget(v,profile) else v.presetMessage=string.format(L.presetAppliedTo,L.profiles[profile]) end
  v.presetName=''
- e.g.loadedPreset='builtin:'..name; e.g.presetsUsed=true; C.setMark(e.g,profile,name); mark(v)
+ mark(v)
 end
 -- Allumé quand le profil visé par le bouton porte ce préréglage (préférences du pilote et motifs de classes exclus ;
 -- règles de championnat comprises depuis la Beta 1.29). Beta 1.29 (demande du pilote) : seulement pour le profil affiché,
@@ -215,8 +211,8 @@ local function builtinActive(v,name,profile,label)
   if memo.edits~=v.edits or memo.revision~=e.revision then
    memo.edits=v.edits; memo.revision=e.revision
    local expected=v.builtinSignatures[key]
-   if not expected then expected=Presets.signature(profile,candidate,noGlobals,v.signatureValues,C.presetKeptKeySet); v.builtinSignatures[key]=expected end
-   memo.active=Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues,C.presetKeptKeySet)==expected
+   if not expected then expected=Presets.signature(profile,candidate,noGlobals,v.signatureValues,C.presetMatchSkip); v.builtinSignatures[key]=expected end
+   memo.active=Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues,C.presetMatchSkip)==expected
   end
   active=memo.active
  end
@@ -528,7 +524,7 @@ end
 -- Voiture de sécurité : modèle choisi et sa présence sur la grille, étapes de sa sortie, saisie du dossier, filtre et
 -- liste de la base des voitures.
 -- Phases de la bande (maquette) : garée, appelée, en piste, rentre ce tour, aux stands ; lignes de la base montrées.
-local safetyStrip={parked=1,call=2,place=2,out=3,['in']=4,parking=5}
+local safetyStrip={parked=1,call=2,exit=2,place=2,out=3,['in']=4,parking=5}
 local SAFETY_ROWS=8
 local function safetyBlock(v,e,x,y,w)
  local c=W.colors(); local g=e.g
@@ -1483,7 +1479,7 @@ local function homeTab(v,e,host)
  local restore=fmt(v,'restore','%s%s',L.restoreShort,L.profiles[view])
  local rw=math.max(130,W.width(W.upper(restore),12,'display')+34)
  local lh=math.max(28,#W.lines(line,w-24-rw-33,12)*W.lineHeight(12)+12)
- local ph=8+24+8+rows*(70+6)+4+lh+12
+ local ph=8+24+8+rows*(70+6)+4+lh+12+34
  W.panel(x,y,w,ph)
  if W.visible(y+8,24) then W.heading(L.builtinHeading,x+12,y+8,w-24,L.builtinTarget) end
  local ty=y+40
@@ -1497,6 +1493,9 @@ local function homeTab(v,e,host)
   end
  end
  local sy=ty+rows*76+4
+ -- Beta 1.51 : préréglage de la session, appliqué à chaque nouvelle session détectée (profil automatique).
+ if W.visible(sy,28) and W.toggle('global_presetBySession',L.presetBySession,x+12,sy,w-24,e.g.presetBySession,v.tips.ui.presetBySession) then e.g.presetBySession=not e.g.presetBySession; v.dirty() end
+ sy=sy+34
  if W.visible(sy,lh) then
   W.rect(x+12,sy,w-24,lh,c.block)
   W.message(line,x+22,sy+(lh-W.lineHeight(12)*#W.lines(line,w-24-rw-33,12))/2,w-24-rw-22,lineKind)
@@ -1650,7 +1649,7 @@ local function homeTab(v,e,host)
     local chw=W.chipWidth(chip)
     if W.row(idOf('custom_',i),x+12,y,w-24-28,30,custom[i],tip) then
      -- Beta 1.29 : préréglage personnel d'essais, de qualifications ou de course : ses règles pour tout le week-end.
-     local profile=Presets.apply(entry,e.profiles,e.g); e.profiles[profile].configured=true; C.spreadRules(profile,e.profiles); C.setMark(e.g,profile,''); presetTarget(v,profile)
+     local profile=Presets.apply(entry,e.profiles,e.g); e.profiles[profile].configured=true; C.spreadRules(profile,e.profiles); C.setMark(e.g,profile,C.personalMark); presetTarget(v,profile)
      e.g.loadedPreset=id; e.g.presetsUsed=true; mark(v)
      v.presetName=entry.name
     end

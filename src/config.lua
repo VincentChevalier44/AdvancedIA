@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 1.49',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 1.51',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -70,7 +70,7 @@ M.sanctionRaceKeys={sanTrackWarnings=true,sanCutPenalty=true,sanCutSeconds=true,
  sanServeLaps=true,sanStopGoSeconds=true,sanTimeSeconds=true,sanUnservedTime=true,sanGiveBack=true,sanGiveBackSeconds=true}
 -- Interrupteurs des sanctions : tous coupés quand la section est décochée.
 M.sanctionSwitches={'sanTrackLimits','sanCutPenalty','sanJumpStart','sanPitSpeed','sanPitExit','sanWrongWay','sanUnservedTime','sanGiveBack','sanMessages'}
-function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or false end
+function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or false end
 -- Préférences du pilote (panneau, messages, drapeau du HUD, DRS) : conservées au chargement d'un préréglage intégré.
 M.preferenceKeys={'flagPanel','yellowHud','yellowMessage','pitMessage','drsAssist','drsBeepVolume','deltaBeeps'}
 -- Clés ajoutées depuis la 1.3.0 (préréglages personnels antérieurs et préréglages intégrés 1.2.0).
@@ -115,6 +115,8 @@ n('yield','yieldHoldAfterMax','Maintien après passage max. (s)',0.2,6,2.2,1.6,1
 n('yield','yieldSlowdownPct','Ralentissement en cession (%)',0,20,6,8,6)
 n('yield','inviteSlowdownPct','Invitation supplémentaire (%)',0,25,10,10,10)
 n('yield','yieldMaxHold','Durée maximale de cession (s)',8,60,25,25,25)
+-- Beta 1.51 (demande du pilote) : essais et qualifications, priorité aux voitures en tour lancé (src/quali.lua).
+b('yield','qualiTraffic','Essais et qualifications : priorité aux tours lancés',false,true,false)
 b('yield','pressureEnabled','Réaction à la pression',true,true,false)
 n('yield','pressureGap','Distance de pression (m)',5,30,15,15,15)
 n('yield','pressureTime','Durée de pression (s)',1,15,4,3,4)
@@ -247,7 +249,7 @@ n('rules','redDeltaPct','Drapeau rouge : temps de référence plus lent de (%)',
 n('rules','redFlagHold','Drapeau rouge : interruption minimale (s)',20,600,60,60,60)
 b('rules','redFlagWork','Drapeau rouge : pneus changés aux stands (arrêt compté)',false,false,false)
 e('rules','redRestart','Relance après drapeau rouge','rolling','rolling','rolling',{'rolling','standing'})
-n('rules','mandatoryStops','Arrêts obligatoires en course',0,3,0,0,0)
+n('rules','mandatoryStops','Arrêt obligatoire en course',0,1,0,0,0)
 n('rules','pitWindowOpenPct','Ouverture de la fenêtre (% de course)',5,95,25,25,25)
 n('rules','pitWindowClosePct','Fermeture de la fenêtre (% de course)',5,100,75,75,75)
 b('rules','pitTyres','Pneus neufs à chaque arrêt (règles d’arrêt actives)',true,true,true)
@@ -339,7 +341,7 @@ n('traffic','trafficVariation','Variation des espacements (%)',0,50,45,45,45)
 n('traffic','trafficMaxReduction','Réduction maximale de vitesse (%)',2,20,14,14,14)
 M.globalDefaults={schemaVersion=1,enabled=true,autoProfile=true,manualProfile='J',offsetSign=0,sideSign=0,
  overrideAwareness=false,levelMode='auto',useGripBoost=false,gripPerLevelPct=0.004,useBrakeAssist=true,
- flashField='',occLatMin=0.3,occLatMax=5.5,occMargin=6,occSpeedGain=0.8,seed=19731019,debugLog=false,loadedPreset='',builtinMarks='',presetsUsed=false,dataRevision=0,safetyCarModel='ferrari_458_s3',safetyCarPicked=false,journal=true,panelOpacity=86,panelShow='info',overlayX=-1,overlayY=-1,overlayScale=1,overlayLocked=true,overlayBackground='solid',overlayContent=100,overlayClickThrough=true,overlayHideReplay=true,overlayHidePits=false,trackLights=true,overlaySession=true,overlayExplain=true,overlayRecap=true,overlayNativeBox=true,overlayMessages=true,overlayBlockMessages=true,cspHideMessages=true,cspHideFlags=true,cspMessagesLost=false,floodBackup='',panelInfoTime=0,windowCompacted=false,language='en',updateCheck=true}
+ flashField='',occLatMin=0.3,occLatMax=5.5,occMargin=6,occSpeedGain=0.8,seed=19731019,debugLog=false,loadedPreset='',builtinMarks='',presetBySession=true,presetsUsed=false,dataRevision=0,safetyCarModel='ferrari_458_s3',safetyCarPicked=false,journal=true,panelOpacity=86,panelShow='info',overlayX=-1,overlayY=-1,overlayScale=1,overlayLocked=true,overlayBackground='solid',overlayContent=100,overlayClickThrough=true,overlayHideReplay=true,overlayHidePits=false,trackLights=true,overlaySession=true,overlayExplain=true,overlayRecap=true,overlayNativeBox=true,overlayMessages=true,overlayBlockMessages=true,cspHideMessages=true,cspHideFlags=true,cspMessagesLost=false,floodBackup='',panelInfoTime=0,windowCompacted=false,language='en',updateCheck=true}
 M.globalBounds={panelOpacity={0,100},panelInfoTime={0,60},overlayX={-1,16000},overlayY={-1,16000},overlayScale={0.5,2.5},overlayContent={30,100},dataRevision={0,1000},offsetSign={-1,1},sideSign={-1,1},gripPerLevelPct={0,0.01},occLatMin={0.1,1},occLatMax={2,8},occMargin={2,15},occSpeedGain={0,2},seed={0,2147483647}}
 M.globalChoices={language={'en','fr'},panelShow={'info','always'},overlayBackground={'solid','ghost','transparent'},manualProfile={'J','P','Q','C','H'},levelMode={'auto','native','grip','none'},flashField={'','highBeams','headlightsActive','lowBeams','flashingLightsActive'}}
 -- Constantes physiques et temporisations : unique source des valeurs de comportement.
@@ -448,6 +450,27 @@ local traffic141={
  lightsTotalBytes=8388608,
 }
 for key,value in pairs(traffic141) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.50 : départ en ligne droite (radar avant : contact en s, approche modérée en km/h, largeur de piste en m pour
+-- un couloir libre) ; voiture de sécurité sortie par la voie des stands (attente native d'AC et freinage forcé, s,
+-- renouvelés toutes les scHoldPeriod s ; sortie de
+-- l'emplacement et de la voie, s ; avance voulue sur le meneur à la sortie, s ; attente maximale de l'appel, s ; écart
+-- des IA derrière elle au tour de relance, s ; sorties tolérées malgré l'attente) ; hors de la vue du joueur (m devant
+-- et derrière lui, au plus s avant le retour au stand) ; vitesse plancher du meneur (m/s).
+local k150={radarStraightTTC=0.6,radarStraightObstacleKmh=60,radarLaneWidth=8,scHoldTime=600,scHoldStop=2,scHoldPeriod=1,scLeaveMax=40,scExitLogPeriod=5,scLaneMax=45,
+ scExitLead=20,scCallMaxWait=90,scExitGap=3,scEscapeMax=2,scHideAhead=800,scHideBehind=300,scHideMax=60,scLeaderMinSpeed=10,pitHintLatchSlack=200,
+ -- Place rendue par une IA après un dépassement interdit sous neutralisation ou au tour de relance : attente maximale (s).
+ aiGiveBackMax=30}
+for key,value in pairs(k150) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.51 (demande du pilote, qualifications) : tours lancés en essais et qualifications (src/quali.lua).
+-- Tour de sortie : de la sortie de la voie des stands au passage de la ligne ; ligne passée moins de qualiOutGrace s
+-- après la sortie (ligne juste après la sortie des stands) : un tour de plus. Joueur (ou IA) en tour de
+-- refroidissement : plus lent que qualiCoolRatio fois l'allure de la flotte ici (corrigée de son rythme, borné entre
+-- qualiCoolPaceMin et 1) pendant qualiCoolTime s, jusqu'à la ligne. Cession prioritaire : voiture lancée derrière à
+-- qualiYieldTime s au plus, qui se rapproche d'au moins qualiYieldSa km/h (ou à moins de qualiYieldNear m). Avis au
+-- joueur : IA lancée à qualiWarnTime s au plus derrière lui, au plus une fois toutes les qualiWarnRepeat s par IA.
+local k151={qualiOutGrace=30,qualiCoolRatio=0.75,qualiCoolPaceMin=0.85,qualiCoolTime=4,qualiCoolMinKmh=30,qualiYieldTime=3,qualiYieldSa=5,qualiYieldNear=30,
+ qualiYieldRange=1.5,qualiWarnTime=3,qualiWarnSa=5,qualiWarnRepeat=30,qualiLogGap=20}
+for key,value in pairs(k151) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.42 : constantes de l'étape de schéma (facteur de niveau, limite d'accélérateur), puis un bloc réservé par fourche.
 local k142schema={levelScaleMin=0.7,throttleMin=0.3,throttleEpsilon=0.01}
 -- Beta 1.42 : aspiration cassée, air sale, urgence des derniers tours (fourche AERO).
@@ -603,6 +626,8 @@ function M.validate(profile,input,out)
  local newer=input.schemaVersion~=nil and input.schemaVersion>M.version
  for _,s in ipairs(M.schema) do
   local v=input[s.key]; local good
+  -- Beta 1.51 (demande du pilote) : arrêt obligatoire oui ou non ; 2 ou 3 arrêts enregistrés avant deviennent 1.
+  if s.key=='mandatoryStops' and U.finite(v) and v>1 and v<=3 then v=1 end
   if s.min then good=U.finite(v) and v>=s.min and v<=s.max
   elseif s.choices then good=choice(v,s.choices) else good=type(v)=='boolean' end
   if not good then v=s.defaults[profile]; if not (input.schemaVersion==2 and (s.key=='weatherTyresEnabled' or s.key=='rainGripBoostPct')) then errors=errors+1 end end
@@ -676,7 +701,7 @@ function M.effective(profile,p,out)
  for _,group in ipairs(M.sections) do local key=sectionKeys[group]; out[key]=p[key]==true end
  out.classPatterns=M.on(p,'endurance') and p.classPatterns or ''
  if not M.on(p,'general') then out.paceSpreadPct=0; out.aggrSpreadPct=0; out.cautSpreadPct=0; out.brakeZonePct=100 end
- if not M.on(p,'yield') then out.yieldEnabled=false; out.pressureEnabled=false end
+ if not M.on(p,'yield') then out.yieldEnabled=false; out.pressureEnabled=false; out.qualiTraffic=false end
  if not M.on(p,'blue') then out.blueFlagEnabled=false end
  if not M.on(p,'flash') then out.flashMode='never'; out.hornEnabled=false; out.aiFlashEnabled=false end
  if not M.on(p,'overtake') then out.overtakeEnabled=false; out.defenseEnabled=false; out.slipstreamEnabled=false end
@@ -900,6 +925,9 @@ for _,s in ipairs(M.ruleSchema) do M.keptKeySet[s.key]=true; M.ruleKeySet[s.key]
 -- Beta 1.29 (demande du pilote) : un préréglage intégré ou personnel règle tout son profil, règles de championnat
 -- comprises ; il ne garde que les préférences du pilote et les motifs de classes, aussi ignorés pour le reconnaître.
 M.presetKeptKeySet={classPatterns=true}; for _,key in ipairs(M.preferenceKeys) do M.presetKeptKeySet[key]=true end
+-- Beta 1.51 : tuile d'un préréglage intégré allumée sans comparer les règles de championnat (réglées pour le week-end,
+-- gardées par le préréglage de la session).
+M.presetMatchSkip={}; for key in pairs(M.presetKeptKeySet) do M.presetMatchSkip[key]=true end; for _,s in ipairs(M.ruleSchema) do M.presetMatchSkip[s.key]=true end
 -- Réglage gardé par « Restaurer » et par un préréglage intégré : préférences du pilote, motifs de classes et règles de
 -- championnat choisies ; en journée circuit, qu'aucun jeu de règles ne règle, les règles reviennent aussi au défaut.
 function M.kept(profile,key) return M.keptKeySet[key] and (not M.solo(profile) or not M.ruleKeySet[key]) end
@@ -963,6 +991,35 @@ function M.setMark(g,profile,name)
  local parts={}
  for _,x in ipairs(M.profiles) do local value=x==profile and (name or '') or M.mark(g,x); if value~='' then parts[#parts+1]=x..'='..value end end
  g.builtinMarks=table.concat(parts,',')
+end
+-- Beta 1.51 (demande du pilote) : préréglage intégré allumé et appliqué dès qu'une session est détectée (essais :
+-- Essais libres, qualifications : Qualifications tour lancé, course : Course réaliste, journée circuit, Nordschleife
+-- comprise : Nordschleife Touristenfahrten). Un autre préréglage intégré choisi par le pilote pour ce profil (Endurance
+-- multi-classes) est gardé ; un préréglage personnel chargé dans ce profil (marque « Perso ») n'est jamais remplacé ;
+-- hotlap : aucun. Inverse la règle de la Beta 1.29 (préréglage recommandé appliqué une seule fois, sans tuile allumée).
+local builtinProfiles={Nordschleife={J=true},Essais={P=true},Qualifications={Q=true},Course={C=true},Endurance={J=true,C=true}}
+M.personalMark='Perso'
+function M.sessionPreset(g,profile)
+ if profile=='H' or not M.recommended[profile] then return nil end
+ local mark=M.mark(g,profile)
+ if mark==M.personalMark then return nil end
+ if builtinProfiles[mark] and builtinProfiles[mark][profile] then return mark end
+ return M.recommended[profile]
+end
+-- Préréglage intégré name chargé dans le profil : préférences du pilote et motifs de classes gardés. keepRules (préréglage
+-- de la session, appliqué tout seul) : règles de championnat du profil gardées (jeu de règles, arrêt obligatoire, voiture
+-- de sécurité réglés pour le week-end), rien n'est copié aux autres profils. Sinon (clic du pilote, Beta 1.29) : règles
+-- du préréglage, valables pour tout le week-end.
+function M.applyBuiltin(g,profiles,name,profile,keepRules,kept)
+ local p=profiles[profile]; kept=kept or {}
+ for key in pairs(kept) do kept[key]=nil end
+ for key in pairs(M.presetKeptKeySet) do kept[key]=p[key] end
+ if keepRules then for _,s in ipairs(M.ruleSchema) do kept[s.key]=p[s.key] end end
+ M.preset(name,profile,p)
+ for key,value in pairs(kept) do p[key]=value end
+ M.validate(profile,p,p)
+ if not keepRules then if name=='Endurance' and profile=='C' then M.applyRules('Endurance',profiles) else M.spreadRules(profile,profiles) end end
+ g.loadedPreset='builtin:'..name; g.presetsUsed=true; M.setMark(g,profile,name)
 end
 -- Préréglage intégré portant un jeu de règles (Endurance en course), pour le reconnaître.
 function M.withRules(category,profile,p) applyValues(category,profile,p); return M.validate(profile,p,p) end

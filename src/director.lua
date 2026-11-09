@@ -10,6 +10,7 @@ local Flash=require('src/flash')
 local Delta=require('src/delta')
 local Strategy=require('src/strategy')
 local FirstLap=require('src/firstlap')
+local Quali=require('src/quali')
 local K=C.K
 local abs,min,max=math.abs,math.min,math.max
 local M={}
@@ -57,7 +58,7 @@ function M.reset(s,now,keepOffset,preserveErrors)
  s.passConfirm=0; s.passCandidate=0; s.passLost=0; s.targetLost=0; s.holdStall=0; s.holdLong=math.huge
  s.lastDirectionAt=-math.huge; for j=1,K.directionLimit do s.directions[j]=-math.huge end
  s.defendUntil=0; s.defendCooldown=0; s.defendAttacker=0; s.defendLap=-1; s.defendUsed=false
- s.ignoreTarget=0; s.ignoreUntil=0; s.lapseUntil=0; s.bluePending=false; s.yieldBlue=false; s.urgent=false
+ s.ignoreTarget=0; s.ignoreUntil=0; s.lapseUntil=0; s.bluePending=false; s.yieldBlue=false; s.yieldQuali=false; s.urgent=false
  s.passIgnore=0; s.passIgnoreUntil=0; s.passIgnoreCount=0; s.yieldPassed=false; s.yieldCap=nil; s.yieldCapNow=nil; s.yieldIgnore=0; s.yieldIgnoreUntil=0
  s.blockedYield=0; s.brakeDemand=0; s.radarBrake=0; s.speedWindowStart=now; s.speedWindow=0; s.cornerBefore=nil
  s.trafficReference=0; s.trafficApplied=false; s.yellow=false; s.overtakeArmed=false; s.overtakeSpline=-1; s.yieldClass=false
@@ -342,6 +343,10 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt)
    and (not approaching or r.gap<approaching.gap) then approaching=r end
  end
  if approaching then back=approaching end
+ -- Beta 1.51 (qualifications) : IA pas lancée (tour de sortie, refroidissement) : la voiture lancée la plus proche
+ -- derrière (à quelques secondes) passe avant tout le reste ; une voiture lente plus proche ne la masque pas.
+ local qualiCar=e.quali and Quali.follower(e.quali,e,a.slot,row) or nil
+ if qualiCar then back=qualiCar end
  local flash=e.flash.requests[a.slot]
  local activeFlash=flash.untilTime>now and now>=flash.readyAt
  if activeFlash and a.corner<p.cornerMin and not flash.extended then flash.untilTime=flash.cornerUntil; flash.extended=true end
@@ -358,8 +363,9 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt)
  if not back or back.gap<0 then s.confirm=0; s.pendingAt=0; s.pendingTarget=0; s.bluePending=false; return nil end
  local other=e.frame.cars[back.index]
  local laps,upper=lapOrClass(e,s,a,other,back,p,profile)
+ local quali=qualiCar~=nil and back.index==qualiCar.index
  if yieldStates[e.states[other.slot].state] then s.pendingAt=0; return nil end
- if faster(p,s,e.states[other.slot]) and laps==0 then s.pendingAt=0; return nil end
+ if faster(p,s,e.states[other.slot]) and laps==0 and not quali then s.pendingAt=0; return nil end
  local blueRange=p.blueFlagRange*((laps>=2 or upper) and K.lapRangeMult or 1)
  -- Beta 1.24 : en course, voiture qui prend un tour collée derrière, à la même allure (retenue) : drapeau bleu aussi.
  -- En essais et qualifications, l'écart de tours ne dit que le temps passé en piste : il faut s'approcher.
@@ -378,10 +384,11 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt)
  local clear=row.front==0 or row.neighbors[row.front].gap>K.followRange or back.sa>=K.classFightSpeed
  local aiAccepted=aiFlash and back.index==ai.source and (profile~='C' and clear or laps>0 or upper)
  if profile=='C' and not blue and not classYield and not permittedFlash and not aiAccepted then s.confirm=0; s.pendingAt=0; s.pendingTarget=0; s.bluePending=false; return nil end
- local ordinary=p.yieldEnabled and profile~='C' and clear
- if not ordinary and not blue and not classYield and not permittedFlash and not aiAccepted then return nil end
+ -- Beta 1.51 : IA en tour lancé : pas de cession ordinaire à une voiture qui ne l'est pas (appel de phares compris à part).
+ local ordinary=p.yieldEnabled and profile~='C' and clear and not (e.quali and e.quali.active and e.quali.push[a.slot] and not e.quali.push[back.index])
+ if not ordinary and not blue and not classYield and not permittedFlash and not aiAccepted and not quali then return nil end
  if s.ignoreTarget==back.index and now<s.ignoreUntil then return nil end
- if s.yieldIgnore==back.index and now<s.yieldIgnoreUntil and not blue and not classYield then return nil end
+ if s.yieldIgnore==back.index and now<s.yieldIgnoreUntil and not blue and not classYield and not quali then return nil end
  local margin=p.yieldBehindMargin*U.lerp(K.courtesyMin,K.courtesyMax,s.persona.courtesy)*U.lerp(K.gapMarginMin,1,back.gap/K.yieldMarginRange)
  local horizon=p.yieldHorizon
  if acceptedFlash then margin=margin*K.flashMargin; horizon=horizon*K.flashHorizon end
@@ -401,8 +408,8 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt)
  local c3=ordinary and p.pressureEnabled and s.pressure>=p.pressureTime and (back.index==e.frame.player or realAdvantage(e,e.states[back.index],s,a,p)~=false)
  local c4=permittedFlash
  local c5=aiAccepted
- local trigger=c1 or c2 or c3 or c4 or c5 or blue or classYield
- local needed=blue and K.lapConfirm or classYield and p.confirmTime*K.classConfirm or (c4 or c5) and K.flashConfirm or p.confirmTime
+ local trigger=c1 or c2 or c3 or c4 or c5 or blue or classYield or quali
+ local needed=(blue or quali) and K.lapConfirm or classYield and p.confirmTime*K.classConfirm or (c4 or c5) and K.flashConfirm or p.confirmTime
  if activeFlash and not c4 then needed=needed*K.flashMargin end
  if trigger then
   s.confirmLost=0
@@ -410,7 +417,7 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt)
   s.confirm=s.confirm+dt
   if s.confirm>=needed and s.pendingAt==0 then
    local reaction=s.persona.reaction+s.persona.awareness*U.unit(e.runtimeG.seed,a.slot,other.index+e.eventSalt)
-   if c4 or c5 then reaction=U.clamp(s.persona.reaction*K.flashReact,K.flashReactionMin,K.flashReactionMax) elseif blue then reaction=reaction*K.lapReaction elseif classYield then reaction=reaction*K.classReaction end
+   if c4 or c5 then reaction=U.clamp(s.persona.reaction*K.flashReact,K.flashReactionMin,K.flashReactionMax) elseif blue or quali then reaction=reaction*K.lapReaction elseif classYield then reaction=reaction*K.classReaction end
    s.pendingAt=now+reaction; s.pendingUntil=now+K.pendingTTL
   end
  else
@@ -419,19 +426,25 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt)
  end
  if now>s.pendingUntil and s.pendingAt>0 then s.pendingAt=0; s.confirm=0 end
  if not trigger or s.pendingAt==0 or now<s.pendingAt then return nil end
- local corner=blue and K.lapCorner or classYield and K.classCorner or p.cornerMin
+ local corner=(blue or quali) and K.lapCorner or classYield and K.classCorner or p.cornerMin
  if a.corner<corner then s.bluePending=blue; if blue then s.blueReason='virage' end; return nil end
- local side=yieldSide(p,back,profile~='C' and not blue,row,e.runtimeG)
+ local side=yieldSide(p,back,profile~='C' and not blue and not quali,row,e.runtimeG)
  if not sideFree(row,side) then s.blockedYield=s.blockedYield+dt else s.blockedYield=0 end
- local blocked=s.zone.noYield and 'zone sans cession' or a.kmh<K.speedMinYield and 'trop lent' or not sideFree(row,side) and 'cote occupe' or not blue and not directionBudget(s,now,p) and 'trop de changements de trajectoire' or nil
+ local blocked=s.zone.noYield and 'zone sans cession' or a.kmh<K.speedMinYield and 'trop lent' or not sideFree(row,side) and 'cote occupe' or not blue and not quali and not directionBudget(s,now,p) and 'trop de changements de trajectoire' or nil
  if blocked then if blue then s.blueReason=blocked end; return nil end
  s.target=back.index; s.targetSide=side; s.gap=back.gap; s.sa=back.sa; s.ttc=back.ttc
- s.yieldDetection=max(detection,blue and blueRange or 0); s.yieldMargin=margin
+ s.yieldDetection=max(detection,blue and blueRange or 0,quali and other.speed*K.qualiYieldTime*K.qualiYieldRange or 0); s.yieldMargin=margin
  for j=1,K.maxCars do s.followers[j]=false; s.followerSlow[j]=0; s.followerStall[j]=0 end
  s.followers[back.index]=true; s.multiLeader=false; s.yieldPassed=false
  s.confirm=0; s.pendingAt=0; s.pendingTarget=0; s.bluePending=false; s.holdUntil=now+p.yieldHoldMin
- s.linger=0; s.postPass=false; s.yieldStart=now; s.yieldBlue=blue or classYield; s.urgent=c4 and flash.urgent
- s.yieldOrdinary=not (blue or classYield or c4 or c5); s.yieldStalled=false
+ s.linger=0; s.postPass=false; s.yieldStart=now; s.yieldBlue=blue or classYield or quali; s.urgent=c4 and flash.urgent
+ s.yieldOrdinary=not (blue or classYield or c4 or c5 or quali); s.yieldStalled=false
+ -- Beta 1.51 : cession à une voiture lancée (journal et compteurs à part, comme un drapeau bleu pour le reste).
+ s.yieldQuali=quali and not blue and not classYield and not c4 and not c5
+ if s.yieldQuali then
+  e.stats.qualiYield=(e.stats.qualiYield or 0)+1
+  if now>=(s.qualiLogAt or -math.huge) then s.qualiLogAt=now+K.qualiLogGap; U.log(e.log,now,'INFO',string.format('cede a %s en tour lance (%s, %.0f m, %+.0f km/h)',other.name,e.quali.cars[a.slot].out and 'tour de sortie' or 'refroidissement',back.gap,back.sa),a.slot) end
+ end
  s.yieldClass=(classYield or c5 and upper) and not blue
  if c5 then U.log(e.log,now,'INFO','cede sur appel de phares de '..other.name,a.slot) end
  if c4 then U.log(e.log,now,'INFO',string.format('cede sur appel de phares du joueur (%.0f m, %+.0f km/h)',back.gap,back.sa),a.slot) end
@@ -622,14 +635,36 @@ function M.step(e,i,dt,now)
   local front=row.neighbors[row.front]; local j=front.index
   -- Voiture qui doit rendre la place à celle-ci (IA ou joueur), qui purge une sanction, ou dont celle-ci reprend la
   -- place : jamais de file derrière elle.
-  local owes=Penalties.mayPass(e.penalties,i,j,now,frame.player)
+  local owes=Penalties.mayPass(e.penalties,i,j,now,frame.player,e.incidents.neutral and not e.incidents.red)
   if not owes and not Penalties.passable(frame.cars[j],e.incidents.cars[j],p,now) then
    cap=min(cap,max(K.trafficMinSpeed,frame.cars[j].kmh+max(0,front.gap-K.queueKeep)*K.queueClose))
   end
  end
+ -- Beta 1.50 (première voiture de sécurité réelle, 5 novembre 14:57 : les IA ont doublé le joueur en tête, puis la
+ -- voiture de sécurité) : sous neutralisation (VSC, FCY, voiture de sécurité, tour de relance), file derrière la voiture
+ -- la plus proche devant sur la piste, QUELLE QUE SOIT SA FILE (une IA qui se décalait n'avait plus de voiture « devant »)
+ -- : joueur, IA ou voiture de sécurité ; seule une voiture accidentée (incident) se double, jamais une voiture qui roule
+ -- à l'allure de la neutralisation (le joueur lent ou la voiture de sécurité passaient pour « lents »). Limite posée
+ -- aussitôt à moins de 2 x K.queueKeep m.
+ local hardQueue=false
+ if e.incidents.neutral and not e.incidents.red and a.splineValid and frame.length>0 and not a.pit then
+  local best,bj=K.scQueueGap,0
+  for j=1,frame.count do
+   local b=frame.cars[j]
+   if j~=i and b.valid and not b.pit and b.splineValid and not (e.incidents.cars[j] and e.incidents.cars[j].incident) then
+    local d=U.spline(b.spline-a.spline)*frame.length-((a.length or K.length)+(b.length or K.length))*0.5
+    if d>-1 and d<best and not Penalties.mayPass(e.penalties,i,j,now,frame.player,true) then best=d; bj=j end
+   end
+  end
+  if bj>0 then
+   cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh+max(0,best-K.queueKeep)*K.queueClose))
+   hardQueue=best<2*K.queueKeep; s.neutralQueue=bj
+  else s.neutralQueue=0 end
+ else s.neutralQueue=0 end
  if cap<K.unlimitedSpeed then
   local start=cmd.yellowLimit<K.unlimitedSpeed and cmd.yellowLimit or a.kmh
   cmd.yellowLimit=U.approach(max(start,cap),cap,p.yellowDecel*3.6*dt)
+  if hardQueue then cmd.yellowLimit=min(cmd.yellowLimit,cap) end
  else cmd.yellowLimit=K.unlimitedSpeed end
  local front=row.front>0 and row.neighbors[row.front] or nil
  local back=row.back>0 and row.neighbors[row.back] or nil
@@ -798,6 +833,7 @@ function M.step(e,i,dt,now)
       if r.long<0 and r.gap>=0 and r.gap<=s.yieldDetection and abs(r.lat)<=K.latYield and not yieldStates[e.states[r.index].state] then
        local laps,upper=lapOrClass(e,s,a,other,r,p,profile)
        local qualifies=profile~='C' and p.yieldEnabled and r.sa>=p.yieldBehindMargin or laps>0 and r.sa>=K.lapSpeed or upper and r.sa>=p.classYieldMargin
+        or s.yieldQuali and e.quali.push[r.index] and r.sa>=-K.blueSlack
        if qualifies and not s.followers[r.index] then s.followers[r.index]=true; s.holdUntil=max(s.holdUntil,now+p.yieldHoldMin); s.postPass=false end
       end
      end
@@ -825,6 +861,7 @@ function M.step(e,i,dt,now)
       if now-s.yieldStart>=max(K.holdFloor,p.yieldHoldMin) and now>=s.holdUntil then
        -- Beta 1.41 : « passed » (abouties) seulement si un suiveur est vraiment passé ; suiveurs perdus : « lost » ; perdu
        -- faute de se rapprocher (cession ordinaire), le suiveur principal n'est plus attendu pendant K.passIgnore s.
+       if s.yieldQuali then local key=s.yieldPassed and 'qualiPassed' or 'qualiLost'; e.stats[key]=(e.stats[key] or 0)+1 end
        if s.yieldPassed then transition(e,s,'YIELD_OUT','passed',now)
        else
         if s.yieldStalled then s.yieldIgnore=s.target; s.yieldIgnoreUntil=max(s.yieldIgnoreUntil,now+K.passIgnore) end
@@ -832,6 +869,7 @@ function M.step(e,i,dt,now)
        end
       end
      end
+     if now-s.yieldStart>p.yieldMaxHold and s.yieldQuali and s.state~='YIELD_OUT' then e.stats.qualiLost=(e.stats.qualiLost or 0)+1 end
      if now-s.yieldStart>p.yieldMaxHold then s.ignoreTarget=s.target; s.ignoreUntil=now+K.ignoreFollower; transition(e,s,'YIELD_OUT','hold_limit',now) end
      if s.state=='YIELD_OUT' then desired=s.base; if abs(s.offset-M.reachable(s,a,p,g,s.base))<K.centerEpsilon then transition(e,s,'DRIVE','yield_end',now); s.target=0 end end
     elseif passStates[s.state] then
@@ -1035,6 +1073,12 @@ function M.step(e,i,dt,now)
       -- Beta 1.47 (boucles : jusqu'à 13 tentatives par paire en 10 min) : paire ignorée après un échec « cible plus rapide »,
       -- plus de dépassement sur simple rapprochement sans vraie avance ici (la retenue et la cession l'étaient déjà).
       if ignored and adv~=true and not (stuckTrigger or slowTarget or invited) then trigger=false end
+      -- Beta 1.51 (qualifications) : IA pas lancée (tour de sortie, refroidissement) : jamais à l'attaque d'une voiture
+      -- lancée devant elle, sauf invitation ou voiture anormalement lente.
+      if trigger and e.quali and e.quali.active and not e.quali.push[i] and e.quali.push[front.index] and not slowTarget and not invited then
+       trigger=false
+       if s.qualiHeldFor~=front.index then s.qualiHeldFor=front.index; e.stats.qualiNoPass=(e.stats.qualiNoPass or 0)+1 end
+      end
       -- Beta 1.29 : hors course, pas de riposte sur le joueur qui vient de la doubler, sauf s'il ralentit nettement.
       if passedByPlayer and front.index==frame.player and not invited and front.sa<K.courtesyPassSa and not slowPlayer then trigger=false end
       if trigger and (potential>=advantage or invited) and not slowClass and not fight then
@@ -1090,21 +1134,40 @@ function M.step(e,i,dt,now)
   -- vraiment), et ne revient plus ensuite (premier freinage, le sien ou celui du peloton juste devant).
   if abs(a.yawRate or 0)>K.startYaw then s.startYawTime=(s.startYawTime or 0)+dt else s.startYawTime=0 end
   local key=e.startedAt+(e.launchAt or 0)
-  if ownBrake>K.ruleBrake and a.kmh>=K.startBrakeKmh then
+  -- Beta 1.50 (départ réel du 5 novembre, 13:09) : seul un freinage libre (aucune voiture devant à moins de
+  -- K.firstLapPointFree s) est le premier freinage du peloton ; un freinage de suivi dans le peloton, dès le lancement,
+  -- n'en est pas un (il plaçait le « premier freinage » en pleine ligne droite : anticipation pour tout le peloton,
+  -- fin du lancement, frein du départ non plafonné).
+  local freeAhead=not front or front.long<=0 or FirstLap.headway(front.gap,a.speed)>=K.firstLapPointFree
+  local freeBrake=ownBrake>K.ruleBrake and freeAhead
+  if freeBrake and a.kmh>=K.startBrakeKmh then
    s.startBraked=true
    if e.startPackKey~=key and a.splineValid then e.startPackKey=key; e.startPackSpline=a.spline end
   end
   local ahead=e.startPackKey==key and e.startPackSpline~=nil and a.splineValid and frame.length>0
    and ((e.startPackSpline-a.spline)%1)*frame.length<=a.speed*K.startAnticipate
   if ahead then s.startBraked=true end
-  local wanted=(s.startBraked or ownBrake>K.ruleBrake or s.startYawTime>=K.startYawHold) and 1 or 0
+  s.startAhead=ahead
+  local wanted=(s.startBraked or freeBrake or s.startYawTime>=K.startYawHold) and 1 or 0
   s.startCare=U.approach(s.startCare,wanted,(wanted>s.startCare and K.startCareRise or K.startCareFall)*dt)
- else s.startCare=0; s.startYawTime=0; s.startBraked=false end
+ else s.startCare=0; s.startYawTime=0; s.startBraked=false; s.startAhead=false end
  local launch=starting and s.startCare<0.5
+ -- Beta 1.50 (course du 5 novembre, Monza, 25 voitures : « il y en a toujours un devant qui freine, on ne sait pas
+ -- pourquoi ») : ligne droite du départ et du premier tour : pilote qui ne freine pas, voiture droite, hors de
+ -- l'anticipation d'un freinage (premier freinage du peloton au départ, point de freinage appris au premier tour).
+ -- Pied tenu en aspiration : ni écart en temps, ni prudence du radar ; levée de pied seulement au contact imminent.
+ -- Course du 5 novembre, 13:09 (interim 2 en jeu) : l'IA d'AC freine elle-même pour suivre dans le peloton ; ce
+ -- freinage de suivi n'est pas une approche de virage : la ligne droite se juge sur la géométrie seule (voiture droite,
+ -- hors anticipation du premier freinage du peloton ou d'un point de freinage appris), jamais sur la pédale (sinon la
+ -- règle ne s'appliquait presque jamais et la prudence ajoutée faisait freiner davantage).
+ local npNear=firstLap and FirstLap.nextPoint(e.fl,a,frame.length)<=max(a.speed,K.firstLapSpeedMin)*K.firstLapAnticipate
+ local straightGeom=(starting or firstLap) and a.corner>=K.slipCorner and not (starting and s.startAhead) and not npNear
+ local straightRun=straightGeom
  local following=front and front.gap<K.followRange and not s.alongside and (p.section_general or p.section_overtake or s.state~='DRIVE')
  if not following or not p.slipstreamEnabled or a.corner<K.slipCorner or a.kmh<=K.slipSpeed then s.slipTime=0 end
  if following then
-  if not launch then
+  -- Beta 1.50 : en ligne droite du départ et du premier tour, ni prudence de suivi (aspiration, voiture collée).
+  if not launch and not straightRun then
    caution=caution*U.lerp(K.followCaution,1,(front.gap-K.followMinGap)/K.followGapRange)*s.persona.brakeMargin
    if front.ttc<K.followTTC then caution=caution*K.followTTCMult end
   end
@@ -1126,7 +1189,7 @@ function M.step(e,i,dt,now)
   s.flCare=U.approach(s.flCare or 0,approach and 1 or 0,(approach and K.firstLapCareRise or K.firstLapCareFall)*dt)
   -- Montée douce (K.firstLapCareRise par seconde) : jamais un saut de prudence qui ferait freiner tout le peloton.
   local timeFactor=1
-  if close and not launch then timeFactor=U.lerp(K.firstLapFollowCaution,1,U.clamp((FirstLap.headway(front.gap,a.speed)-K.firstLapGapMin)/(K.firstLapGapTime-K.firstLapGapMin),0,1)) end
+  if close and not launch and not straightRun then timeFactor=U.lerp(K.firstLapFollowCaution,1,U.clamp((FirstLap.headway(front.gap,a.speed)-K.firstLapGapMin)/(K.firstLapGapTime-K.firstLapGapMin),0,1)) end
   local wantedFactor=max(timeFactor,U.lerp(1,K.firstLapBrakeCaution,s.flCare))
   s.flFactor=U.approach(s.flFactor or 1,wantedFactor,(wantedFactor>(s.flFactor or 1) and K.firstLapCareRise or K.firstLapCareFall)*dt)
   caution=caution*U.lerp(1,s.flFactor,s.flW)
@@ -1147,7 +1210,7 @@ function M.step(e,i,dt,now)
    end
   end
   if close then
-   if closeTTC<K.radarWarnTTC and not launch then caution=caution*U.lerp(K.radarCaution,1,closeTTC/K.radarWarnTTC) end
+   if closeTTC<K.radarWarnTTC and not launch and not straightRun then caution=caution*U.lerp(K.radarCaution,1,closeTTC/K.radarWarnTTC) end
    if closeTTC<(launch and K.radarLaunchTTC or K.radarTTC) then
     radarTarget=U.clamp(close.sa/3.6/K.brakeGain,K.radarMinBrake,K.radarBrakeMax)
     -- Beta 1.47 : départ, avant le premier freinage : freinage plafonné à K.radarStartBrakeMax ; voiture collée derrière
@@ -1156,7 +1219,32 @@ function M.step(e,i,dt,now)
     local lift=false
     -- Beta 1.47 : voiture collée derrière en temps (K.radarStartFollowTime s, au moins K.radarStartFollowMin m).
     local followed=back~=nil and back.long<0 and back.gap<max(K.radarStartFollowMin,frame.cars[back.index].speed*K.radarStartFollowTime)
-    if starting and not s.startBraked then
+    -- Beta 1.50 : ligne droite du départ et du premier tour, approche modérée (moins de K.radarStraightObstacleKmh km/h :
+    -- jamais une voiture arrêtée). Voiture de derrière plus près de son contact que soi du sien : ni levée ni frein, même
+    -- quand l'IA d'AC freine elle-même pour suivre (le choc passait à l'arrière : joueur à fond à 6 m derrière une IA qui
+    -- levait le pied). Sinon, sans freinage du pilote : pied tenu ; levée dosée seulement à moins de K.radarStraightTTC s
+    -- du contact et sans couloir libre à côté ; à moins de K.firstLapLastTTC s : dernier recours, comme avant.
+    local straightHold=false
+    local pushed=back~=nil and back.long<0 and back.ttc<closeTTC
+    -- Raison d'une levée de pied ou d'un frein du départ et du premier tour, dite au journal (audit des départs réels).
+    local why150=not (starting or firstLap) and '' or not straightGeom and ((starting and s.startAhead or npNear) and 'anticipation du freinage' or 'courbe')
+     or close.sa>=K.radarStraightObstacleKmh and 'approche rapide' or closeTTC<K.firstLapLastTTC and string.format('contact %.1f s, dernier recours',closeTTC)
+     or string.format('contact %.1f s, aucun couloir libre',closeTTC)
+    local count=function(push)
+     if now>=(s.straightHoldAt or -math.huge) or s.straightHoldAt-now>1 then
+      s.straightHoldAt=now+1; e.startHold=(e.startHold or 0)+1; e.stats.flHold=(e.stats.flHold or 0)+1
+      if push then e.stats.flPushed=(e.stats.flPushed or 0)+1 end
+     end
+    end
+    if straightGeom and pushed and close.sa<K.radarStraightObstacleKmh then straightHold=true; radarTarget=0; count(true)
+    elseif straightRun and close.sa<K.radarStraightObstacleKmh and closeTTC>=K.firstLapLastTTC then
+     local lane=(not row.left or not row.right) and (a.leftWidth or 0)+(a.rightWidth or 0)>=K.radarLaneWidth
+     if closeTTC>=K.radarStraightTTC or lane then straightHold=true; radarTarget=0; count(false)
+     else
+      radarTarget=0; lift=true; cmd.throttleLimit=min(cmd.throttleLimit or 1,U.lerp(K.radarStartLift,1,closeTTC/K.radarStraightTTC))
+     end
+    end
+    if not straightHold and not lift and starting and not s.startBraked then
      radarTarget=min(radarTarget,K.radarStartBrakeMax)
      if followed then radarTarget=0; lift=true; cmd.throttleLimit=min(cmd.throttleLimit or 1,K.radarStartLift) end
     end
@@ -1164,18 +1252,18 @@ function M.step(e,i,dt,now)
     -- contact, au freinage du pilote, léger (K.radarStartBrakeMax) et jamais avec une voiture collée derrière ; en ligne
     -- droite (pilote qui ne freine pas), levée de pied seule ; plein freinage du radar en dernier recours seulement
     -- (contact à moins de K.firstLapLastTTC s : vrai obstacle).
-    if firstLap and not lift then
+    if firstLap and not lift and not straightHold then
      if closeTTC>=K.firstLapBrakeTTC or (followed or ownBrake<=K.ruleBrake) and closeTTC>=K.firstLapLastTTC then radarTarget=0; lift=true; cmd.throttleLimit=min(cmd.throttleLimit or 1,K.radarStartLift)
      elseif closeTTC>=K.firstLapLastTTC then radarTarget=min(radarTarget,K.radarStartBrakeMax) end
      if not lift and s.radarBrake==0 then e.stats.flBrake=(e.stats.flBrake or 0)+1 end
     end
-    if launch and s.radarBrake==0 and not lift then e.startRadar=(e.startRadar or 0)+1 end
+    if launch and s.radarBrake==0 and not lift and not straightHold then e.startRadar=(e.startRadar or 0)+1 end
     -- Levers de pied du départ comptés (au plus un par voiture et par seconde) pour le bilan du journal.
     if lift and (now>=(s.startLiftAt or -math.huge) or s.startLiftAt-now>1) then s.startLiftAt=now+1; e.startLift=(e.startLift or 0)+1; if firstLap then e.stats.flLift=(e.stats.flLift or 0)+1 end end
-    if s.radarBrake==0 and (now>=s.radarLogAt or s.radarLogAt-now>K.radarLogPeriod) then
+    if not straightHold and s.radarBrake==0 and (now>=s.radarLogAt or s.radarLogAt-now>K.radarLogPeriod) then
      s.radarLogAt=now+K.radarLogPeriod
      U.log(e.log,now,'INFO',string.format('radar avant: %s %s derriere %s (%.0f m, %.0f km/h plus vite)%s',a.name,lift and 'leve le pied' or 'freine',frame.cars[close.index].name,close.gap,close.sa,
-      back and back.long<0 and string.format(', suiveur a %.0f m',back.gap) or ''),i)
+      (back and back.long<0 and string.format(', suiveur a %.0f m',back.gap) or '')..(why150~='' and ' ('..why150..')' or '')),i)
     end
    end
   end

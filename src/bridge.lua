@@ -115,7 +115,7 @@ function M.publish(b,out,e,frame)
  out.neutralFor=t.neutral and finite(t.neutralSince) and math.max(0,now-t.neutralSince) or 0
  out.escalated=bool(t.escalated); out.relaunch=bool(t.relaunch); out.ending=bool(t.ending); out.endingLeft=left(t.endingUntil,now)
  -- Beta 1.48 : pose en piste annoncée comme l'appel (vocabulaire du pont v1 inchangé).
- text(b,out,'safetyPhase',t.safetyPhase=='place' and 'call' or t.safetyPhase); out.safetyFailed=bool(t.safetyFailed); out.safetyCar=index(t.safety)
+ text(b,out,'safetyPhase',(t.safetyPhase=='place' or t.safetyPhase=='exit') and 'call' or t.safetyPhase); out.safetyFailed=bool(t.safetyFailed); out.safetyCar=index(t.safety)
  out.red=bool(t.red); out.reds=int(t.reds); out.greenLeft=left(t.greenUntil,now)
  out.restart=bool(t.restart); out.playerRestart=bool(t.playerRestart)
  text(b,out,'standing',t.standing); out.gridLit=int(t.gridLit); out.gridSlot=int(t.gridSlot); out.gridGap=num(t.gridGap)
