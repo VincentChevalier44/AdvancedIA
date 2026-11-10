@@ -9,8 +9,8 @@ return {
   dirtyAirEnabled='Behind a car, in corners, the AI loses downforce: more small line corrections (the human line variation is raised) and a slight lift. Never under flags, in the pit lane or at the start.',
   dirtyAirGap='Distance behind a car below which dirty air applies (20 m by default).',
   dirtyAirLiftPct='Share of throttle lifted in corners in dirty air (3 % by default; 0: line corrections only).',
-  finalLapsEnabled='In the last laps of a race, the AI becomes more aggressive and defends its place more firmly. Never against a lapped car, under blue, yellow, VSC or Safety Car.',
-  finalLaps='Number of laps at the end of the race concerned (3 by default).',
+  finalLapsEnabled='In the last laps of a race, an AI with a direct rival within 80 m ahead or behind becomes more aggressive and defends its place more firmly. Never against a lapped car, under blue, yellow, VSC or Safety Car.',
+  finalLaps='Number of laps at the end of the race concerned (3 by default, at most 20 % of the race, at least 1).',
   finalAggressionPct='Aggression added in these laps (15 % by default), bounded by the maximum aggression.',
   finalDefensePct='Stronger defence in these laps: longer trigger distance and shorter rest (40 % by default).',
   outLapEnabled='After a real pit exit, the AI drives slower while its tyres warm up, until the line or until they reach their ideal temperature. Never at the race start.',
@@ -147,8 +147,8 @@ return {
   -- Départ
   startDelay='Race only: for these seconds after the start, the app commands no lateral movement, no yielding, no overtaking and no avoidance; the AI follow their native line.',
   startLaneHold='Race only: each AI records its position on the grid and keeps it after the green light while a car is running alongside it (and while braking), instead of heading straight for the racing line and cutting across its neighbours; it then joins the line gradually, never towards an occupied side. The log notes the recorded offset and the offset measured on return.',
-  firstLapCare='Race only: at the start and at every restart (green flag after the safety car, end of the restart lap, standing restart), each AI drives its first lap as a careful driver: the gap to the car ahead is counted in time (same effect in F1, GT or road cars), every braking zone of the lap is anticipated (braking points learnt from the leading cars, braking of the car ahead), the radar lifts off before it brakes, no defence, no tow-breaking and no dirty air, overtakes only on a real straight with a real advantage, avoidance only of a stopped or very slow car, aggression slightly lower. For each AI the mode ends at its first crossing of the line, when the pack has spread around it or after 3 minutes, then it is released over 3 seconds. The log notes the start and the end.',
-  startCautionMult='Race only: caution multiplied at the start of the race, then brought gradually back to normal during the settling time. A little higher = fewer clashes at the first corner, but too high and the middle of the pack lifts off before the corner.',
+  firstLapCare='Race only: at the start and at every restart (green flag after the safety car, end of the restart lap, standing restart), each AI drives its first lap as a careful driver: the gap to the car ahead is counted in time (same effect in F1, GT or road cars), every braking zone of the lap is anticipated (braking points learnt from the leading cars, braking of the car ahead), the radar lifts off before it brakes, no defence, no tow-breaking and no dirty air, overtakes only on a real straight with a real advantage, avoidance only of a stopped or very slow car, aggression slightly lower. For each AI the mode ends at its first crossing of the line, when the pack has spread around it or after 3 minutes, then it is released over 3 seconds. The log notes the start and the end. This switch is the only setting of the careful lap: the other Start settings only shape the first corner.',
+  startCautionMult='Race only: caution multiplied at the start of the race, only under braking and in corners (so at the first corner), then brought gradually back to normal during the settling time. A little higher = fewer clashes at the first corner, but too high and the middle of the pack lifts off before the corner. The careful first lap keeps its own limits: only its switch sets it.',
   startAggrMult='Race only: aggression multiplied at the start of the race (below 1 = calmer), then brought gradually back to normal during the settling time.',
   startRelax='Race only: length of the settling time after the start delay. Caution and aggression return to normal, and no overtaking or yielding is commanded during this phase.',
   -- Accidents
@@ -164,7 +164,7 @@ return {
   incidentStopMax='Upper bound of a crashed AI’s stop; the actual length is drawn at random for each accident.',
   rejoinGap='Clear distance required behind a crashed AI before it moves off: no car closer on the track.',
   yellowEnabled='Yellow flag: around an incident (a car stopped, spinning or going the wrong way, player included), a zone where cars slow down and do not overtake. Incident on track: double waved yellow, zone delta time; off track: single yellow, slightly reduced pace, no delta. The AI brake progressively on the approach.',
-  yellowSpeedKmh='Fallback speed under double yellow (incident on track), only where no pace is known yet (first lap); elsewhere, the zone delta time applies. No effect when a Slow Zone is set (Endurance).',
+  yellowSpeedKmh='Lowest fallback speed under double yellow (incident on track), only where no pace is known yet (first lap): the AI are held to this speed or to 35 % of their top speed, whichever is higher; elsewhere, the zone delta time applies. No effect when a Slow Zone is set (Endurance).',
   zoneDeltaPct='Double waved yellow (incident on track): in the zone, the reference time is this percentage slower than the usual pace (15%: about 0.87 times the speed, an app value; the FIA publishes no threshold, it requires drivers to slow down significantly, not to overtake and to give up any significant lap time; a Slow Zone, when set, replaces it). The delta is reset at the zone entry, allows braking from your speed at the approach board, and is judged at each mini-sector and at the zone exit. The AI follow the same reference with a small margin.',
   slowZoneKmh='Endurance Slow Zone (Le Mans, WEC): in a double yellow zone, the reference time is set at this fixed speed instead of the usual pace; 0 = zone delta time. The Endurance rules set it to 80 km/h. The delta is judged on each mini-sector, as in F1: going faster then slower evens out. The AI are limited to this speed in the zone.',
   yellowBefore='Start of the yellow zone before the incident: the AI already follow the zone reference time there and stop overtaking. Longer on a fast circuit, to brake in time.',
@@ -183,7 +183,7 @@ return {
   deltaBeeps='Delta time beeps, as in an F1 car: closer and closer together as the delta nears zero, very fast when it is negative. Volume: that of the beeps (Racing rules tab).',
   penaltySeconds='Length of the throttle cut imposed by a player penalty, and how long a sanctioned AI lifts off. The throttle cut only works with race settings that allow it.',
   yellowHud='Also forces AC’s small native yellow flag on your HUD when approaching a yellow zone (150 to 800 m before, depending on your speed) and under neutralisation, then hands control back to AC. Off by default since 1.5.0: the AdvancedIA panel replaces it.',
-  flagPanel='AdvancedIA flag panel, readable at a glance while driving (in-game overlay, adjustable in SETTINGS › Overlay: unlock it to move and resize it). Coloured band and flag with their code (SC, VSC, FCY, ! single yellow, !! double yellow, yellow and red stripes for a slippery surface), large instruction and large delta time (green when positive, flashing red when negative); pills for a penalty, a position to give back, PIT under a red flag, the gap of the car lapping you under a blue flag, “No overtaking” and “DRS disabled”; app version at the top. Red and blue flash, and so does a new flag for a few seconds. The game’s own flags and penalties (black, drive-through with the laps left, chequered, last lap, blue, yellow) are always shown there, even with the panel off or the app stopped: hide the original ones in CSP (“Hide race flags”).',
+  flagPanel='AdvancedIA flag panel, readable at a glance while driving (in-game overlay, adjustable in SETTINGS › ADVANCED › Overlay: unlock it to move and resize it). Coloured band and flag with their code (SC, VSC, FCY, ! single yellow, !! double yellow, yellow and red stripes for a slippery surface), large instruction and large delta time (green when positive, flashing red when negative); pills for a penalty, a position to give back, PIT under a red flag, the gap of the car lapping you under a blue flag, “No overtaking” and “DRS disabled”; app version at the top. Red and blue flash, and so does a new flag for a few seconds. The game’s own flags and penalties (black, drive-through with the laps left, chequered, last lap, blue, yellow) are always shown there, even with the panel off or the app stopped: hide the original ones in CSP (“Hide race flags”).',
   yellowMessage='On-screen messages: yellow flag, neutralisation (FCY, VSC, Safety Car), red flag, green flag, penalties and disqualifications.',
   -- Règles de course
   noMoveBraking='Common rule: no change of direction under braking. No lateral manoeuvre starts or continues under braking (pedal beyond 20%), except avoidance and recovery.',
@@ -247,12 +247,17 @@ return {
   trafficDensityGain='Track day only: distance added to the target gap for each AI present; the more cars there are, the more they spread out, within the length of the circuit.',
   trafficVariation='Track day only: random variation of the target gap from one AI to another, to avoid traffic that is too regular.',
   trafficMaxReduction='Track day only: maximum speed reduction, applied in 6 s pulses every 18 s, to an AI too close to the one ahead.',
+  qualiRuns='Practice and qualifying, as in real life: the AI drive real runs. Qualifying: an out-lap to warm the tyres, one flying lap (rarely a second one when the first was spoiled), an in-lap, a wait in the box, then a new run, on the softest dry compound with little fuel; no run that could not be finished before the flag. Practice: for each AI and each run, a programme drawn at random (qualifying simulation, long run, tyre test, fuel test, setup test); every run ends in the pits, none goes past the end of the session. Off by default.',
+  -- Beta 1.59: varied starting strategies, pit stop for damage.
+  strategyStartVariety='At the start, part of the AI start on a softer or harder dry compound (the back of the grid leans harder, the front softer); their stops follow their own wear. Cars whose compounds are not recognised are left as they are.',
+  damagePit='In the race, practice and qualifying, an AI with damaged bodywork, suspension, gearbox or engine pits for repairs (never under a flag or neutralisation unless the car is unsafe; in the race, never in the last two laps).',
  },
  globals={
   overlayLocked='Locked, the overlay stays in place and lets clicks through. Unlocked, it stays visible: drag it to move it, pull its bottom right corner for its size, right-click to lock it.',
   overlayScale='Size of the in-game overlay (1.00x: 600 px wide). Also set by pulling its bottom right corner once unlocked.',
   overlayBackground='Overlay background: opaque (at the opacity set), dimmed (lighter) or transparent (text and flags only).',
   overlayContent='Opacity of the text, flags and pills of the overlay, separate from the background opacity.',
+  overlayEnabled='Off: the app draws no overlay at all (band, session line, summary, DRS, line and sanction notices, AC messages taken over) and gives AC’s own displays back: its session box, its flags and its system messages (CSP options set back to your values). The app’s flag window stays empty too. While CSP still hides AC’s flags or messages (not re-read yet, write limit, read-only file), only the game’s flags, penalties and messages are drawn, so nothing is lost. Driving, rules and penalties are unchanged. On by default.',
   overlaySession='Top line of the overlay: position, lap of the total (or time left), best lap, mandatory stop and fuel left in laps. It replaces the AC session box.',
   overlayExplain='Under the instruction, an explanation of what is happening: yellow flag, double yellow, Safety Car, VSC, FCY, red flag, blue flag.',
   overlayRecap='At the end of a race: chequered flag, congratulations for your place, places gained or lost since the start, best lap compared with the whole field, overtakes and laps.',
@@ -302,7 +307,7 @@ return {
  sections={
   strategy='Applies the AI strategy to the profile shown (it acts in the race only). Unticked: stops left to the racing rules and to AC, no failures.',
   sanctions='Applies the sanctions to the profile shown (practice, qualifying and race). Unticked: no such sanctions, neither for the AI nor for your track limits.',
-  general='Applies the settings of this section to the profile shown. Off: native level, aggression and caution, with no differences between drivers.',
+  general='Applies the settings of this section to the profile shown. Off: native level, aggression and caution, with no differences between drivers, and no AI distribution or staggered pit exits by the app at the session start.',
   yield='Applies the yielding settings to the profile shown. Off: no standard yielding and no reaction to pressure.',
   blue='Applies blue flags to the profile shown. Off: no yielding to the cars lapping.',
   flash='Applies headlight flashes to the profile shown. Off: your flashes are ignored and the AI do not flash each other.',
@@ -327,6 +332,7 @@ return {
  },
  presets={
   J='Nordschleife Touristenfahrten preset, applied to the Track day profile: dense traffic, yielding to the right, headlight flashes, spacing, accidents and weather.',
+  T='Track day preset, applied to the Track day profile on any track but the Nordschleife: like the Nordschleife, but the slower car moves aside to the free side, the pass goes on the best side and headlight flashes are rarer. Chosen automatically for a track day away from the Nordschleife.',
   P='Free practice preset, applied to the Practice profile: practice pace (97%), calmer drivers, yielding to faster cars, accidents and weather.',
   Q='Flying-lap qualifying preset, applied to the Qualifying profile: slow AI move clearly out of the way of a fast lap.',
   C='Realistic race preset, applied to the Race profile: blue flags, overtaking on the automatic side, defending, careful start, accidents and weather. It also sets the championship rules (base rules: mandatory stop, Safety Car, rule set) for the whole weekend (Practice, Qualifying and Race); only your preferences and class patterns are kept.',
@@ -362,7 +368,7 @@ return {
   panic='Immediately stops all of the app’s commands: the AI are native again until you resume.',
   language='Interface language: French (FR) or English (EN). Immediately changes the settings window, the tooltips, the flag panel and the on-screen messages; the choice is saved. The session log stays in French.',
   resume='Resumes the commands after a panic, from the current line of the AI.',
-  presetBySession='On (default): as soon as a session is detected (automatic profile), its built-in preset is applied and lit: Free practice in practice, Qualifying flying lap in qualifying, Realistic race in the race, Nordschleife Touristenfahrten on a track day (the Nordschleife included). Another built-in preset you chose for this profile (Multi-class endurance) is kept; a personal preset loaded into this profile is never replaced. Your championship rules (rule set, mandatory stop, Safety Car), preferences and class patterns are kept. Your changes during the session stay until the next session. Off: the recommended preset is only applied to a profile never set, as before.',
+  presetBySession='On (default): as soon as a session is detected (automatic profile), its built-in preset is applied and lit: Free practice in practice, Qualifying flying lap in qualifying, Realistic race in the race, Nordschleife Touristenfahrten on a track day on the Nordschleife, Track day on any other track. Another built-in preset you chose for this profile (Multi-class endurance) is kept; a personal preset loaded into this profile is never replaced. Your championship rules (rule set, mandatory stop, Safety Car), preferences and class patterns are kept. Your changes during the session stay until the next session. Off: the recommended preset is only applied to a profile never set, as before.',
   restore='Resets every value of the profile shown to its default. Sections that are on stay on; the chosen racing rules (F1 2025, F1 2026, GT, Endurance...), your preferences (panel, messages, HUD flag, DRS and delta beeps, volume) and your class patterns are kept. The preset loaded in this profile is forgotten: with the session preset on (automatic profile), the next session applies the recommended preset.',
   reroll='Draws a new seed: new personalities for all the AI.',
   customPreset='Loads this custom preset into its profile (saved values and global options).',
@@ -394,5 +400,8 @@ return {
   updateNotes='Opens the release page on GitHub in your browser.',
   updateRollback='Puts back the version saved before the last update, then the app restarts. Your settings are kept.',
   updateToggle='At launch, a single request to GitHub (api.github.com) to know whether a newer version exists; no personal data is sent. Untick to never contact GitHub.',
+  -- Beta 1.59 (export/import).
+  presetExport='Writes your custom presets and the settings of the five profiles to Documents\\Assetto Corsa\\AdvancedIA\\AdvancedIA-presets.ini, to keep or share them. The seed, the detailed log, the update, language and window settings are never written. If CSP refuses that folder, the file goes to the app folder in CSP, and the message says so.',
+  presetImport='Reads AdvancedIA-presets.ini back (Documents\\Assetto Corsa\\AdvancedIA, otherwise the app folder in CSP). Every value is checked: an unknown key is ignored, an out-of-range value takes the default. Nothing changes before you confirm; a damaged file is refused as a whole.',
  },
 }

@@ -9,6 +9,8 @@ local function clearCar(c)
  c.incident=false; c.dismissed=false; c.since=0; c.spline=0; c.onTrack=false; c.clearedAt=-math.huge; c.wrong=0; c.spin=0; c.contact=false; c.lastSpline=-1; c.calm=0
  c.still=0; c.halt=0; c.moved=false; c.fresh=true; c.slow=0; c.counted=false; c.lastCrash=-math.huge; c.window=0; c.windowStart=-math.huge; c.crashAt=-math.huge; c.holding=false; c.holdUntil=0; c.holdMax=0; c.announced=false
  c.restart=false; c.restartLast=0; c.stuckFor=0; c.anchorX=math.huge; c.anchorZ=math.huge
+ -- Beta 1.59 : vitesse au début de la glissade, tête-à-queue confirmé (perte de vitesse), zone double (arrêtée ou au pas).
+ c.spinFrom=0; c.spun=false; c.double=false; c.backOn=0; c.hotspotFed=false
 end
 function M.new()
  local t={cars={},zones={},zoneCount=0,activeCount=0,holdCount=0,neutral=false,neutralMode='local',neutralSince=0,neutralUntil=0,
@@ -20,12 +22,15 @@ function M.new()
   relaunch=false,escalated=false,ending=false,endingUntil=0,restart=false,restartSince=0,playerRestart=false,pitsClosed=false,releaseAt={},
   gate={},gateSince={},openedAt={},releaseList={},releaseN=0,redOrder={},redRank={},redOrderN=0,restored={},junction=-1,
   safetyPlaceSince=-math.huge,safetyTarget=-1,safetyRef=0,safetyFrom='',safetySlow=false,safetyLastSpline=-1,parkingSince=-math.huge,firstOut=0,firstOutSpline=0,
-  restartRank=0,restartAhead=0,restartState='',restartTarget=0}
+  restartRank=0,restartAhead=0,restartState='',restartTarget=0,
+  -- Beta 1.59 : incidents récents (point difficile) et points difficiles armés.
+  recent={},recentN=0,hotspots={},hotspotN=0,hotspotSeen={},hotspotPause=false,hotspotForget=K.hotspotForget}
  for i=1,K.maxCars do
   t.releaseAt[i]=-math.huge; t.gate[i]=false; t.gateSince[i]=-math.huge; t.openedAt[i]=-math.huge
   local c={identity=''}; clearCar(c); c.crashes=0; t.cars[i]=c
   t.zones[i]={slot=0,spline=0,onTrack=false}
  end
+ for k=1,K.hotspotRecent do t.recent[k]={spline=0,at=-math.huge} end
  return t
 end
 -- Beta 1.48 : ordre figé au drapeau rouge (sortie des stands, grille, overlay, dépassements permis pour reprendre sa
@@ -40,7 +45,7 @@ M.clearOrder=clearOrder
 -- changement de session et app à l'arrêt (jamais ceux de la session précédente).
 local noTyres={}
 function M.clearPlayerPit(t)
- t.playerPitDue=0; t.playerPitRemind=false; t.playerPitCompound=false; t.playerPitHint=false; t.playerTyre=''; t.playerTyreOthers=noTyres
+ t.playerPitDue=0; t.playerPitRemind=false; t.playerPitShowRemind=false; t.sePlanMode=nil; t.playerPitCompound=false; t.playerPitHint=false; t.playerTyre=''; t.playerTyreOthers=noTyres
  t.playerPlan=''; t.playerPlanned=''; t.playerPlanNotice=false; t.playerPitNotice=''; t.playerPitFrom=''; t.playerPitTo=''
 end
 function M.reset(t)
@@ -53,10 +58,13 @@ function M.reset(t)
  t.releaseN=0; clearOrder(t); t.safetyPlaceSince=-math.huge; t.safetyTarget=-1; t.safetySlow=false; t.safetyLastSpline=-1; t.parkingSince=-math.huge; t.firstOut=0
  t.standing='none'; t.gridLit=0; t.jumpUntil=-math.huge; t.gridPlaced=false; t.gridPassed=false
  t.relaunchLeader=0; t.relaunchTravel=0; t.relaunchSpanUntil=-math.huge
+ t.recentN=0; for k=1,K.hotspotRecent do t.recent[k].at=-math.huge end; t.hotspotN=0
 end
 function M.rebase(t,amount)
  t.neutralSince=t.neutralSince-amount; t.neutralUntil=t.neutralUntil-amount; t.safetySince=t.safetySince-amount; t.redSince=t.redSince-amount
  if U.finite(t.redEnd) then t.redEnd=t.redEnd-amount end
+ for k=1,K.hotspotRecent do local r=t.recent[k]; if U.finite(r.at) then r.at=r.at-amount end end
+ for k=1,t.hotspotN do local h=t.hotspots[k]; h.at=h.at-amount end
  if U.finite(t.neutralEnd) then t.neutralEnd=t.neutralEnd-amount end
  if U.finite(t.greenUntil) then t.greenUntil=t.greenUntil-amount end
  if U.finite(t.slipperyUntil) then t.slipperyUntil=t.slipperyUntil-amount end
@@ -409,6 +417,8 @@ end
 -- ready : session lancée, hors grille de départ. Une voiture arrêtée, en tête-à-queue ou à contresens est un incident ;
 -- hors piste depuis longtemps, elle est considérée comme dégagée par les commissaires.
 function M.update(t,frame,p,profile,now,dt,ready,seed)
+ -- Beta 1.59 (relecture) : point difficile oublié plus vite en course (2 x K.hotspotWindow s).
+ t.hotspotForget=profile=='C' and K.hotspotForgetRace or K.hotspotForget
  t.frameId=(t.frameId+1)%K.counterMax; t.now=now
  t.zoneCount=0; t.activeCount=0; t.holdCount=0; t.onTrack=0; t.freshOnTrack=0
  t.redCount=0; t.redStopped=0; t.redQueued=0; t.redCars=t.redCars or {}
@@ -425,7 +435,15 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
    if c.lastSpline>=0 and a.kmh>=K.wrongWaySpeed and U.spline(a.spline-c.lastSpline)<0 then c.wrong=min(K.wrongWayTime*2,c.wrong+dt) else c.wrong=max(0,c.wrong-dt) end
    c.lastSpline=a.spline
   else c.lastSpline=-1; c.wrong=0 end
-  if a.valid and a.slip>K.slipDegrees and a.kmh>=K.spinSpeed then c.spin=min(K.spinTime*2,c.spin+dt) else c.spin=max(0,c.spin-dt) end
+  if a.valid and a.slip>K.slipDegrees and a.kmh>=K.spinSpeed then
+   -- Beta 1.59 : vitesse la plus haute de la glissade, pour juger la perte de vitesse d'un vrai tête-à-queue.
+   c.spinFrom=c.spin>0 and max(c.spinFrom,a.kmh) or a.kmh
+   c.spin=min(K.spinTime*2,c.spin+dt)
+  else c.spin=max(0,c.spin-dt) end
+  -- Beta 1.59 (course de 10 tours du 10 novembre ; MJFox : peloton freiné pour une voiture à peine dans l'herbe) : une
+  -- glissade de plus de K.slipDegrees degrés n'est un tête-à-queue que si la voiture perd au moins K.contactDrop km/h,
+  -- ou roule déjà au pas ; une glissade rattrapée en gardant sa vitesse n'est pas un incident.
+  c.spun=c.spin>=K.spinTime and (c.spinFrom-a.kmh>=K.contactDrop or a.kmh<p.obstacleSpeedKmh)
   local eligible=ready and a.valid and not a.pit and not a.finished and a.splineValid and not a.safetyCar
   -- Voiture réellement arrêtée (drapeau rouge, incident majeur) : un tête-à-queue qui roule encore n'en est pas une.
   if eligible and a.kmh<K.redStopSpeed then c.still=c.still+dt else c.still=0 end
@@ -447,29 +465,43 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
    c.counted=true; local reason=not c.moved and 'spawn' or a.kmh>=K.incidentStopSpeed and 'crawl' or 'queue'
    t.suppressed[reason]=t.suppressed[reason]+1
   end
-  local raw=eligible and (c.halt>=K.obstacleTime or c.spin>=K.spinTime or c.wrong>=K.wrongWayTime)
+  local raw=eligible and (c.halt>=K.obstacleTime or c.spun or c.wrong>=K.wrongWayTime)
   if raw then c.calm=0 else c.calm=c.calm+dt end
   -- Fin confirmée après quelques secondes de conduite normale : une glissade qui se stabilise reste un seul incident,
   -- et le délai d'incident majeur n'est pas remis à zéro.
   -- Une voiture encore lente après un tête-à-queue reste le même incident jusqu'à ce qu'elle reparte.
   local incident=raw or eligible and c.incident and (c.calm<K.incidentClear or a.kmh<p.obstacleSpeedKmh)
-  if not incident or not a.offtrack then c.dismissed=false end
+  -- Beta 1.59 (relecture) : dégagement tenu tant que la voiture reste arrêtée (pas d'incident neuf à chaque sautillement
+  -- de la lecture hors piste) ; levé quand elle repart ou revient en piste plus de K.offClearBack s.
+  if a.offtrack then c.backOn=0 else c.backOn=(c.backOn or 0)+dt end
+  if not incident or c.still==0 or (c.backOn or 0)>K.offClearBack then c.dismissed=false end
+  if c.still==0 then c.hotspotFed=false end
   if incident and not c.incident then
    c.since=now; c.announced=false
    if not c.dismissed then
     t.started=t.started+1
-    note(t,'INFO',string.format('incident: %s, %s, %.0f m, %.0f km/h, %s',c.halt>=K.obstacleTime and 'arret' or c.spin>=K.spinTime and 'tete-a-queue' or 'contresens',
+    note(t,'INFO',string.format('incident: %s, %s, %.0f m, %.0f km/h, %s',c.halt>=K.obstacleTime and 'arret' or c.spun and 'tete-a-queue' or 'contresens',
      a.offtrack and 'hors piste' or 'en piste',a.spline*frame.length,a.kmh,a.name),i)
+    if not t.hotspotPause and not c.hotspotFed then c.hotspotFed=true; M.hotspotNote(t,a.spline,frame.length,now,i) end
    end
   end
-  if incident and (c.dismissed or a.offtrack and now-c.since>K.incidentMaxAge) then
-   if not c.dismissed then note(t,'INFO','incident ecarte: hors piste depuis plus de '..K.incidentMaxAge..' s',i) end
+  -- Beta 1.59 : voiture arrêtée hors piste, loin de la trajectoire (plus de K.offClearLat m) depuis K.offClearTime s :
+  -- dégagée comme par les commissaires (sinon au bout de K.incidentMaxAge s hors piste, comme avant).
+  local edge=math.max(a.leftWidth or 0,a.rightWidth or 0)
+  local beyond=(a.wheelsOut or 0)>=4 or edge>0 and a.splineLatValid and math.abs(a.splineLat)>edge+K.offClearEdge
+  local clear=incident and not c.dismissed and a.offtrack and beyond and c.still>=K.offClearTime and a.splineLatValid and math.abs(a.splineLat)>K.offClearLat
+  if incident and (c.dismissed or clear or a.offtrack and now-c.since>K.incidentMaxAge) then
+   if not c.dismissed then note(t,'INFO',clear and 'incident ecarte: arretee hors piste, loin de la trajectoire depuis '..K.offClearTime..' s' or 'incident ecarte: hors piste depuis plus de '..K.incidentMaxAge..' s',i) end
    c.dismissed=true; incident=false
   end
   if incident then
    c.spline=a.spline; c.onTrack=not a.offtrack; t.activeCount=t.activeCount+1
+   -- Beta 1.59 : double jaune pour une voiture en piste arrêtée, lente (moins de obstacleSpeedKmh km/h, jamais moins de
+   -- K.doubleFloorKmh) ou à contresens ; une voiture qui roule encore à bonne allure en piste : jaune simple. Jugé en
+   -- direct, gardé pendant la tenue de la zone.
+   c.double=c.onTrack and (a.kmh<math.max(p.obstacleSpeedKmh,K.doubleFloorKmh) or c.halt>0 or c.wrong>=K.wrongWayTime)
    if c.onTrack and not a.player then t.onTrack=t.onTrack+1; if c.since>t.redEnd and c.still>=K.redStopTime then t.freshOnTrack=t.freshOnTrack+1 end end
-   if c.spin>=K.spinTime then c.spunIncident=true end
+   if c.spun then c.spunIncident=true end
    -- Incident majeur : voiture immobile en piste (pas une voiture qui roule au pas), apparue depuis la dernière
    -- neutralisation levée au délai maximal.
    if c.onTrack and c.still>=p.majorIncidentTime and c.since>t.neutralEnd then major=true; majors=majors+1; longest=max(longest,c.still) end
@@ -488,7 +520,7 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   end
   c.incident=incident
   if incident or now-c.clearedAt<p.yellowHold then
-   t.zoneCount=t.zoneCount+1; local z=t.zones[t.zoneCount]; z.slot=i; z.spline=c.spline; z.onTrack=c.onTrack
+   t.zoneCount=t.zoneCount+1; local z=t.zones[t.zoneCount]; z.slot=i; z.spline=c.spline; z.onTrack=c.double
   end
   -- Accident d'une IA : forte décélération avec contact, sortie de piste ou tête-à-queue, puis quasi-arrêt.
   c.contact=c.contact or a.collided or a.offtrack or a.slip>K.slipDegrees
@@ -892,7 +924,7 @@ function M.cap(t,frame,i,p,d,states,margin)
      -- Beta 1.47 (départs de Monza : peloton entier à 50 km/h derrière un carambolage au premier tour) : allure inconnue,
      -- repli relatif à la voiture (K.yellowUnknownPct de sa vitesse maximale vue), jamais sous yellowSpeedKmh : le même
      -- ralentissement pour une F1, une GT ou une voiture de route.
-     if zone.onTrack then v=Delta.zoneReference(d,states,i,rb,multi,p,max(p.yellowSpeedKmh,K.yellowUnknownPct*(states[i].topKmh or 0))) else v=Delta.reference(d,states,i,rb,multi,K.singleYellowPct,0) end
+     if zone.onTrack then v=Delta.zoneReference(d,states,i,rb,multi,p,max(p.yellowSpeedKmh,K.yellowUnknownPct*(states[i].topKmh or 0))) else v=Delta.reference(d,states,i,rb,multi,K.singleYellowPct,t.cars[zone.slot].onTrack and max(p.yellowSpeedKmh,(states[i].topKmh or 0)*K.yellowUnknownPct) or 0) end
      if at>=0 then
       if v>0 then cap=min(cap,v*slow) end
       yellow=true
@@ -922,6 +954,40 @@ function M.cap(t,frame,i,p,d,states,margin)
  -- Reprise : dépassement interdit jusqu'à la ligne (file derrière la voiture de devant), sans limite de vitesse.
  if t.restart and t.cars[i].restart then yellow=true end
  return cap,yellow
+end
+-- Beta 1.59 (idée d'Artood2s, décision du pilote) : point difficile appris en direct. K.hotspotCount incidents à moins de
+-- K.hotspotMeters m les uns des autres en K.hotspotWindow s : armé, noté une fois ; oublié après K.hotspotForget s sans
+-- nouvel incident tout près. Les IA y sont plus prudentes et n'y commencent aucun dépassement (src/director.lua).
+-- U.spline ramène déjà l'écart dans [-0,5 ; 0,5[ (tour bouclé).
+local function gapMeters(s1,s2,length) return math.abs(U.spline(s1-s2))*length end
+function M.hotspotNote(t,spline,length,now,index)
+ if length<=0 then return end
+ local k=t.recentN%K.hotspotRecent+1; t.recentN=t.recentN+1
+ local r=t.recent[k]; r.spline=spline; r.at=now; r.index=index or -k
+ for h=1,t.hotspotN do local spot=t.hotspots[h]; if gapMeters(spot.spline,spline,length)<=K.hotspotMeters then spot.at=now; return end end
+ -- Voitures distinctes (une voiture qui s'arrête deux fois au même endroit compte une fois).
+ local count=0; local seen=t.hotspotSeen; for key in pairs(seen) do seen[key]=nil end
+ for j=1,K.hotspotRecent do local q=t.recent[j]; if now-q.at<=K.hotspotWindow and gapMeters(q.spline,spline,length)<=K.hotspotMeters and not seen[q.index] then seen[q.index]=true; count=count+1 end end
+ if count<K.hotspotCount or t.hotspotN>=K.hotspotMax or (t.hotspotN+1)*2*K.hotspotMeters>K.hotspotLengthShare*length then return end
+ t.hotspotN=t.hotspotN+1
+ local spot=t.hotspots[t.hotspotN]; if not spot then spot={}; t.hotspots[t.hotspotN]=spot end
+ spot.spline=spline; spot.at=now
+ note(t,'INFO',string.format('point difficile: %.0f m (%d incidents en %.0f s au plus), prudence accrue pour les IA, aucun depassement commence',spline*length,count,K.hotspotWindow),-1)
+end
+-- Point difficile armé à moins de K.hotspotMeters m (devant ou derrière) ; les points oubliés sont retirés ici.
+function M.nearHotspot(t,spline,length,now)
+ if t.hotspotN==0 or length<=0 then return false end
+ local h=1
+ while h<=t.hotspotN do
+  local spot=t.hotspots[h]
+  if now-spot.at>(t.hotspotForget or K.hotspotForget) then
+   t.hotspots[h]=t.hotspots[t.hotspotN]; t.hotspots[t.hotspotN]=spot; t.hotspotN=t.hotspotN-1
+  else
+   if gapMeters(spot.spline,spline,length)<=K.hotspotMeters then return true end
+   h=h+1
+  end
+ end
+ return false
 end
 -- Drapeau jaune affiché au joueur dans une zone, à son approche ou sous neutralisation ; annonce unique par incident.
 function M.player(t,frame,p,now)
@@ -954,8 +1020,21 @@ function M.player(t,frame,p,now)
      elseif -at<nearest then nearest=-at; nearDouble=zone.onTrack end
      local c=t.cars[zone.slot]
      if c.incident and not c.announced then
-      c.announced=true; note(t,'INFO',string.format('drapeau jaune au joueur: incident a %.0f m',math.max(0,p.yellowBefore-at)),zone.slot)
-      if p.yellowMessage then message(t,'yellow',math.max(0,p.yellowBefore-at)) end
+      c.announced=true
+      -- Beta 1.59 : une seule annonce par groupe d'incidents : rien de plus quand une zone déjà annoncée, encore active
+      -- ou tenue, est à moins de yellowBefore + yellowAfter m (zones, vitesses, delta et panneaux inchangés).
+      local merged=false
+      for k=1,t.zoneCount do
+       local other=t.zones[k]
+       if other.slot~=zone.slot and other.slot~=i and t.cars[other.slot].announced and (other.onTrack or not zone.onTrack) then
+        local gap=gapMeters(other.spline,zone.spline,frame.length)
+        if gap<=p.yellowBefore+p.yellowAfter then merged=true; break end
+       end
+      end
+      if not merged then
+       note(t,'INFO',string.format('drapeau jaune au joueur: incident a %.0f m',math.max(0,p.yellowBefore-at)),zone.slot)
+       if p.yellowMessage then message(t,'yellow',math.max(0,p.yellowBefore-at)) end
+      end
      end
     end
    end

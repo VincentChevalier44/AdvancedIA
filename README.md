@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 1.58. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 1.59. See [CHANGELOG.md](CHANGELOG.md).
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
 
@@ -112,7 +112,7 @@ The repository download also contains the test bench and the technical documents
    - The **SETTINGS** tab has a sidebar with four groups: **DRIVING**, **TRAFFIC**, **RACE & SAFETY** and **ADVANCED**. See [Settings overview](#settings-overview).
    - The window has no title bar. Drag an empty area to move it.
 5. **What is active on a first installation:**
-   - With **Automatic profile** and **Built-in preset for the session detected** on (both by default), each new session gets its built-in preset as soon as it is detected: Track day → **Nordschleife Touristenfahrten**, Practice → **Free practice**, Qualifying → **Flying-lap qualifying**, Race → **Realistic race**. The racing rules start as the **Base rules**. See [Sections, built-in presets and first-install behaviour](#sections-built-in-presets-and-first-install-behaviour).
+   - With **Automatic profile** and **Built-in preset for the session detected** on (both by default), each new session gets its built-in preset as soon as it is detected: Track day → **Nordschleife Touristenfahrten** on the Nordschleife or **Track day** elsewhere, Practice → **Free practice**, Qualifying → **Flying-lap qualifying**, Race → **Realistic race**. The racing rules start as the **Base rules**. See [Sections, built-in presets and first-install behaviour](#sections-built-in-presets-and-first-install-behaviour).
    - **Hotlap** gets no preset: only the racing rules are on (flag overlay, DRS beep, no AI to drive).
    - With that switch off, or with a manual profile, **Track day** stays fully native (*No section enabled: native AI*) until you load a preset on **HOME** or tick a section; the AI distribution and the CSP AI flood handling stay inactive too.
 6. **The overlay** appears centred at the top of the screen.
@@ -279,7 +279,8 @@ Built-in presets (**HOME › BUILT-IN PRESETS**).
 
 | Preset | Applied to | Extra sections | Own values |
 |---|---|---|---|
-| **Nordschleife Touristenfahrten** | Track day | Yielding, Spacing | none |
+| **Nordschleife Touristenfahrten** | Track day on the Nordschleife | Yielding, Spacing | none |
+| **Track day** | Track day on any other track | Yielding, Spacing | yield side and overtaking side **Automatic** (no keep-right rule), fewer headlight flashes (range 150 m, 15 km/h advantage) |
 | **Free practice** | Practice | Yielding | level 97%, aggression 40%, level spread 6%, lapses in focus on, chained overtakes |
 | **Flying-lap qualifying** | Qualifying | Yielding | none |
 | **Realistic race** | Race | Blue flags, Start | overtaking side **Automatic** |
@@ -294,10 +295,10 @@ Built-in presets (**HOME › BUILT-IN PRESETS**).
 
 **First installation** (no saved settings):
 - **Practice**, **Qualifying** and **Race** start as if you had clicked **Base rules**: their recommended preset, then the base rules, with racing rules on. **Track day** starts with no section ticked, **Hotlap** with its racing rules only.
-- At the first session detected, the session preset below applies: a Track day gets **Nordschleife Touristenfahrten**, the other sessions their own preset, with the base rules kept. With that switch off (or a manual profile), a Track day sends no command, probe or calibration until one of its sections is ticked.
+- At the first session detected, the session preset below applies: a Track day gets **Nordschleife Touristenfahrten** on the Nordschleife and **Track day** elsewhere, the other sessions their own preset, with the base rules kept. With that switch off (or a manual profile), a Track day sends no command, probe or calibration until one of its sections is ticked.
 
 **Built-in preset for the session detected** (**HOME › BUILT-IN PRESETS**, switch on by default).
-- With the automatic profile, as soon as a new session is detected (track and session index), its built-in preset is applied and lit: Track day → **Nordschleife Touristenfahrten** (the Nordschleife included; the journal notes the track), Practice → **Free practice**, Qualifying → **Flying-lap qualifying**, Race → **Realistic race**. Hotlap gets none.
+- With the automatic profile, as soon as a new session is detected (track and session index), its built-in preset is applied and lit: Track day → **Nordschleife Touristenfahrten** on the Nordschleife (a track name with *nordschleife*, or *nurburgring* / *nuerburgring* longer than 15 km; the journal notes the track) and **Track day** on any other track, Practice → **Free practice**, Qualifying → **Flying-lap qualifying**, Race → **Realistic race**. Hotlap gets none.
 - Another built-in preset you chose for that profile (**Multi-class endurance** for the Race or the Track day) is kept and applied again; a custom preset you loaded into that profile is never replaced.
 - Your championship rules (rule set, mandatory stop, Safety Car), preferences and class patterns are kept. Your own changes during the session stay until the next session: reloading the app in the same game launch, or switching profile back and forth (A → B → A) in the same session, does not apply the preset again. Nothing is applied while the app is switched off, in a replay or online. Journal: `preset_session: <name> (profil <P>)`.
 - **Your own presets win.** Loading or saving a custom preset marks the profile **Perso**: the session preset never replaces it. Deleting the loaded preset, or **RESTORE DEFAULTS: <profile>**, clears the mark, and the next session applies the recommended preset again.
@@ -339,7 +340,7 @@ Section **Personality** (sidebar **DRIVING**).
   - Wheel lock-ups under braking and wheelspin out of corners, triggered through CSP's native functions. They may end in an off, a spin or a crash, and therefore in a yellow flag, a neutralisation or a Safety Car.
   - Rate: 1 per hour per AI on a Track day, 0.5 elsewhere (a 20-AI grid makes about ten mistakes an hour, not all of them ending in a crash).
   - More frequent for a weaker driver, a tired one (Endurance layer), one in a lapse of focus, or in the rain.
-  - Never under flags or within three minutes after a neutralisation, in the first minute of a race, on pit exit, side by side or within 40 m of you. Never more than once every three minutes for the same AI.
+  - Never under flags or within three minutes after a neutralisation, in the first minute of a race, on pit exit, side by side or within 40 m of you. Never more than once every three minutes for the same AI, and at least 60 s between two mistakes anywhere in the field (Beta 1.59; 20 s before).
   - Each mistake is written to the log (`erreur de pilotage: …`).
 
 ### Yielding
@@ -361,6 +362,14 @@ Section **Yielding** (sidebar **TRAFFIC**). It applies on a Track day, in Practi
 - **Inviting a pass.** If the car behind stays within 25 m for more than 12 s while the AI yields, the AI slows down a further 10% to invite it past.
 - **Letting an AI by yourself**. Move at least 2 m aside in front of an AI (within 40 m): it passes on the side you freed, with no speed advantage needed. In the race this works on straights only; in practice, qualifying and track day also in gentle corners (up to about 0.4 g), the part of the gap due to the bend itself being taken off. Outside the race, simply slowing down clearly below the AI's own pace there is enough too: it passes you even at a crawl, is never written off after a failed attempt, and the courtesy rule (no counter-attack right after you passed it) no longer holds it back.
 - **Timeout.** After **Maximum yield duration (s)** (25 s), the AI returns to its line and ignores that car for 10 s.
+- **Traffic that flows** (Track day, Practice and Qualifying; the race is unchanged):
+  - A yielding AI really lifts: on straights its top speed drops to 15 km/h under the speed of the car it lets by (never below 30 km/h), reached gently at 6 km/h per second (a lift-off, never a brake check), for a follower up to 40 m behind or alongside; the reference is the highest follower speed seen in the episode, so the follower braking to keep its gap never drags the cap down. It is lifted gently too (never below the current speed, rising 8 km/h per second). With two or more cars queued behind it for 3 s, or when the yielding car is already slow (abnormal, or under 60% of its usual or class pace), there is no cap, so a car held under its speed never becomes a jam.
+  - The follower commits: while the car ahead is yielding to it, its attempt is not abandoned for *target faster*, *no progress*, *no closing* or *attempt too long*. Closed side, a fast car behind and a stalled side-by-side still end it.
+  - The AI refuses to yield only to a follower clearly slower at this point of the track (usual pace more than 3 km/h lower); a similar or unknown pace gets the yield.
+  - A car abnormally slow for its class (under 50% of the class pace here) with traffic behind becomes an obstacle to pass even when its own usual pace is not known yet; every car of the queue behind it (up to six cars, each within 60 m of the next) may then go round it or pass it, light braking from AC's gap keeping included (under 30% brake), on straights. Heavier braking still forbids any change of line.
+  - The front radar no longer brakes for a car ahead that is moving aside and will be clear of its path at contact (you moving off the line to let it by); a real overlap still brakes. With you at least 2 m off its line within 40 m on a straight, the light braking AC does to keep its gap (under 30%) no longer holds back the pass.
+- **Corner-entry priority** (every profile, the race included): when two cars arrive side by side at a corner (braking or turn-in), the one whose nose is ahead by more than 2.2 m has priority. An AI whose nose is behind (you included as the other car) leaves its pass or defence, lifts off gently (never with a car within 20 m behind it), never moves towards the other car and does not attack again for 1.5 s. The decision is made in the first second of the corner, so a pass already alongside in a long curve is not cut. Journal: `priorite au virage: A cede a B (nez derriere)`; minute summary `priorites au virage cedees N`.
+  - Minute summary: `trafic : depassements de voiture lente N (dont de file N), limites de cession levees pour la file N`.
 - **Minute summary**: besides `cessions`, `abouties` and `cessions sans passage`, the line gives how the other yields ended (`fins de cession : duree max, jaune, autres`) and the yields refused for lack of a real advantage.
 - **Reaction to pressure.** A car sitting within 15 m behind at a similar speed (8 km/h difference at most) is let through after **Pressure duration (s)** (4 s on a Track day, 3 s in Practice and Qualifying).
 - **Queues on a track day**:
@@ -372,6 +381,26 @@ Section **Yielding** (sidebar **TRAFFIC**). It applies on a Track day, in Practi
   - It never attacks a flying car ahead of it (unless invited or that car is abnormally slow), and an AI on a flying lap does not do standard yielding for a car that is not.
   - An AI leaving the pits waits at the end of the pit lane while a flying car reaches the merge (see [Pit exit](#pit-exit)).
   - **AI cool-down laps** (Qualifying only, **Qualifying: AI cool-down laps**, on by default): after one or two flying laps in a row (drawn for each AI), an AI drives a cool-down lap at a level 12% lower (reached in 4 s, given back within 3 s after the line), then starts a new flying lap; during that lap it is not on a flying lap and lets flying cars by. Never when less than 2.5 laps of session time remain (based on its last lap, at least 60 s), so the last attempt counts. It acts through the AI level, so it needs the **General** section ticked. Journal: `tour de refroidissement: <name>`.
+  - **Practice and qualifying: real AI runs** (Yielding section, practice and qualifying profiles, off by default). The AI drive real runs and go back to the pits between them.
+    - **Qualifying:** an out-lap to warm the tyres, one flying lap, an in-lap, then a wait in the box (60 to 150 s) and a new run.
+      - The AI get a second flying lap only rarely, when the first one was spoiled.
+      - Each run uses the softest dry compound and just enough fuel: out-lap, flying lap, in-lap and a lap and a half of reserve (the consumption learnt in the session first, otherwise the one CSP gives).
+      - A run that could no longer be finished before the flag is not started; the AI then stays in its box.
+      - The planned cool-down laps (**Qualifying: AI cool-down laps**) are not used while this is on.
+    - **Practice:** for each AI and each run, a programme drawn at random:
+      - qualifying simulation (soft tyres, low fuel, one flying lap);
+      - long run (8 to 14 laps, race fuel, tyre kept);
+      - tyre test (4 to 7 laps on another dry compound);
+      - fuel test (5 to 8 laps, heavy or light);
+      - setup test (2 or 3 laps, then back to the box). AI setups cannot be changed through CSP, so this is only the run-and-stop pattern; no pace change is invented.
+      - Every run ends in the pits, and the box wait is 90 to 300 s. A run is shortened so that it never goes past the end of the session; with less than one lap left, the AI stays in its box.
+    - **How it works:**
+      - The softest compound is found from the tyre names, with the same ranking as the varied starting strategies (SS, S, M, H…, Hyper/Ultra/Extra/Super Soft, Soft, Medium, Hard, Pirelli C1–C6). On a wet track, or when the weather has chosen the tyres, no dry compound is fitted. For a car whose compounds cannot be ranked, the tyre is left as it is, with one line per model in the log.
+      - Fuel is set in the box with CSP's `physics.setCarFuel`, and only when the car's consumption is known.
+      - The in-lap goes through the usual pit request, with at most 3 cars called at once (a car keeps its place until it reaches the pit lane), never under a red flag or a neutralisation; no box wait is added under a red flag. Nothing is planned during a penalty pass at the box.
+      - The 1.58 rule applies: one service per pass through the pit lane.
+      - The first run of the session has no box wait; the staggered pit exits handle it.
+    - **Log:** `passage en piste: <name>, <programme>, N tour(s) prevu(s), pneu X, carburant N L, attente N s`, `passage en piste: <name> reste aux stands (plus assez de temps avant la fin)`, `passage en piste: <name>, second tour rapide (premier tour gache)`, `carburant du passage: N L (N L avant)`.
   - You too: on your out-lap or a cool-down lap, the message **Flying lap — <driver> is coming on a flying lap: let them by** warns you when a flying AI is within 3 s behind you and really catching you (once per AI every 30 s).
     - The gap is a time gap measured at the same point of the track (when you passed that point, and when the AI passes it), never metres or km/h, which swing in every braking zone.
     - The AI must gain at least 0.1 s per second over 3 s, or 0.3 s per second over 1 s, and be on course to catch you within 15 s. That has to be confirmed within 6 s of it coming within 3 s of you; a car at your pace, even with ups and downs, is never announced. A car in the pit lane or off the track is never announced either.
@@ -451,7 +480,7 @@ Section **Overtaking** (sidebar **TRAFFIC**).
 **Breaking the tow, dirty air and the last laps** (sidebar **Overtaking**, subgroups *Slipstream and dirty air* and *End of race*):
 - **Breaking the tow** (race): on a long straight (relearnt each session from the AI's own laps, braking zones excluded; nothing on the race's first lap), a leader followed in its slipstream by a direct rival (same lap, same class) makes one move away from the follower, never towards the overtaking side forced by **Overtaking side**, and no move at all if the follower is already clearly on that side. It returns to its line before the braking zone, and ends the move as soon as the follower pulls out. Never when the follower is more than 12 km/h faster, already overtaking or is you; never under a flag, under braking, with a car alongside, near the pit exit (100 m before to 500 m after it), in front of a car that laps it or of another class, and never without room in the anti-weaving budget. Breaking the tow and a defence never both happen on the same straight.
 - **Dirty air**: in a corner, within the set distance behind another car and in its wake, the AI lifts the throttle slightly (at most the set percentage) and its usual line variation becomes faster micro-corrections, never towards an occupied side and never counted as a change of side. Off in track day by default.
-- **Last-laps urgency** (race): in each car's own last laps (held until it finishes; a timed race includes the lap after the time ends), with a direct rival close ahead or behind, aggression rises step by step (still capped, never above the base under braking or in corners) and the defence triggers from further away. No extra aggression with a lapped car, another class or you just ahead, no defence boost against you, never under a flag.
+- **Last-laps urgency** (race): in each car's own last laps (**Last laps**, 3 by default; Beta 1.59: at most 20% of the race and at least one lap, so 2 laps in a 10-lap race; a timed race uses its estimated number of laps; held until it finishes; a timed race includes the lap after the time ends), with a direct rival close ahead or behind, aggression rises step by step (still capped, never above the base under braking or in corners) and the defence triggers from further away. No extra aggression with a lapped car, another class or you just ahead, no defence boost against you, never under a flag.
 
 ### Lateral movement, lane holding and anti-weaving
 
@@ -491,10 +520,15 @@ Section **Start** (sidebar **DRIVING**). Race only; ticked by **Realistic race**
   braking zone of the lap is anticipated (braking points learnt from the leading cars, braking of the car ahead); the
   radar lifts off before it brakes (a full brake only for a contact less than 0.4 s away); no defence, tow-breaking or
   dirty air; overtakes only on a real straight with a real advantage; avoidance only of a stopped or very slow car;
-  aggression and overall caution capped. It ends at the AI's first crossing of the line, when the pack has spread
+  aggression and overall caution capped, under a yellow flag too (Beta 1.59). This switch is the only setting of the careful
+  lap: the other Start settings only shape the first corner. Beta 1.59: an AI already slower than 60% of its learnt pace
+  is no longer slowed further by the careful lap (a car that kept braking behind a slow one ended up almost stopped), and
+  the braking-zone caution is ×1.25 (×1.4 before). It ends at the AI's first crossing of the line, when the pack has spread
   around it, or after 3 minutes, then it is released over 3 s.
   - **On a straight** (driver not braking, car straight, outside the anticipation window of a braking point,
-    closing slower than 60 km/h): the AI keeps its foot down in the slipstream. No time-gap caution and no radar caution
+    closing slower than 60 km/h): the AI keeps its foot down in the slipstream. In a corner, in the pack (closing slower than
+    60 km/h), the radar lift is graded by the time to contact like on a straight (Beta 1.59: no more 30% throttle at once,
+    which made nine cars concertina); a real obstacle still gets the full lift. No time-gap caution and no radar caution
     there; the radar lifts only when contact is less than 0.6 s away and no lane is free alongside, by a graded amount,
     and never when the car behind is closer to hitting it than it is to hitting the car ahead. AC's own following brake
     does not make a straight a corner approach; only a free brake marks the pack's first braking point. Each radar lift
@@ -518,13 +552,14 @@ Section **Start** (sidebar **DRIVING**). Race only; ticked by **Realistic race**
 Section **Accidents** (sidebar **RACE & SAFETY**).
 
 **Incident detection** (player included):
-- A car counts as stopped below 10 km/h for more than 2 s. A spin is confirmed over 0.6 s, and wrong-way driving after 2 s.
-- An incident ends after 2 s of normal driving, so a slide that settles stays a single incident. A car off track for more than two minutes counts as cleared.
+- A car counts as stopped below 10 km/h for more than 2 s. A spin is confirmed over 0.6 s, and only with a real loss of speed (25 km/h since the slide began) or a car slower than **Obstacle speed (km/h)** (Beta 1.59: a long slide on a kerb or the grass at pace is no longer a spin). Wrong-way driving is confirmed after 2 s.
+- An incident ends after 2 s of normal driving, so a slide that settles stays a single incident. A car stopped off track, more than 8 m from the racing line and fully off (four wheels out, or beyond the track edge), counts as cleared after 15 s (Beta 1.59); it stays cleared until it moves or has been back on track for 2 s. Any other car off track counts as cleared after two minutes.
 - A stationary grid is never an incident, but a clash at the first corner is.
 - A car moving off at the start of a session or leaving the pits only becomes a stopped incident once it has driven. In a queue behind a slow car, only the head of the queue counts.
 
 **Avoidance** (**Avoid stopped or crashed cars**):
 - An AI approaching a stopped, very slow, spinning or crashed car slows down and goes round it on the free side. With no clear lane, it slows hard behind it.
+- A sliding car is an obstacle once its slide has lasted 0.6 s (Beta 1.59: no more swerves for a one-frame slide).
 - A slow car (below **Obstacle speed (km/h)**, 25 km/h, for 2 s) is only avoided if the AI arrives at least 15 km/h faster, or if it is an incident. In a traffic jam the AI simply follows.
 - Defaults: detection 150 m, level −25%, caution ×1.5, avoidance offset 0.6. A car sideways on the track is avoided even outside the "same direction" neighbourhood. Avoidance is never subject to the anti-weaving limit.
 
@@ -533,21 +568,45 @@ Section **Accidents** (sidebar **RACE & SAFETY**).
 - **Crashed AI stop** (off track only; on the track itself the AI moves off at once):
   - After a heavy deceleration with contact, an off or a spin, the AI stays still for 3 to 8 s, like a driver collecting their thoughts.
   - It then waits until no car at speed is within 120 m behind (at most 10 s more).
+- **Pit stop for damage** (Race, Practice and Qualifying; never on a track day or in hotlap; off by default).
+  - With the switch on, the app also reads AI damage while they drive: one AI per frame, each at most every 2 s. Before, damage was only read below 25 km/h or in the pit box.
+  - An AI is called in when its damage stays over one of these thresholds for 3 s:
+    - bodywork 80 km/h;
+    - suspension 0.08;
+    - engine life 700 or less.
+  - Guards on the call:
+    - never under a red flag;
+    - never under a local yellow, a neutralisation (FCY, VSC, Safety Car) or with the pits closed, unless the car is unsafe (suspension 0.3);
+    - in the race, never in the last 2 laps;
+    - always within the shared pit-call limit, calls already under way included.
+  - At its box it is repaired, in the race even without the rule-set repairs; an AI that reaches its box for another reason with damage over a threshold is repaired too.
+  - Gearbox damage cannot be repaired in the pits, so it never calls an AI in; it is only written in the log line.
+  - One call per damage episode: after a stop, it is called again only if the damage has grown further.
+  - Crashed or broken stopped AI are still towed as before.
+  - Log lines:
+    - `degats: <name> appelee aux stands (carrosserie …, suspension …, boite …, moteur …)`;
+    - `degats: <name> attend la fin du drapeau pour rentrer`.
+  - The thresholds are estimates, to be confirmed in game (docs/VALIDATION.md).
 
 **Yellow flags** (**Yellow flags (incident zone)**):
 - **Zone.** It runs from 300 m before to 50 m after the incident and is held 10 s after it clears. Overtaking is forbidden from 150 m before the zone, for the AI and for you.
-- **Double waved yellow** (incident on the track):
+- **Double waved yellow** (incident on the track: a car stopped, driving the wrong way, or slower than **Obstacle speed (km/h)**, never counted below 40 km/h; Beta 1.59: a car still rolling at pace on the track is a single yellow, with the same first-lap fallback speed):
   - A zone delta applies: the reference time is 15% slower than the usual pace, which is the F1 reference for a double yellow. With the Endurance rules it becomes a **Slow Zone** at a fixed 80 km/h.
   - The delta is reset at the zone entry, including when an overlapping single-yellow zone leads into it.
 - Single yellow (incident off the track): slightly reduced pace, with no delta.
 - **What the AI do in a zone.**
   - They follow the same reference as you, with a small margin of their own (2–6%). They brake on the approach at a bounded deceleration (**Approach deceleration (m/s²)**, 5 m/s²) and queue behind the car ahead.
   - No overtaking, no yielding, no blue flag and no defending. A manoeuvre in progress completes, unless the cars are side by side.
-  - Where no pace is known yet (first lap), a fallback speed applies (50 km/h).
+  - Where no pace is known yet (first lap), the AI are held to the fallback speed (**Fallback speed, unknown pace (km/h)**, 50 km/h) or to 35% of their top speed, whichever is higher.
 - **For you.**
-  - The overlay and the on-screen messages warn you. Assetto Corsa's small native yellow flag on the HUD is optional (**AC native yellow flag on the HUD**, off by default), and it never covers a blue, white, black or chequered flag.
+  - The overlay and the on-screen messages warn you, once per group of incidents (Beta 1.59: a second incident within the zone length of one already announced gives no new notice; zones, speeds, delta and light panels are unchanged). Assetto Corsa's small native yellow flag on the HUD is optional (**AC native yellow flag on the HUD**, off by default), and it never covers a blue, white, black or chequered flag.
   - On an equipped track, the trackside light panels turn yellow too (see [Track light panels](#track-light-panels)).
   - **Your car is never speed-limited**: the delta time judges your pace.
+
+**Difficult spot** (Beta 1.59): when three different cars have an incident within 100 m of each other in five minutes, the
+spot is marked (`point difficile: … m`): the AI drive there with 15% more caution and start no overtake within 100 m of it.
+It is forgotten after 10 minutes without an incident in a race, 30 minutes elsewhere. Never armed by the start, a restart or
+the careful first lap (a first-corner pile-up), and at most a quarter of the lap is covered.
 
 **Recovering stopped cars** (consistent with the racing rules):
 - **Alone on the track under a local yellow** (no rule can follow from it): the AI is returned to its pit box after 8 s, or after 3 s if it is broken (suspension, engine or gearbox out of use).
@@ -559,6 +618,7 @@ Section **Accidents** (sidebar **RACE & SAFETY**).
 - An AI still rolling and making progress, even at walking pace, is never recovered: it rejoins or drives to the pits.
 - A recovery is not counted as a pit stop, except under a red flag where every car goes in. AC resets the car on its return to the pits, which also clears its damage.
 - An AI whose stop is requested and that is moved to its box by AC or CSP is serviced there, and that stop counts (Beta 1.58). A recovery by the app is still not the stop: the car is called again once it is back on track.
+- Beta 1.59: a pass through the lane is served only once the car has really stopped in its box; a box touched while still rolling is the same arrival (the service is still allowed, the stop never counted twice).
 - One service per pass through the pit lane (Beta 1.58): a car back in its box without having left the lane gets no new tyres or repairs, and AC's pit request is lifted inside the lane once it has been serviced. Before, a car could be serviced again and again until the end of the race.
 - Safety net for the mandatory stop: an AI serviced twice during its request without the stop counting is no longer called for it in that session (`arret demande abandonne: <name>, servie N fois sans arret compte`).
 
@@ -637,6 +697,7 @@ Tab **RACING RULES**.
 
 **Choosing the rules.**
 - At the top left, **Racing rules on** switches the rules on or off for the profile shown.
+- **On HOME** (Beta 1.59), under the built-in presets, **RACING RULES** offers the same five rule sets in one click, with the active one named (or *Custom*). The choice is the same as in the RACING RULES tab and is written to the log (`regles de course: … (changement)`). It is locked while a race is running (*locked during the race*).
 - Under **CHAMPIONSHIP RULES** there are five rule sets, applied together to the **Practice**, **Qualifying** and **Race** profiles: **Base rules**, **F1 2025**, **F1 2026**, **GT** and **Endurance**. The Track day and Hotlap profiles are never changed by a rule set; while one of them is shown, the highlight shows the Race profile's rule set. **Mandatory stop in the race** and **Safety Car** stay off there and ignore clicks, since they only act in the race: set them from the Practice, Qualifying or Race view.
 - The values were checked against the 2025 and 2026 F1 Sporting Regulations, WEC 2026 and the 2026 GT World Challenge regulations.
 - The session presets set the rules too when you click them: **Free practice**, **Flying-lap qualifying** and **Realistic race** bring the **Base rules** for the whole weekend, and a custom Practice, Qualifying or Race preset brings its own. **Multi-class endurance** applied to the Race profile sets the **Endurance** rules. Applied by **Built-in preset for the session detected**, they keep the rules already chosen.
@@ -768,6 +829,7 @@ The settings are under **RACING RULES › Mandatory stop in the race**. They are
 - **The window.** It opens and closes at a percentage of the race (**Window opens (% of race)** 25%, **Window closes (% of race)** 75% by default). The race is measured in leader laps, or in time for a timed race.
   - A window that closes at 100% never closes.
   - A window declared by CSP (server, race mode) is used first.
+- **Your reminder** (Beta 1.59): when the window opens, the overlay says so for 15 s; after that, the stop reminder shows at most once per lap, for 10 s, just before the pit entry once it is known (otherwise in the last third of the lap), never permanently. With SpotterEnginer, its pit plan is followed (see [Companion apps](#companion-apps-spotterenginer-bridge)).
 - **The AI.** Each one stops at its own moment in the window, with at most three called in at once.
   - Only stops made with the window open count, and reloading the app mid-race does not make them stop again.
   - A recovery to the pits and the Safety Car do not count as stops, except under a red flag.
@@ -797,12 +859,29 @@ The settings are under **RACING RULES › Mandatory stop in the race**. They are
 
 Sidebar **AI strategy** (Race only; out-lap and tyre wear in **Weather**):
 - **Individual pit strategy**: each AI is its own strategist, cautious to bold (drawn per session around **Average risk taking**, spread by **Spread between strategists**). It plans its stops from its own tyre wear per lap, its fuel and the laps left, through the usual pit request; a mandatory stop is aligned on the planned stop when that falls later in the window, and refuelling covers the next stint plus the margin. Near the finish the last stint is stretched instead of stopping: no stop when the fuel reaches the flag with the usual reserve and the tyres last to their wear limit, at most two laps (one to three, with the risk taking) past the set wear. Under a new neutralisation, strategists close to their stop pit.
-- **Undercut and overcut**: a bold strategist a few laps from its stop undercuts the rival just ahead; a cautious one covers the rival behind that pits (never with fresh tyres); one with good tyres stays out two laps when the rival ahead pits. Never in reaction to a car serving a penalty, a disqualified car or a car pitting with a failure.
+- **Undercut and overcut**: a bold strategist a few laps from its stop undercuts the rival just ahead; a cautious one covers the rival behind that pits (never with fresh tyres); one with good tyres stays out two laps when the rival ahead pits.
+  - **This now also works on the mandatory stop.** An AI that still owes it, while the window is open, can:
+    - bring it forward by undercutting the rival ahead (bold strategist);
+    - bring it forward by covering a rival behind who pits (cautious strategist);
+    - delay it by two laps when the rival ahead pits and its tyres are still good, always inside the window.
+  - Never in reaction to a car serving a penalty, a disqualified car, a car pitting with a failure, or a car towed to its box.
+  - Log lines:
+    - `strategie: <name> arret obligatoire avance (undercut)`;
+    - `strategie: <name> arret obligatoire avance (couverture de <rival>)`;
+    - `strategie: <name> arret obligatoire retarde (overcut sur <rival>)`.
+- **Varied starting strategies** (Race, off by default).
+  - Before the start, while stopped on the grid on a dry track, part of the AI swap their dry compound for the next softer or harder one.
+  - The back of the grid leans harder (and so stops later); the front leans softer.
+  - It is one step at most, and it is decided once per car and per session. Their stops then follow their own tyre wear.
+  - The app ranks compounds from their names: SuperSoft, Soft, Medium, Hard, and the Pirelli C1–C6. Cars whose compounds it cannot rank, or whose tyre data cannot be read, keep their tyres. The log says `strategie de depart: gommes de <model> non classees` once per model.
+  - The weather always comes first: in the wet, or when the weather wants another compound, nothing changes.
+  - The mandatory stop, the F1 two-dry-compounds rule and the fuel rules are unchanged.
+  - Log: `strategie de depart: <name> part en <tyre> au lieu de <tyre> (<plus tendre|plus dure>, place <n>)`.
 - **Out-lap warm-up**: after a real stop at its box (never after a penalty pass, a recovery to the pits, a red-flag recall or at the race start), an AI drives its out-lap a few percent slower until the line or warm tyres, then gets its level back smoothly. It acts through the AI level, so it needs the **General** section ticked (as does the level part of a failure; the throttle part of a failure works either way).
 - **Lock-ups and tyre wear**: worn, asymmetric front tyres make lock-ups more frequent at the end of a stint; each lock-up adds a small flat spot (virtual km) to the more worn front tyre, bounded per stint (reset when new tyres are fitted).
 - **Tyre wear is used only once its scale is checked in game**: the app waits until it has seen a fresh tyre (low wear) and the wear rising. Until then, and if the values stay implausible (`usure des pneus non fiable ici`), there is no stop for tyres and no wear-linked lock-ups; fuel and the stop rules still apply.
 - **Safety of the plan**: whether a stop is needed is decided on the raw fuel and tyre capacity; margins only place a stop that is needed. No tyre stop and a fuel reserve of 0.1 lap in the last 2 laps; critical fuel (under 1.5 laps, cannot finish) is called even with the pits closed or the call limit reached, but never before the after-stop check; strategy stops fit new tyres when **New tyres at every stop** is ticked (none forced in the wet when the app does not manage the weather); a stop that changed nothing (tyres or fuel) is not asked again; one call limit is shared with the stop rules and the penalty passes, a call is never withdrawn (a request not yet called is withdrawn when the plan no longer needs it); a non-critical stop waits for the mandatory window to open; a neutralised lap does not teach fuel use.
-- **Progressive failures** (rare): a fluid leak, overheating, a slow puncture or a battery drain lowers the pace gradually (up to **Failure: maximum pace loss**); the AI heads to the pits, is repaired in 8 to 20 s, then gets its pace back. Never parked on the track, never on the first lap nor in the last 10 % of the race, at most once per AI per session.
+- **Progressive failures** (rare): a fluid leak, overheating, a slow puncture or a battery drain lowers the pace gradually (up to **Failure: maximum pace loss**); the AI heads to the pits, is repaired in 8 to 20 s, then gets its pace back. Never parked on the track, never on the first lap nor in the last 10 % of the race, at most once per AI per session, and at least 5 minutes between two failures in the field (Beta 1.59).
 
 ### Endurance and multi-class
 
@@ -863,7 +942,7 @@ Section **Spacing** (sidebar **TRAFFIC**). Track day profile only, ticked by **N
 
 ### AI distribution at session start and CSP AI flood
 
-Settings in the **General** section of the profile shown.
+Settings in the **General** section of the profile shown. With the **General** section unticked (native AI), the app neither spreads the AI nor staggers the pit exits at the session start (Beta 1.59).
 
 **AI distribution at session start** (Track day, Practice, Qualifying; never in the race, where cars start from the grid):
 - **On the whole track** (Track day default).
@@ -907,6 +986,7 @@ Section **Global options** (sidebar **ADVANCED**). These values are shared by al
 - **Allow the grip bonus** (off): lets the grip bonus emulate a level above 100% when the CSP read-back proves a cap. It changes the AI cars' grip, so switch it on knowingly. **Grip bonus per level point** is 0.004 (0.4% per point).
 - **Override native AI awareness** (off): when the app imposes a lateral offset, the AI ignore their native avoidance and strictly follow the target. More precise, but it removes a native safeguard.
 - **Detailed log** (off): records every AI state change in the event log.
+  - It also adds `entree aux stands sans demande de l app: <name>, demande d arret AC oui/non` (race): an AI entered the pit lane without any app request (no rule, weather, strategy, sanction, slow-car call, penalty pass or tow). It shows when AC's own logic sends a car in.
 - Lateral occupancy:
   - **Occupancy: lateral threshold (m)** (0.3): below this offset, a nearby car is in the same lane.
   - **Occupancy: lateral reach (m)** (5.5): beyond it, a car no longer occupies the side.
@@ -916,7 +996,7 @@ Section **Global options** (sidebar **ADVANCED**). These values are shared by al
 
 ### In-game overlay
 
-The app draws its own overlay instead of a CSP app window. Set it in **SETTINGS › ADVANCED › Overlay**; its settings are shared by every session. The flag band is switched on per profile by **AdvancedIA flag panel while driving** (Accidents section, on by default). With it off, the band only shows the game's own flags and penalties. The session line and AC messages keep following their own Overlay settings.
+The app draws its own overlay instead of a CSP app window. Set it in **SETTINGS › ADVANCED › Overlay**; its settings are shared by every session. The flag band is switched on per profile by **App flag panel while driving** (**AdvancedIA flag panel while driving** in the settings reference; Accidents section, on by default). With it off, the band only shows the game's own flags and penalties (Beta 1.59: no more lap-line, DRS or update notices there either). The session line and AC messages keep following their own Overlay settings.
 
 Position and size (**POSITION AND SIZE**):
 - **UNLOCK · MOVE · SIZE**: drag the overlay to move it, pull its bottom right corner to resize it, and right-click it to lock it again. **LOCK THE POSITION** locks it from the window.
@@ -933,6 +1013,7 @@ Appearance (**APPEARANCE**):
 - **Information: display time**: how long non-urgent information stays (green flag, start, DRS available, last lap, chequered flag, slippery surface). 0 = **While they last**. Flags always stay as long as they are active.
 
 Content (**CONTENT**):
+- **App overlay (off: AC’s own displays)** (on, Beta 1.59): off, the app draws no overlay at all (band, session line, summary, DRS, lap-line and sanction notices, AC messages taken over, even unlocked) and gives AC's own displays back: its session box is no longer hidden and the two CSP options below are set back to your values, so AC draws its own flags, penalties and banners. The app's FLAGS window stays empty too, and AC's messages are no longer blocked. While CSP still hides AC's flags or system messages (it has not re-read `gui.ini` yet, the session's write limit was reached, or the file is read-only), the overlay keeps drawing only the game's own flags and penalties, and AC's messages, so they are never lost; it disappears once CSP shows them again. Driving, rules, penalties and the SpotterEnginer bridge are unchanged.
 - **Session info (position, lap, time, best lap, fuel, stop)**: a permanent top line with **POS**, **LAP** (lap of the total) or **LEFT** (time left), **BEST**, **STOP** (mandatory stop done or to do) and **FUEL** (fuel left in laps, orange below two laps).
 - **Flag explanations**: under the instruction, an explanation of what is happening. For a yellow flag: *A car is in trouble ahead, near the track (spin, off, stopped)…*. For a double yellow: *A car is stopped or sideways on the track…*. Also for the Safety Car, VSC, FCY, red and blue flags, slippery track and the last lap.
 - **End of race summary**: at the finish, **RACE OVER**, the chequered flag and a summary, also written to the log (`fin de course: …`). It contains:
@@ -940,6 +1021,7 @@ Content (**CONTENT**):
   - finishing and starting positions, places gained or lost;
   - your best lap compared with the whole field (*the fastest of the race!*);
   - overtakes made on track and times you were overtaken (excluding pit stops and recovered cars), and the number of laps.
+  - Beta 1.59: when AC restarts the same race, the summary and the starting place start again (`course relancee: …`); before, the previous race's result stayed, a second empty summary was written and the bridge kept publishing the old finish.
 - Lap line message: when you cross the line, the band shows the next lap (**LAP 4/8**), the last lap and the best one, or *new best lap!*.
 
 Assetto Corsa displays (**ASSETTO CORSA DISPLAYS**):
@@ -992,7 +1074,7 @@ On a track whose CSP configuration lights its trackside light panels (marshal po
 The panels have their own section, **SETTINGS › RACE & SAFETY › Track light panels**, set per profile like the other sections and ticked by default in every profile:
 - **Active for:** one chip per profile (**TRACK DAY · PRACTICE · QUALI · RACE · HOTLAP**), cyan when the section is ticked for that profile; a click ticks or unticks it, like the section's switch. This section never counts as one that drives the AI: with only this section ticked, the app drives no AI.
 - **Circuit status:** equipped or not, with the file where the panels were found, and the colour shown right now. On a track that is not equipped, colours and durations stay adjustable, with no effect there.
-- **Colours:** yellow (always on: yellow flag, Safety Car, VSC, FCY), red, blue, white (very slow vehicle ahead), orange (slippery track), green (end of zone, of neutralisation and restart). A colour turned off gives way to the next one by priority; red turned off shows yellow.
+- **Colours:** yellow (always on, so its switch is no longer shown since Beta 1.59: yellow flag, Safety Car, VSC, FCY), red, blue, white (very slow vehicle ahead), orange (slippery track), green (end of zone, of neutralisation and restart). A colour turned off gives way to the next one by priority; red turned off shows yellow.
 - **Durations:** **Green duration (s)**, 0–15, 5 by default (0: no green; the end of a yellow zone keeps three fifths of it, 3 s by default); **Delay before a less important colour (s)**, 0.5–5, 1.5 by default.
 - **The legend** of the six colours and, when AC's own flags are shown, the warning that red appears as yellow.
 - The Overlay section links to this one.
@@ -1027,7 +1109,8 @@ The panels have their own section, **SETTINGS › RACE & SAFETY › Track light 
 AdvancedIA can share its live state with a companion app, today **SpotterEnginer** (voice spotter and race engineer).
 
 - **Two separate apps.** SpotterEnginer is optional, with its own repository ([VincentChevalier44/SpotterEnginer](https://github.com/VincentChevalier44/SpotterEnginer)) and its own update module. It depends on AdvancedIA: without it, it stays silent, and it never works online. Install AdvancedIA alone, or both. SpotterEnginer 1.1.0 needs AdvancedIA Beta 1.46 or later (`REQUIRES_ADVANCEDIA` in its manifest).
-- **Its updates, announced on HOME.** SpotterEnginer publishes the state of its own update (`ac.store` key `SpotterEnginer.update`, contract v1). AdvancedIA reads it only when SpotterEnginer is installed, every 10 s at most, so the line appears once SpotterEnginer has made its own check, about 10 s after loading. **HOME › TO CHECK** then shows *SpotterEnginer x.y available (installed: a.b): update it from its own window* or *SpotterEnginer needs AdvancedIA x.y: update AdvancedIA first*; the **SpotterEnginer ›** link opens SpotterEnginer's window, which installs its own update. AdvancedIA never downloads or installs anything for it and makes no GitHub request for it.
+- **Its updates, announced on HOME.** SpotterEnginer publishes the state of its own update (`ac.store` key `SpotterEnginer.update`, contract v1). AdvancedIA reads it only when SpotterEnginer is installed, every 10 s at most, so the line appears once SpotterEnginer has made its own check, about 10 s after loading. **HOME › TO CHECK** then shows *SpotterEnginer x.y available (installed: a.b): update it from its own window* or *SpotterEnginer needs AdvancedIA x.y: update AdvancedIA first*; the **SpotterEnginer ›** link opens SpotterEnginer's window, which installs its own update. AdvancedIA never downloads or installs anything for it and makes no GitHub request for it. SpotterEnginer 1.1.0 and 1.1.1 cannot update themselves (their button stays grey): for them HOME says to update it by hand from its GitHub page (Beta 1.59).
+- **Its pit plan** (Beta 1.59, read only): SpotterEnginer publishes the player's pit plan (`ac.store` key `SpotterEnginer.pitplan`, contract v1: `v=1;lap=N;compound=-;state=planned|boxnow|done|none;window=a-b;boxcalls=0|1;stamp=s`), read every second while it is installed. A fresh plan (its stamp moved in the last 6 s) is followed: nothing is said before the planned lap, and the stop reminder comes on the planned lap; near the end of the window (the last 20% of it) the app's own reminders come back; *box now* is never shown with the pits closed. A stale, absent, unreadable or *none* plan, a plan lap outside our window, or *done* while the stop is still owed: the app's own reminders apply. Nothing is written for it.
 
 - **Only when SpotterEnginer is installed**: at launch the app checks once for `apps/lua/SpotterEnginer/manifest.ini`. If it is absent, nothing is opened or computed and the journal says `pont des apps compagnes: SpotterEnginer absent, pont inactif`; AdvancedIA behaves exactly as without the bridge.
 - **When it is installed**: two shared structures are opened with `ac.connect` (`ACAdvancedIA.Bridge.Hello` and `ACAdvancedIA.Bridge.Data.v1`, layout in `src/bridge_layout.lua`, identical in both apps) and the engine state is copied into them every frame, read only: flags and neutralisations, the delta, the player's penalties, the pit window, the AI sanctions and stops. Journal: `pont des apps compagnes: ouvert (version 1)`.
@@ -1049,6 +1132,19 @@ AdvancedIA can share its live state with a companion app, today **SpotterEnginer
 - Limits: 16 presets, and names of at most 64 bytes in UTF-8 (an accented letter counts as two). Saved text is never executed.
 - A custom preset is highlighted when the profile matches it exactly.
 - Custom presets live in the same CSP storage as the settings, so they survive updates.
+
+**Export / Import** (two buttons under your custom presets; there is no setting):
+- **EXPORT** writes your custom presets and the current settings of the five profiles (Track day, Practice, Qualifying, Race, Hotlap), plus the global driving options that presets carry, to `Documents\Assetto Corsa\AdvancedIA\AdvancedIA-presets.ini`. Use it to keep a copy or to share your settings.
+  - Never written: the personality seed, the detailed log, and anything outside presets (update, language, window and overlay position, safety settings).
+  - If the file already exists, the app asks before replacing it.
+  - If CSP refuses to write to that folder, the file goes to the app folder in CSP (`cfg\extension\state\lua\app\AdvancedIA`). The message and the session log say so.
+- **IMPORT** reads `AdvancedIA-presets.ini` back: the one in `Documents\Assetto Corsa\AdvancedIA` first, otherwise the one in the app folder in CSP.
+  - Nothing changes until you press **CONFIRM**. The message says how many presets and profiles will be imported.
+  - Every value is checked like a saved preset: an unknown key is ignored, an out-of-range value takes the profile's default (counted in the message), and older presets are migrated.
+  - A preset with the same name as one of yours replaces it. When the 16 slots are full, the extra presets are ignored (counted).
+  - Your seed, detailed log, language and the other settings outside presets are never changed.
+  - A damaged or unreadable file is refused as a whole, and nothing changes.
+- To share: send the `.ini` file. The other player puts it in their own `Documents\Assetto Corsa\AdvancedIA` folder and presses **IMPORT**.
 
 ### Track zones and class patterns
 
@@ -1298,6 +1394,7 @@ Each entry except **Overlay** has its own on/off pill for the profile shown.
 | **Pressure duration (s)** | 1 – 15 | 4 | 3 | 4 |
 | **Practice and qualifying: flying laps first** | on / off | n/a | on | n/a |
 | **Qualifying: AI cool-down laps** | on / off | n/a | n/a (Practice) / on (Qualifying) | n/a |
+| **Practice and qualifying: real AI runs** | on / off | n/a | off | n/a |
 
 #### Blue flags (sidebar: **Blue flags**)
 
@@ -1375,6 +1472,7 @@ Each entry except **Overlay** has its own on/off pill for the profile shown.
 | **Avoidance offset** | 0.3 – 0.9 | 0.6 | 0.6 | 0.6 |
 | **Recovery after contact** | on / off | on | on | on |
 | **Crashed AI stop** | on / off | on | on | on |
+| **Pit stop for damage** | on / off | n/a | off | off |
 | **Minimum stop (s)** | 1 – 15 | 3 | 3 | 3 |
 | **Maximum stop (s)** | 1 – 30 | 8 | 8 | 8 |
 | **Clear track behind to rejoin (m)** | 30 – 300 | 120 | 120 | 120 |
@@ -1404,6 +1502,7 @@ Each entry except **Overlay** has its own on/off pill for the profile shown.
 | **Tyre wear before stopping (%)** | 10 – 95 | n/a | n/a | 30 |
 | **Fuel margin (laps)** | 0 – 3 | n/a | n/a | 1 |
 | **Undercut and overcut (reacting to rivals’ stops)** | on / off | n/a | n/a | on |
+| **Varied starting strategies** | on / off | n/a | n/a | off |
 | **Average risk taking (%)** | 0 – 100 | n/a | n/a | 50 |
 | **Spread between strategists (%)** | 0 – 100 | n/a | n/a | 60 |
 | **Progressive mechanical failures** | on / off | n/a | n/a | on |
@@ -1562,6 +1661,7 @@ Ticked by default in every profile, Hotlap included. See [Track light panels](#t
 | **Display** | **Only with information** / **Always** | **Only with information** |
 | **Information: display time** | 0 (**While they last**) – 60 s | **While they last** |
 | **Content opacity** | 30 – 100% | 100% |
+| **App overlay (off: AC’s own displays)** | on / off | on |
 | **Session info (position, lap, time, best lap, fuel, stop)** | on / off | on |
 | **Flag explanations** | on / off | on |
 | **End of race summary** | on / off | on |
@@ -1647,6 +1747,11 @@ Ticked by default in every profile, Hotlap included. See [Track light panels](#t
 |---|---|
 | `strategie: X plan n arret(s), prochain vers le tour l (pneus\|carburant), risque r %` | X's plan to the finish and what limits its stint. |
 | `strategie: X arret demande (cause)` / `strategie: X reste dehors (overcut sur Y)` | The strategist calls X in (tyres, fuel, undercut, covering an undercut, neutralisation, failure), or keeps it out. |
+| `strategie: X arret obligatoire avance (undercut)` / `… avance (couverture de Y)` / `… retarde (overcut sur Y)` | The mandatory stop brought forward or delayed by the undercut, the cover or the overcut, inside the window. |
+| `strategie de depart: X part en <pneu> au lieu de <pneu> (plus tendre\|plus dure, place n)` / `strategie de depart: gommes de <modele> non classees` | **Varied starting strategies**: X starts on another dry compound, or a model whose compounds cannot be ranked keeps its tyres. |
+| `degats: X appelee aux stands (carrosserie …, suspension …, boite …, moteur …)` / `degats: X attend la fin du drapeau pour rentrer` | **Pit stop for damage**: X is called in for repairs, or waits for the flag to end. |
+| `passage en piste: X, <programme>, n tour(s) prevu(s), pneu P, carburant n L, attente n s` / `… reste aux stands …` / `… second tour rapide …` / `carburant du passage: n L` | **Practice and qualifying: real AI runs**: the run X starts, a run not started for lack of time, a second flying lap, the run fuel. |
+| `prereglages exportes:` / `prereglages importes:` | Export or import of the preset file: number of presets and profiles, where (Documents or the app folder in CSP), values corrected and items ignored on import. `export des prereglages impossible` / `import des prereglages refuse: <reason>, rien n a change` when it fails. |
 | `tour de sortie: X pneus a chauffer (niveau -x %)` | X's out-lap after a stop, slightly slower. |
 | `usure: X blocage, pneu … +km km (usure w %, asymetrie a %)` | A lock-up added a flat spot to that tyre. |
 | `panne: X kind (perte x % sur t s), retour aux stands` / `panne: X reparee aux stands` | A progressive failure, and its repair. |

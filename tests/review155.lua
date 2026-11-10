@@ -86,13 +86,15 @@ tests.YIELD_NEEDS_ADVANTAGE_155=function()
   return seen,e
  end
  assert(K.yieldNeedAdvantage==true)
- local seen,e=yields(3,180,180)
- assert(not seen,'equal learned pace: no ordinary yield')
+ -- Beta 1.59 : hors course, refus seulement à un suiveur nettement plus lent (allure égale : cession).
+ assert((yields(3,180,180)),'equal learned pace: yield (1.59)')
+ local seen,e=yields(3,180,170)
+ assert(not seen,'clearly slower follower: no ordinary yield')
  assert(count(e,'cession refusee: Driver_2 ne cede pas a Driver_3 (pas plus rapide ici)')==1 and e.stats.yieldNoAdv==1,'refusal logged and counted once per episode')
  assert(J.english('cession refusee: A (100%, 100%) ne cede pas a B (100%, 100%) (pas plus rapide ici)')=='yield refused: A (100%, 100%) does not yield to B (100%, 100%) (not faster here)')
  assert((yields(3,180,220)),'really faster follower: yield')
  assert((yields(3,nil,nil)),'unknown pace: yield as before')
- assert((yields(1,180,180)),'the player: unchanged')
+ assert((yields(1,180,170)),'the player, even clearly slower here: unchanged')
 end
 -- Appels de phares : après K.flashFailLimit cessions sur appel sans passage, plus d'appel vers cette voiture pendant
 -- K.flashMuteTime s, noté une fois.

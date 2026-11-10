@@ -87,7 +87,8 @@ tests.FIRST_LAP_RADAR_LIFT_FIRST_147=function()
  cmd=run(true,12); assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'straight, free lane alongside: foot kept down')
  cmd=run(true,12,nil,nil,true); assert(cmd.brake==0 and cmd.throttleLimit<1 and cmd.throttleLimit>K.radarStartLift,'straight, no lane: graded lift only')
  cmd=run(true,12,nil,0.6); assert(cmd.brake>0 and cmd.brake<=K.radarStartBrakeMax+1e-9,'braking: light brake under K.firstLapBrakeTTC')
- cmd=run(true,12,-8,0.6); assert(cmd.brake==0 and cmd.throttleLimit<=K.radarStartLift+1e-9,'car right behind: lift only')
+ -- Beta 1.59 : peloton (+50 km/h) : levée dosée selon le temps au contact, jamais de frein.
+ cmd=run(true,12,-8,0.6); assert(cmd.brake==0 and cmd.throttleLimit<1 and cmd.throttleLimit>=K.radarStartLift-1e-9,'car right behind: graded lift only')
  -- Suiveur à 15 m à 150 km/h (0,25 s) : collé en temps (K.radarStartFollowTime s), au-delà du plancher en mètres.
  cmd=run(true,12,-15,0.6); assert(cmd.brake==0,'close in time: lift only')
  -- Contact à 0,3 s : dernier recours, plein freinage du radar même suivi.
@@ -102,7 +103,8 @@ tests.FIRST_LAP_AVOID_SLOW_ONLY_147=function()
   local e,f
   if mode then e,f=careful(3) else e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); E.changed(e); F.tick(e,f,1/60) end
   F.place(f,1,-3000,150); F.place(f,2,0,150); F.place(f,3,60,kmh); f.cars[3].slip=60; e.states[2].nextPerception=0
-  F.tick(e,f,0.5)
+  -- Beta 1.59 : glissade tenue (K.spinTime s) pour une voiture en travers.
+  F.tick(e,f,0.7)
   return e.states[2].state,e
  end
  assert(run(false,110)=='AVOID','reference: sideways car avoided')

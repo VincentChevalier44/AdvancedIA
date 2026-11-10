@@ -11,7 +11,7 @@ local function clear(c)
  -- Beta 1.58 (course du pilote, fn_imola, 10 novembre) : composés secs déjà roulés en course (règle F1 des deux composés),
  -- passages servis sans arrêt compté pendant une même demande d'arrêt obligatoire (borne : jamais redemandée en boucle),
  -- premier passage à l'emplacement de ce passage dans la voie des stands (un seul service par passage), dépannage de l'app.
- c.usedDry={}; c.usedCount=0; c.requestServices=0; c.requestAbandoned=false; c.laneVisit=nil; c.reboxLogged=false; c.appTowAt=nil
+ c.usedDry={}; c.usedCount=0; c.requestServices=0; c.requestAbandoned=false; c.laneVisit=nil; c.laneStopped=false; c.reboxLogged=false; c.appTowAt=nil
 end
 function M.new()
  local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false}
@@ -24,12 +24,15 @@ function M.reset(t,now)
  -- Relecture 1.52 : pénalité du joueur en attente du composé (engine.lua) et départ vu, oubliés avec la session.
  t.stopAwait=false; t.wasStarted=false
  t.entrySpline=-1; t.playerNotice=''; t.playerNoticeUntil=-math.huge; t.hintFor=-2
+ -- Beta 1.59 : rappel et avis par tour du joueur oubliés avec la session.
+ t.remindLap=nil; t.remindAt=nil; t.hintLap=nil; t.hintAt=nil
 end
 function M.rebase(t,amount)
  -- Relecture 1.52 : dépannage récent (towedAt) décalé aussi.
  for i=1,K.maxCars do local c=t.cars[i]; c.boxSince=c.boxSince-amount; c.lastStop=c.lastStop-amount; c.lapAt=c.lapAt-amount; if c.pendingUntil then c.pendingUntil=c.pendingUntil-amount end; if c.towedAt then c.towedAt=c.towedAt-amount end end
  if t.playerNoticeUntil>-math.huge then t.playerNoticeUntil=t.playerNoticeUntil-amount end
  if t.openedAt>-math.huge then t.openedAt=t.openedAt-amount end
+ if t.remindAt then t.remindAt=t.remindAt-amount end; if t.hintAt then t.hintAt=t.hintAt-amount end
 end
 -- Avancement de la course de 0 à 1 : tours du leader, sinon temps d'une course chronométrée ; -1 inconnu.
 function M.progress(frame)
@@ -115,7 +118,9 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
   -- Beta 1.58 : composé sec roulé en piste, course lancée (règle F1 : un composé différent de ceux déjà roulés).
   if frame.started and not a.pit and a.compoundIndex~=nil and a.dryCompounds and a.dryCompounds[a.compoundIndex] and not c.usedDry[a.compoundIndex] then c.usedDry[a.compoundIndex]=true; c.usedCount=c.usedCount+1 end
   -- Beta 1.58 : un passage dans la voie des stands finit à sa sortie (un nouveau service redevient possible).
-  if not a.pit then c.laneVisit=nil end
+  if not a.pit then c.laneVisit=nil; c.laneStopped=false end
+  -- Beta 1.59 (relecture de la 1.58) : passage servi seulement une fois la voiture vraiment arrêtée à son emplacement.
+  if a.pit and a.inPitBox and (a.kmh or 0)<=K.tyreStopSpeed and c.laneVisit~=nil then c.laneStopped=true end
   local towed=c.towedAt~=nil and now>=c.towedAt and now-c.towedAt<=K.towWindow
   -- Un passage à l'emplacement compte une fois, quelle qu'en soit la raison (météo comprise).
   -- Passage de pénalité d'une IA (drive-through, stop-and-go ; cmd.penaltyPass mis par sanctions.lua, Beta 1.42) : ni
@@ -137,10 +142,15 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
    -- Beta 1.58 : deuxième arrivée à l'emplacement sans être sortie de la voie des stands (demande d'arrêt d'AC restée
    -- active, déplacement) : ni arrêt compté, ni nouveau service (pneus, réparations) ; une ligne par voiture.
    local rebox=c.laneVisit~=nil
+   -- Beta 1.59 (relecture de la 1.58) : emplacement perdu un instant en y roulant encore (jamais arrêtée depuis l'entrée
+   -- de la voie) : même arrivée, service encore permis, jamais un arrêt compté deux fois.
+   local flicker=rebox and not c.laneStopped
+   if flicker then c.laneVisit=c.visit end
    if not rebox then c.laneVisit=c.visit end
+   if (a.kmh or 0)<=K.tyreStopSpeed then c.laneStopped=true end
    local appTowed=c.appTowAt~=nil and now>=c.appTowAt and now-c.appTowAt<=K.towWindow
    if t.note and active and not a.player then t.note('DEBUG',string.format('arrivee a l emplacement: %s, passage %d, demande d arret AC %s, demande de l app %s, deplacee %s',a.name,c.visit,a.requestingPit and 'oui' or 'non',c.wanted and 'oui' or 'non',towed and 'oui' or 'non'),i) end
-   if rebox and not c.reboxLogged and t.note and not a.player then c.reboxLogged=true; t.note('INFO',string.format('emplacement de nouveau sans sortie de la voie des stands: %s, aucun nouveau service',a.name),i) end
+   if rebox and not flicker and not c.reboxLogged and t.note and not a.player then c.reboxLogged=true; t.note('INFO',string.format('emplacement de nouveau sans sortie de la voie des stands: %s, aucun nouveau service',a.name),i) end
    -- Voiture ramenée à son stand par l'app (dépannage, Beta 1.24) ou voiture de sécurité : aucun arrêt compté ; sous
    -- drapeau rouge, toutes les voitures rentrent aux stands : compté comme avant.
    -- Beta 1.58 (course du pilote, fn_imola) : une IA dont l'arrêt est demandé, ramenée à son emplacement (déplacée par
@@ -193,7 +203,7 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
  end
   cmd.rulePit=false; cmd.pitHold=false; cmd.pitCompound=-1; cmd.pitVisit=c.visit; cmd.pitRepair=false
   -- Beta 1.58 : servie dans ce passage de la voie et sortie de l'emplacement (la demande d'arrêt d'AC peut y être levée).
-  local served=c.laneVisit~=nil and a.pit and not a.inPitBox
+  local served=c.laneVisit~=nil and c.laneStopped and a.pit and not a.inPitBox
   cmd.laneServed=served
   local first=c.laneVisit==nil or c.laneVisit==c.visit
   -- IA disqualifiée (garée à son stand), arrivée ou hors course : ni comptée ni appelée, aucune place d'appel retenue.

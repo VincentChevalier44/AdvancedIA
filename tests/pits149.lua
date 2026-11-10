@@ -74,7 +74,9 @@ tests.PIT_HINT_149=function()
  -- Entrée relevée sur une IA venue de la piste : rappel à environ K.pitHintTime s de l'entrée.
  local b=f.cars[2]; F.place(f,2,3000,150); F.tick(e,f,0.2); b.pit=true; F.tick(e,f,0.2)
  assert(math.abs(e.pits.entrySpline-0.3)<0.01,'pit entry learnt from an AI')
- F.place(f,1,2500,180); F.tick(e,f,0.5); assert(e.incidents.playerPitHint,'500 m before the entry at 50 m/s: hint')
+ -- Beta 1.59 : au plus une fois par tour : déjà montré ce tour-ci (dernier tiers), rien de plus avant le tour suivant.
+ F.place(f,1,2500,180); F.tick(e,f,0.5); assert(not e.incidents.playerPitHint,'1.59: already shown this lap: no second hint')
+ F.place(f,1,2500+f.length,180); F.tick(e,f,8); assert(e.incidents.playerPitHint,'next lap (line crossing shown first), 500 m before the entry at 50 m/s: hint')
  F.place(f,1,100,180); F.tick(e,f,0.5); assert(not e.incidents.playerPitHint,'far from the entry: no hint')
  a.pit=true; F.tick(e,f,0.5); assert(e.incidents.playerPitHint,'in the pit lane: hint')
  a.inPitBox=true; a.kmh=0; F.tick(e,f,0.5); assert(e.incidents.playerPitHint and e.panel.kind=='pit','in the box (pit menu): hint')

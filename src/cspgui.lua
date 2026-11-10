@@ -142,7 +142,8 @@ local function stop(c,text) c.writable=false; note(c,'WARN',text) end
 -- (src/panel.lua), ceux d'AC restent masqués. nil : rien ne change (panique passagère, profil pas encore lu).
 function M.want(g,profile,panic,out)
  if panic or type(g)~='table' or type(profile)~='table' then return nil end
- local on=g.enabled==true
+ -- Beta 1.59 : overlay coupé (overlayEnabled) : options rendues, AC dessine ses drapeaux et ses messages.
+ local on=g.enabled==true and g.overlayEnabled~=false
  out.HIDE_SYSTEM_MESSAGES=on and g.overlayMessages==true and g.overlayBlockMessages==true and g.cspHideMessages==true and not g.cspMessagesLost
  out.HIDE_RACE_FLAGS=on and g.cspHideFlags==true and profile.flagPanel~=false
  return out

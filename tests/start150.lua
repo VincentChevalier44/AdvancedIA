@@ -54,7 +54,8 @@ tests.FIRST_LAP_STRAIGHT_150=function()
  local e2,f2=careful(4); F.place(f2,1,-3000,100); F.place(f2,2,0,150); F.place(f2,3,12,100); f2.cars[2].leftWidth=2; f2.cars[2].rightWidth=2
  e2.fl.points[1]=(40/f2.length)%1; e2.fl.count=1; for i=2,4 do e2.states[i].nextPerception=0 end
  for _=1,30 do F.tick(e2,f2,1/60) end
- assert(e2.commands[2].throttleLimit and e2.commands[2].throttleLimit<=K.radarStartLift+1e-9,'before a learnt braking point: lift as before')
+ -- Beta 1.59 : peloton (+50 km/h) : levée dosée selon le temps au contact (vrai obstacle : levée franche, plus haut).
+ assert(e2.commands[2].throttleLimit and e2.commands[2].throttleLimit<1 and e2.commands[2].throttleLimit>=K.radarStartLift-1e-9,'before a learnt braking point: graded lift')
 end
 -- Reprise du départ réel (Borja Carrera, 232,4 s) : départ lancé, IA à 10 m derrière une voiture plus lente de 41 km/h,
 -- joueur à fond à 6 m derrière elle : l'IA ne lève jamais le pied (le choc passait à l'arrière).

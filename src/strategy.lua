@@ -19,6 +19,9 @@ local function car()
   boxSeen=false,outLap=false,outFrom=0,outLap0=-1,outEnd=-math.huge,outLogged=false,
   failState=0,failKind='',failAt=0,failRamp=0,failLoss=0,failChecks=0,failNext=0,failVisit=-1,failRepair=0,failAsked=false,
   wearSeen=0,rivalLane=false,
+  -- Relecture 1.59 : arrêt obligatoire retardé (overcut) et demande marquée « arrêt obligatoire », remis à zéro
+  -- avec le reste (false, jamais nil, pour que la recopie par pairs les remette).
+  mandShiftLap=false,mandatoryReq=false,
   -- Relecture 1.42 : appel tenu (place d'appel gardée), arrêt servi, contrôle après l'arrêt (pneus posés, carburant
   -- ajouté), causes abandonnées pour le reste de la session, batterie vue (hybride), carburant critique, usure de sonde.
   called=false,serving=false,servedVisit=-1,stopWear=-1,stopFuel=-1,stopCause='',stopLimit='',checkAfter=false,checkAt=0,
@@ -38,7 +41,7 @@ end
 function M.reset(t,now)
  for i=1,K.maxCars do t.cars[i]=car() end
  clear(t.rows); t.head=0; for k=1,K.strategyRows do t.events[k].what='' end
- t.dirty=false; t.resetAt=now; t.outCount=0; t.outSummary=false; t.neutralWas=false
+ t.dirty=false; t.resetAt=now; t.outCount=0; t.outSummary=false; t.neutralWas=false; t.lastFailAt=nil
  -- Échelle de l'usure vérifiée une fois pour toutes (même jeu) ; sinon revue à chaque session.
  if t.wearTrust~='trusted' then t.wearTrust='unknown' end
 end
@@ -46,6 +49,7 @@ end
 function M.forget(t) t.restored=nil; t.restoredSession=-1 end
 function M.rebase(t,amount)
  if t.resetAt then t.resetAt=t.resetAt-amount end
+ if t.lastFailAt then t.lastFailAt=t.lastFailAt-amount end
  for i=1,K.maxCars do
   local c=t.cars[i]
   c.planLoggedAt=c.planLoggedAt-amount; c.wantSince=c.wantSince-amount; c.outFrom=c.outFrom-amount; c.retryAt=c.retryAt-amount
@@ -169,17 +173,26 @@ local function eligible(a,s,e,i)
  return a.valid and a.control and not a.player and not a.finished and not a.safetyCar and not s.disqualified and not (e.penalties.ai.dq and e.penalties.ai.dq[i])
 end
 -- Demande d'arrêt de la stratégie (journal une fois par demande).
-local function want(t,e,c,a,i,cause,now)
+-- Beta 1.59 (undercut arret obligatoire) : text remplace la ligne du journal ; mandatory marque une demande qui sert
+-- l'arrêt obligatoire encore dû (jamais retirée comme « plus necessaire » tant qu'il reste dû, fenêtre ouverte).
+local function want(t,e,c,a,i,cause,now,text,mandatory)
  if c.wanted then return end
- c.wanted=true; c.cause=cause; c.wantSince=now; c.visit=e.pits.cars[i].visit
+ c.wanted=true; c.cause=cause; c.wantSince=now; c.visit=e.pits.cars[i].visit; c.mandatoryReq=mandatory==true
  c.stopWear=wearOf(a); c.stopFuel=a.fuel or -1; c.stopLimit=c.limit; c.stopTarget=-1; c.stopRed=false
- U.log(e.log,now,'INFO',string.format('strategie: %s arret demande (%s)',name(a),cause=='tyres' and string.format('pneus %.0f %%',max(0,wearOf(a))*100) or K.strategyCauseLog[cause] or cause),i)
+ U.log(e.log,now,'INFO',text or string.format('strategie: %s arret demande (%s)',name(a),cause=='tyres' and string.format('pneus %.0f %%',max(0,wearOf(a))*100) or K.strategyCauseLog[cause] or cause),i)
  event(t,'stop',name(a),cause)
 end
 -- Arrêt d'un rival proche (même tour, moins de K.strategyRivalGap s) : le stratège derrière qui a de bons pneus reste
 -- dehors (overcut), celui devant couvre l'undercut au tour suivant s'il était prudent ; un audacieux à quelques tours de
 -- son arrêt devance le rival devant lui (undercut). Une seule réaction par relais.
 -- Beta 1.47 : arrêt obligatoire encore dû, fenêtre ouverte (course à arrêts obligatoires, plan de la stratégie à 0 arrêt).
+-- Relecture 1.59 : demande marquée « arrêt obligatoire » seulement assez tôt dans la fenêtre (src/pits.lua garde
+-- la même marge avant sa fin).
+local function earlyInWindow(e)
+ local t=e.pits; if not t or t.position==nil or t.open==nil or t.close==nil then return false end
+ local span=t.close-t.open
+ return span>0 and t.position<t.close-span*K.strategyWindowMargin
+end
 local function mandatoryDue(e,i,p)
  local pits=e.pits; local pc=pits and pits.cars[i]
  -- Relecture 1.52 : fenêtre ouverte en ce moment (pits.opened reste vrai après sa fermeture).
@@ -191,20 +204,33 @@ local function rivals(t,e,frame,j,now,p)
  local sj=e.sanctions and e.sanctions.cars[j]
  -- Ni voiture de sécurité, ni voiture arrivée, disqualifiée, en panne ou qui purge une pénalité : pas un arrêt de rival.
  if b.safetyCar or b.finished or e.commands[j].penaltyPass or sj and sj.asked and sj.pending~='' or e.states[j].disqualified or e.penalties.ai.dq[j] or t.cars[j].failState==1 then return end
+ -- Beta 1.59 (undercut arret obligatoire) : une voiture dépannée jusqu'à son stand (app, AC ou CSP) n'est pas un arrêt.
+ local pj=e.pits.cars[j]
+ if e.commands[j].recover or pj and pj.towedAt and now>=pj.towedAt and now-pj.towedAt<=K.towWindow then return end
  for k=1,row.count do
   local r=row.neighbors[k]; local i=r.index; local a=frame.cars[i]; local c=t.cars[i]
   if a and i~=j and c.planned and not c.reaction and not c.wanted and eligible(a,e.states[i],e,i) and not a.pit
    and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap and r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0) then
    local risk=e.states[i].persona.strategyRisk or 0.5
    local w=wearUse(t,a)
+   -- Beta 1.59 (undercut arret obligatoire) : arrêt obligatoire encore dû, fenêtre ouverte, sans autre arrêt prévu.
+   local owed=mandatoryDue(e,i,p)
+   local onlyMandatory=owed and not (c.stops>0 and c.nextLap>=0)
    if r.long<0 and c.stops>0 and w>=0 and w<U.clamp(p.strategyTyreWearPct/100,0,1)*K.strategyOvercutWear then
     -- Rival devant qui s'arrête : on reste dehors un ou deux tours (piste libre).
     c.shift=K.strategyOvercutLaps; c.reaction=true
     U.log(e.log,now,'INFO',string.format('strategie: %s reste dehors (overcut sur %s)',name(a),name(b)),i)
-   elseif r.long>=0 and (c.stops>0 and c.nextLap>=0 and c.nextLap-(a.lap or 0)<=K.strategyCoverLaps or mandatoryDue(e,i,p)) and risk<K.strategyBoldRisk
+   elseif r.long<0 and onlyMandatory and w>=0 and w<U.clamp(p.strategyTyreWearPct/100,0,1)*K.strategyOvercutWear and not (e.pits.cars[i] and e.pits.cars[i].wanted) then
+    -- Arrêt obligatoire seul encore dû, bons pneus, rival devant qui s'arrête : l'arrêt obligatoire est retardé de
+    -- K.strategyOvercutLaps tours (src/pits.lua l'aligne sur cmd.stratPlanAt, toujours dans la fenêtre).
+    c.mandShiftLap=(a.lap or 0)+K.strategyOvercutLaps; c.reaction=true
+    U.log(e.log,now,'INFO',string.format('strategie: %s arret obligatoire retarde (overcut sur %s)',name(a),name(b)),i)
+   elseif r.long>=0 and (c.stops>0 and c.nextLap>=0 and c.nextLap-(a.lap or 0)<=K.strategyCoverLaps or owed) and risk<K.strategyBoldRisk
     and w>=U.clamp(p.strategyTyreWearPct/100,0,1)*K.strategyCoverWear then
     -- Rival derrière qui s'arrête : couverture au plus tôt.
-    c.reaction=true; want(t,e,c,a,i,'cover',now)
+    c.reaction=true
+    if onlyMandatory then if earlyInWindow(e) then want(t,e,c,a,i,'cover',now,string.format('strategie: %s arret obligatoire avance (couverture de %s)',name(a),name(b)),true)
+    end else want(t,e,c,a,i,'cover',now) end
    end
   end
  end
@@ -261,13 +287,15 @@ local function failure(t,e,frame,a,c,i,p,now,seed,racing,cmd)
   c.failNext=now+K.failureCheck
   local progress=e.race.progress
   if (a.lap or 0)<1 or progress<0 or progress>=K.failureLateRace or a.pit or inc.red or inc.neutral or (a.kmh or 0)<K.failureMinKmh then return end
+  -- Beta 1.59 : pannes espacées d'au moins K.failureGap s dans tout le plateau (jamais deux en même temps).
+  if now-(t.lastFailAt or -math.huge)<K.failureGap then return end
   c.failChecks=c.failChecks+1
   -- Tirage propre à chaque session (même graine tout le week-end) : pas la même panne à chaque course.
   local salt=K.failureSalt+(frame.session or 0)*K.failureSessionSalt
   if U.unit(seed,i,salt+c.failChecks)>=p.failureRate/3600*K.failureCheck then return end
   local kinds=c.kersSeen and kindsHybrid or kindsPlain
   c.failKind=kinds[min(#kinds,floor(U.unit(seed,i,salt+K.counterMax)*#kinds)+1)]
-  c.failState=1; c.failAt=now; c.failAsked=false; c.failVisit=e.pits.cars[i].visit
+  c.failState=1; c.failAt=now; c.failAsked=false; c.failVisit=e.pits.cars[i].visit; t.lastFailAt=now
   c.failRamp=U.lerp(K.failureRampMin,K.failureRampMax,U.unit(seed,i,salt+K.counterMax+1))
   c.failLoss=p.failureLossPct/100*U.lerp(K.failureLossMin,1,U.unit(seed,i,salt+K.counterMax+2))
   c.failRepair=U.lerp(K.failureRepairMin,K.failureRepairMax,U.unit(seed,i,salt+K.counterMax+3))
@@ -330,7 +358,7 @@ function M.update(t,e,frame,now,_dt)
    -- Relecture 1.42 (après correctifs) : overcut et réaction oubliés à chaque passage à l'emplacement (arrêt des règles,
    -- arrêt natif), pas seulement à l'arrêt demandé par la stratégie.
    local visitNow=e.pits.cars[i].visit
-   if visitNow~=c.lastVisit then if c.lastVisit>=0 then c.shift=0; c.reaction=false end; c.lastVisit=visitNow end
+   if visitNow~=c.lastVisit then if c.lastVisit>=0 then c.shift=0; c.reaction=false; c.mandShiftLap=false end; c.lastVisit=visitNow end
    probe(t,e,a,c,i,now)
    -- Blocage qui use un pneu (mistakes.lua) : une ligne de journal par blocage.
    if (cmd.wearId or 0)~=c.wearSeen then
@@ -371,7 +399,12 @@ function M.update(t,e,frame,now,_dt)
       local r=row and row.front>0 and row.neighbors[row.front]
       local b=r and frame.cars[r.index]
       if b and not b.pit and r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0) and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap then
-       c.reaction=true; want(t,e,c,a,i,'undercut',now)
+       -- Beta 1.59 (undercut arret obligatoire) : seul l'arrêt obligatoire encore dû le déclenche (aucun autre arrêt
+       -- prévu) : demande marquée, jamais retirée dans la même image comme « plus necessaire » (avant, l'undercut de la
+       -- 1.47 pour l'arrêt obligatoire était demandé puis retiré aussitôt et ne servait jamais).
+       c.reaction=true
+       if not (c.stops>0 and c.nextLap-(a.lap or 0)<=K.strategyUndercutLaps) then if earlyInWindow(e) then want(t,e,c,a,i,'undercut',now,string.format('strategie: %s arret obligatoire avance (undercut)',name(a)),true) end
+       else want(t,e,c,a,i,'undercut',now) end
       end
      end
      if left>=0 and left<=K.strategyLastLaps then c.shift=0 end
@@ -402,6 +435,8 @@ function M.update(t,e,frame,now,_dt)
     -- finie, cause abandonnée) : retirée tant que la voiture n'est pas dans la voie (jamais un appel déjà donné).
     local stale=not a.pit and not c.called and c.cause~='failure' and not c.critical
      and (c.cause=='neutral' and not inc.neutral or c.cause=='fuel' and c.noFuelStop or c.cause=='tyres' and c.noTyreStop or c.planned and c.stops==0)
+     -- Beta 1.59 (undercut arret obligatoire) : jamais une demande qui sert l'arrêt obligatoire encore dû, fenêtre ouverte.
+     and not (c.mandatoryReq and mandatoryDue(e,i,p))
     if pc.visit~=c.visit then
      c.wanted=false; c.called=false; c.shift=0; c.reaction=false; c.lap=-1; c.lapWear=-1; c.replan=true
      c.serving=true; c.servedVisit=pc.visit; c.stopCause=c.cause; c.deferLogged=false
@@ -445,6 +480,13 @@ function M.update(t,e,frame,now,_dt)
     local total=(a.lap or 0)+max(0,left)
     if total>0 then cmd.stratPlanAt=c.nextLap/total end
     cmd.stratLaps=max(1,floor(min(left,c.stops>1 and math.ceil(max(1,left)/(c.stops)) or left)))
+   end
+   -- Beta 1.59 (undercut arret obligatoire) : arrêt obligatoire seul encore dû, retardé (overcut) : point visé transmis à
+   -- src/pits.lua (arrêt aligné sur cmd.stratPlanAt, jamais au-delà de la fenêtre moins la marge de la stratégie).
+   if active and c.mandShiftLap and not (c.stops>0 and c.nextLap>=0) and mandatoryDue(e,i,p) then
+    local left=lapsLeft(e,frame,a,i)
+    local total=(a.lap or 0)+max(0,left)
+    if total>0 and left>=0 then cmd.stratPlanAt=c.mandShiftLap/total end
    end
   else
    if c.wanted then c.wanted=false end

@@ -5,6 +5,8 @@
 -- Publié depuis script.HUMANAI__UPDATE après update(), à chaque image, y compris en pause, en replay, en ligne ou moteur
 -- arrêté (champs ready, guard, online, replay, paused) : le battement ne s'arrête qu'au déchargement (closed).
 local Layout=require('src/bridge_layout')
+-- Relecture 1.59 (signalé par la session SpotterEnginer) : seuils des décisions d'incident pour les valeurs publiées.
+local K=require('src/config').K
 local M={}
 M.layout=Layout
 local maxCars=Layout.maxCars
@@ -66,7 +68,11 @@ local function cars(out,e,frame,now)
   else
    c.valid=true; c.safety=bool(a.safetyCar); c.pit=bool(a.pit)
    local ic=incidents[i] or EMPTY
-   c.incident=bool(ic.incident); c.onTrack=bool(ic.onTrack); c.still=num(ic.still); c.halt=bool(ic.halt); c.spin=bool(ic.spin); c.wrong=bool(ic.wrong)
+   -- Relecture 1.59 : spin, wrong et halt sont des durées (secondes) dans src/incidents.lua : publiés avec les seuils de
+   -- la décision d'incident (tête-à-queue : décision c.spun de la 1.59, perte de vitesse comprise). onTrack : voiture en
+   -- piste à cette image, pour toutes les voitures (le c.onTrack interne n'est tenu que pendant un incident).
+   c.incident=bool(ic.incident); c.onTrack=not bool(a.offtrack); c.still=num(ic.still)
+   c.halt=num(ic.halt)>=K.obstacleTime; c.spin=bool(ic.spun); c.wrong=num(ic.wrong)>=K.wrongWayTime
    local sc=sanctions[i] or EMPTY
    c.strikes=int(sc.strikes); c.sanctions=int(sc.count); c.timeAdded=num(sc.time); c.pending=code(Layout.pending,sc.pending)
    c.pendingLaps=int(sc.pendingLaps); c.cutLeft=num(sc.cutLeft); c.sanctionDq=bool(sc.dq); c.owedTo=index(sc.owedTo)

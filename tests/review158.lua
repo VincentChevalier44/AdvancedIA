@@ -124,7 +124,8 @@ tests.PIT_APP_TOW_NOT_THE_STOP_158=function()
  local function step(red) now=now+0.5; Pits.update(t,f,cmds,run,'C',now,1,nil,red or false,nil,false) end
  step(); local c=t.cars[2]; local a=f.cars[2]; assert(c.wanted,'requested')
  cmds[2].recover=true; step(); cmds[2].recover=false
- a.pit=true; a.inPitBox=true; a.teleport=true; step(); a.teleport=false
+ -- Beta 1.59 : à l'arrêt à son emplacement (passage servi seulement une fois vraiment arrêtée).
+ a.pit=true; a.inPitBox=true; a.kmh=0; a.teleport=true; step(); a.teleport=false
  assert(c.windowStops==0 and c.requestServices==1,'app tow: not the requested stop')
  a.inPitBox=false; step()
  assert(cmds[2].laneServed and not cmds[2].rulePit and not c.wanted,'served in this lane pass: no request before the lane exit')
@@ -146,7 +147,7 @@ tests.PIT_ONE_SERVICE_PER_LANE_158=function()
  local now=100
  local function step() now=now+0.5; Pits.update(t,f,cmds,run,'C',now,1,nil,false,nil,false) end
  step(); local c=t.cars[2]
- a.pit=true; step(); a.inPitBox=true; a.damageBody=50; step()
+ a.pit=true; step(); a.inPitBox=true; a.kmh=0; a.damageBody=50; step()
  assert(c.windowStops==1 and cmds[2].pitCompound==1 and cmds[2].pitRepair,'first arrival: counted, tyres and repairs')
  a.compoundIndex=1
  for _=1,3 do a.inPitBox=false; step(); assert(cmds[2].laneServed,'out of the box, still in the lane'); a.inPitBox=true; step()

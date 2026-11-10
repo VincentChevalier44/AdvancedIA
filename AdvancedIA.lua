@@ -184,6 +184,8 @@ local function cspStep(dt)
  if U.finite(dt) and dt>0 then cspClock=cspClock+math.min(dt,1) end
  -- Beta 1.47 : décision dans src/cspgui.lua (Cspgui.want) ; nil pendant la panique : rien ne change.
  Cspgui.step(csp,cspPort,Cspgui.want(globals,engine.p,engine.panic,cspWant),cspClock)
+ -- Beta 1.59 (relecture) : drapeaux d'AC encore masqués par CSP (gui.ini pas relu, plafond, lecture seule).
+ engine.cspHidingFlags=Cspgui.applied(csp,'HIDE_RACE_FLAGS')
  cspLog()
 end
 -- AI flood de CSP (Beta 1.26) : état chargé par CSP au lancement ; le moteur écrit ensuite le réglage voulu.
@@ -266,6 +268,8 @@ local companion='SpotterEnginer'
 -- Beta 1.52 : sa mise à jour, signalée à l'accueil (clé publiée par lui, fenêtre de réglages ID=main de son manifeste).
 local companionKey,companionWindow=companion..'.update','IMGUI_LUA_'..companion..'_main'
 local companionPresent,companionAt=false,-math.huge
+-- Beta 1.59 : plan d'arrêt du joueur publié par SpotterEnginer (lecture seule), relu toutes les K.sePlanPeriod s.
+local sePlanAt=-math.huge
 host.openCompanion=function() return Applier.openCompanion(companionWindow) end
 local function release()
  if released then return end
@@ -391,6 +395,11 @@ local function update(dt)
  if read then Applier.menu(host,frame.menu,menuClock) else Applier.menu(host,Snapshot.menu(),menuClock) end
  -- Beta 1.52 : état de la mise à jour de SpotterEnginer (publié par lui), relu toutes les K.companionUpdatePeriod s.
  if companionPresent and menuClock>=companionAt then companionAt=menuClock+K.companionUpdatePeriod; host.companionUpdate=Applier.companionUpdate(companionKey) end
+ if companionPresent and menuClock>=sePlanAt then
+  sePlanAt=menuClock+K.sePlanPeriod
+  local plan=engine.sePlan; if not plan then plan={}; engine.sePlan=plan end
+  plan.raw=Applier.loadText(K.sePlanKey)
+ end
  if not initialized then
   -- Session courante connue avant la récupération : un rechargement n'est pas un changement de session.
   initialized=true; host.session=frame.session; Applier.recover(host,frame)
@@ -667,5 +676,7 @@ HUMANAI.drawFlags=function() if not released then protectUI(UI.flags,panel) end 
 function script.HUMANAI__HUD()
  if released then return end
  timedUI(UI.hud,'overlay')
- pcall(messages,globals.overlayMessages and globals.overlayBlockMessages and globals.enabled,globals.overlayMessages and globals.enabled and Cspgui.applied(csp,'HIDE_SYSTEM_MESSAGES'))
+ -- Beta 1.59 (relecture) : overlay coupé : messages d'AC jamais bloqués par l'app (AC les dessine lui-même).
+ local shown=globals.overlayEnabled~=false
+ pcall(messages,globals.overlayMessages and globals.overlayBlockMessages and globals.enabled and shown,globals.overlayMessages and globals.enabled and shown and Cspgui.applied(csp,'HIDE_SYSTEM_MESSAGES'))
 end

@@ -97,14 +97,17 @@ function M.find(row,slot)
  for j=1,row.count do if row.neighbors[j].index==slot then return row.neighbors[j] end end
  return nil
 end
-function M.corridor(cars,count,i,side,distance,ignore,latMax)
+-- Beta 1.59 : leadSpeed (m/s, facultatif) : une voiture du couloir nettement devant (au-delà de la longueur de l'IA) et au
+-- moins aussi rapide ne le ferme pas (elle passe la même cible et s'éloigne : file derrière le joueur rangé).
+function M.corridor(cars,count,i,side,distance,ignore,latMax,leadSpeed)
  local a=cars[i]
  for j=1,count do
   local b=cars[j]
   if j~=i and j~=ignore and b.valid and not b.pit then
    local dx,dz=b.x-a.x,b.z-a.z; local long=dx*a.lx+dz*a.lz; local lat=-dx*a.lz+dz*a.lx
    local same=a.lx*b.lx+a.lz*b.lz>K.sameDirection
-   if same and long>=-b.length and long<=distance and -lat*side>=K.nearLine and abs(lat)<=(latMax or K.occLatMax) then return false end
+   if same and long>=-b.length and long<=distance and -lat*side>=K.nearLine and abs(lat)<=(latMax or K.occLatMax)
+    and not (leadSpeed and long>a.length+b.length and b.speed>=leadSpeed) then return false end
   end
  end
  return true

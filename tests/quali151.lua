@@ -142,7 +142,7 @@ tests.SESSION_PRESET_151=function()
  local e3,f3=scene(1,'ks_nordschleife'); f3.configTrackDay=true; E.step(e3,f3,1/60)
  assert(e3.profile=='J' and C.mark(e3.g,'J')=='Nordschleife' and count(e3,'circuit Nordschleife')==1,'Nordschleife track day')
  -- Détection en retard : journée circuit à la première image, qualifications à la suivante : Qualifications pour Q.
- local e7,f7=scene(nil); f7.configType=-1; f7.type=1; E.step(e7,f7,1/60); assert(e7.profile=='J' and C.mark(e7.g,'J')=='Nordschleife','first frame: track day')
+ local e7,f7=scene(nil); f7.configType=-1; f7.type=1; E.step(e7,f7,1/60); assert(e7.profile=='J' and C.mark(e7.g,'J')=='Circuit','first frame: track day (1.59: Journée circuit off the Nordschleife)')
  f7.configType=2; f7.type=2; E.step(e7,f7,1/60); assert(e7.profile=='Q' and C.mark(e7.g,'Q')=='Qualifications','late detection: qualifying preset')
  -- Hotlap : aucun ; réglage coupé : ancienne règle (profil jamais réglé seulement, aucune tuile).
  local e4,f4=scene(4); e4.profiles.H=C.defaults('H'); E.step(e4,f4,1/60); assert(e4.profile=='H' and C.mark(e4.g,'H')=='','hotlap: none')

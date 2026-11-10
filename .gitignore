@@ -9,6 +9,7 @@ tests/lint-results.json
 tests/soak-results.json
 tests/performance-current-results.json
 tests/journal-coverage-results.json
+tests/effectiveness-results.json
 # Temporary files in dist/ (package.py keeps only the current release package there)
 dist/*.tmp
 # In-app update data (backup of the previous version, staging, markers), local to each installation

@@ -100,9 +100,9 @@ local function texts(v)
  v.descriptions={}; for _,group in ipairs(C.sections) do v.descriptions[group]=L.sectionDescs[group] or T.tabs[group] or '' end
  v.descriptions.overlay=L.sectionDescs.overlay or T.tabs.overlay or ''
  local function same(profile) return function() return profile end end
- v.builtinList={{L.presetJ,'Nordschleife','J',same('J')},{L.presetP,'Essais','P',same('P')},{L.presetQ,'Qualifications','Q',same('Q')},{L.presetC,'Course','C',same('C')},
+ v.builtinList={{L.presetJ,'Nordschleife','J',same('J')},{L.presetT,'Circuit','T',same('J')},{L.presetP,'Essais','P',same('P')},{L.presetQ,'Qualifications','Q',same('Q')},{L.presetC,'Course','C',same('C')},
   {L.presetE,'Endurance','E',function(view) return (view=='Q' or view=='P') and 'C' or view=='H' and 'J' or view end}}
- v.builtinNames={Nordschleife=L.presetJ,Essais=L.presetP,Qualifications=L.presetQ,Course=L.presetC,Endurance=L.presetE}
+ v.builtinNames={Nordschleife=L.presetJ,Circuit=L.presetT,Essais=L.presetP,Qualifications=L.presetQ,Course=L.presetC,Endurance=L.presetE}
  -- Textes mémorisés (préréglage chargé, liste des voitures, version, delta, pastilles, message) : refaits à la
  -- prochaine image.
  -- Infobulles du diagnostic (Beta 1.39) : état de la calibration, zone de freinage émulée ; coupées une fois.
@@ -120,7 +120,7 @@ end
 function M.new(e,host,calibration,dirty)
  local v={e=e,host=host,calibration=calibration,dirty=dirty,open={patternRows=true},controls={},logFilter=1,patternInvalid=false,category='general',keptRules={},
   patternRows={},patternFragments={},patternSource=false,patternProfile='',presetName='',presetMessage='',derived={},signatureValues={},builtinSignatures={},
-  builtinConfigs={Nordschleife={J=C.preset('Nordschleife','J',{})},Essais={P=C.preset('Essais','P',{})},Qualifications={Q=C.preset('Qualifications','Q',{})},Course={C=C.preset('Course','C',{})},Endurance={J=C.preset('Endurance','J',{}),C=C.withRules('Endurance','C',C.preset('Endurance','C',{}))}}}
+  builtinConfigs={Nordschleife={J=C.preset('Nordschleife','J',{})},Circuit={J=C.preset('Circuit','J',{})},Essais={P=C.preset('Essais','P',{})},Qualifications={Q=C.preset('Qualifications','Q',{})},Course={C=C.preset('Course','C',{})},Endurance={J=C.preset('Endurance','J',{}),C=C.withRules('Endurance','C',C.preset('Endurance','C',{}))}}}
  v.patternIds={}; v.patternClassIds={}; v.patternClearIds={}
  for i=1,K.maxPatterns do v.patternRows[i]={pattern='',class=1}; v.patternIds[i]='pattern_'..i; v.patternClassIds[i]='pattern_class_'..i; v.patternClearIds[i]='pattern_clear_'..i end
  for _,s in ipairs(C.schema) do
@@ -405,12 +405,16 @@ local function hiddenNote(view,key,shown)
  if key=='floodRangeKm' and not C.hidden(view,'spawnMode') then return 'flood' end
  -- Beta 1.51 : tours lancés (essais et qualifications), refroidissements des IA (qualifications).
  if key=='qualiTraffic' then return 'quali' end
+ -- Relecture 1.59 : vrais passages en piste, note seulement quand le profil affiché n'est pas un profil d'essais.
+ if key=='qualiRuns' then return not shown.quali and 'quali' or nil end
  -- Beta 1.56 : vos sorties en essais et qualifications, masquées en course.
  if C.sanctionPracticeKeys[key] then return not shown.quali and 'quali' or nil end
  if key=='qualiCoolLaps' then return not C.hidden(view,'qualiTraffic') and 'qualiQ' or not shown.quali and 'quali' or nil end
+ -- Beta 1.59 : arrêt aux stands pour dégâts, jamais en journée circuit ni en hotlap.
+ if key=='damagePit' then return 'damage' end
  return nil
 end
-local noteTexts={quali='qualiOnlySetting',qualiQ='qualifyingOnlySetting',race='raceOnlySetting',penalties='penaltiesTrackDay',endurance='enduranceNotAvailable',spawn='spawnNotAvailable',flood='floodNotAvailable'}
+local noteTexts={quali='qualiOnlySetting',qualiQ='qualifyingOnlySetting',race='raceOnlySetting',penalties='penaltiesTrackDay',endurance='enduranceNotAvailable',spawn='spawnNotAvailable',flood='floodNotAvailable',damage='damagePitTrackDay'}
 -- Hauteur estimée d'un sous-groupe (répartition des deux colonnes) : titre 30, curseur 44, choix 46, interrupteur 28.
 local heightShown={}
 local function groupHeight(group,view)
@@ -808,11 +812,13 @@ local function statusLines(v,e,group,view,p,out)
 end
 -- Réglages de l'overlay en jeu (Beta 1.25, refonte Racing 26) : taille et fond, apparence, contenu, affichages
 -- d'Assetto Corsa, comportement, puis les panneaux lumineux du circuit (Beta 1.32).
-local overlayContentKeys={'overlaySession','overlayExplain','overlayRecap'}
+-- Beta 1.59 (décision du pilote, n° 15) : « Overlay » en tête : coupé, rien de l'overlay n'est dessiné et les affichages
+-- d'origine d'AC sont rendus (case de session, options de CSP tenues par l'app).
+local overlayContentKeys={'overlayEnabled','overlaySession','overlayExplain','overlayRecap'}
 local overlayNativeKeys={'overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags'}
 local overlayBehaviourKeys={'overlayClickThrough','overlayHideReplay','overlayHidePits'}
 local overlayResetKeys={'overlayX','overlayY','overlayScale','overlayLocked','overlayBackground','overlayContent','panelOpacity','panelShow','panelInfoTime',
- 'overlaySession','overlayExplain','overlayRecap','overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags','cspMessagesLost',
+ 'overlayEnabled','overlaySession','overlayExplain','overlayRecap','overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags','cspMessagesLost',
  'overlayClickThrough','overlayHideReplay','overlayHidePits'}
 local backgroundKeys=C.globalChoices.overlayBackground
 local function switchList(v,g,keys,titles,x,y,w)
@@ -1533,6 +1539,31 @@ local function homeTab(v,e,host)
   end
  end
  y=y+ph+GAP
+ -- Beta 1.59 (demande du pilote) : raccourci du jeu de règles, même réglage et même chemin que l'onglet Règles de course
+ -- (C.applyRules) ; figé pendant une course lancée.
+ local ruleNow=ruleCategoryOf(v,e)
+ local locked=C.rulesLocked(e.profile,e.frame)
+ if not v.homeRuleLabels or v.homeRuleLang~=Locale.current then
+  v.homeRuleLang=Locale.current; v.homeRuleLabels={}; v.homeRuleIds={}; v.homeRuleTips={}
+  for i,name in ipairs(C.ruleCategories) do v.homeRuleLabels[i]=L.ruleShort[name] or name; v.homeRuleIds[i]=idOf('homerule_',name); v.homeRuleTips[i]=v.tips.rules[name] end
+ end
+ local ruleAt=0; for i,name in ipairs(C.ruleCategories) do if name==ruleNow then ruleAt=i end end
+ local ruleLine=locked and L.homeRulesLocked or L.homeRulesNote
+ local rlh=#W.lines(ruleLine,w-24,12)*W.lineHeight(12)
+ local rph=8+24+8+(locked and 0 or 28)+rlh+12
+ W.panel(x,y,w,rph)
+ if W.visible(y+8,24) then W.heading(L.homeRulesHeading,x+12,y+8,w-24,ruleNow and L.ruleNames[ruleNow] or L.ruleCustomShort) end
+ local ry=y+40
+ if not locked then
+  if W.visible(ry,22) then
+   local picked=W.segment('homerules',v.homeRuleLabels,x+12,ry,w-24,22,ruleAt,nil,v.homeRuleIds,v.homeRuleTips)
+   local name=picked and C.ruleCategories[picked]
+   if name and name~=ruleNow then C.applyRules(name,e.profiles); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v) end
+  end
+  ry=ry+28
+ end
+ if W.visible(ry,rlh) then W.paragraph(ruleLine,x+12,ry,w-24,12,locked and c.warn or c.label) end
+ y=y+rph+GAP
  W.clip(); v.contentHeights.homeLeft=y+offset-top
  -- Colonne de droite : état en direct, points à vérifier, préréglages personnels.
  offset=W.scroll(v.scrolls,'home',rx,top,cw,height,v.contentHeights.home or 0)
@@ -1582,7 +1613,7 @@ local function homeTab(v,e,host)
  if cu and (cu.state=='available' and cu.latest or cu.state=='incompatible') then
   if v.companionFor~=cu then
    v.companionFor=cu
-   v.companionText=cu.state=='available' and string.format(L.companionAvailable,cu.latest,cu.installed) or cu.needs and cu.needs~='?' and string.format(L.companionNeeds,cu.needs) or L.companionNeedsUnknown
+   v.companionText=cu.state=='available' and string.format(cu.manual and L.companionManual or L.companionAvailable,cu.latest,cu.installed) or cu.needs and cu.needs~='?' and string.format(L.companionNeeds,cu.needs) or L.companionNeedsUnknown
   end
   addWarning(v,v.companionText,'spotter')
  end
@@ -1715,6 +1746,28 @@ local function homeTab(v,e,host)
   end
  end
  if not any then y=y+W.message(L.noCustomPresets,x+12,y+2,w-24,'mut')+8 end
+ -- Beta 1.59 (export/import) : préréglages personnels et réglages des profils vers un fichier, et retour
+ -- (src/presetfile.lua) ; le remplacement d'un fichier exporté et tout import attendent une confirmation.
+ do
+  local PF=v.presetFile; if not PF then PF=require('src/presetfile'); v.presetFile=PF end
+  local pio=v.presetIO; if not pio then pio={message='',kind='mut'}; v.presetIO=pio end
+  if not v.presetIONote then v.presetIONote=function(level,text) local h=v.host; if h and h.note then h.note(level,text,-1) end end end
+  local bw=(w-24-6)*0.5
+  if W.visible(y,28) then
+   if pio.pending then
+    if W.button('preset_io_confirm',L.presetIOConfirm,x+12,y,bw,28,false,nil,'primary') then
+     local imported=pio.pending=='import'
+     pio.message,pio.kind=PF.confirm(pio,e,host,L,v.presetIONote,Adapter.savePreset); if imported then mark(v) end
+    end
+    if W.button('preset_io_cancel',L.presetIOCancel,x+12+bw+6,y,bw,28,false,nil,'outline') then pio.message,pio.kind=PF.cancel(pio) end
+   else
+    if W.button('preset_export',L.presetIOExport,x+12,y,bw,28,false,v.tips.ui.presetExport,'outline') then pio.message,pio.kind=PF.ask(pio,'export',e,host,L,v.presetIONote) end
+    if W.button('preset_import',L.presetIOImport,x+12+bw+6,y,bw,28,false,v.tips.ui.presetImport,'outline') then pio.message,pio.kind=PF.ask(pio,'import',e,host,L,v.presetIONote) end
+   end
+  end
+  y=y+34
+  if pio.message~='' then y=y+W.message(pio.message,x+12,y,w-24,pio.kind)+6 end
+ end
  y=y+8
  -- Hauteur du panneau gardée pour son fond à l'image suivante (il dépend de la liste et des messages).
  v.customPanelH=y-py
@@ -2586,6 +2639,22 @@ local parts={}
 local aiFree={green=true,start=true,lap=true,update=true}
 function M.overlayParts(v,force)
  local e=v.e; local g=e.g; local panel=e.panel; local now=e.time; local hud=e.hud
+ -- Beta 1.59 : overlay coupé : rien, dans tous les cas (drapeaux, pénalités, récapitulatif, avis, overlay déverrouillé),
+ -- dès que CSP ne masque plus les affichages d'AC. Tant qu'il les masque encore (gui.ini pas relu, plafond d'écritures,
+ -- fichier en lecture seule) : drapeaux et pénalités du jeu, messages d'AC, rien d'autre (sinon personne ne les dessine).
+ if g.overlayEnabled==false then
+  local c=v.host and v.host.cspgui
+  local flagsHidden=c~=nil and Cspgui.applied(c,'HIDE_RACE_FLAGS'); local msgsHidden=c~=nil and Cspgui.applied(c,'HIDE_SYSTEM_MESSAGES')
+  if not flagsHidden and not msgsHidden then return nil end
+  local idle=not flagsHidden or not Panel.visible(panel,g,now)
+  parts.idle=idle; parts.ai=false; parts.aiStrip=false
+  parts.message=msgsHidden and hud~=nil and now<hud.msgUntil or false
+  parts.strip=parts.message; parts.band=not idle
+  if not parts.band and not parts.strip then return nil end
+  parts.recap=false; parts.lines=0; parts.notice=false; parts.giveBack=nil; parts.pitCall=false; parts.blueGap=nil; parts.closed=false
+  parts.infraction=false; parts.repair=false; parts.pills=false
+  return parts
+ end
  local idle=not Panel.visible(panel,g,now)
  parts.idle=idle
  local ai=g.overlayMessages and hud~=nil and now<hud.aiUntil
@@ -2856,7 +2925,7 @@ function M.hud(v)
  local hidden=not frame or frame.replay and g.overlayHideReplay or g.overlayHidePits and player~=nil and player.pit
  local unlocked=not g.overlayLocked
  local p=not hidden and M.overlayParts(v,unlocked) or nil
- nativeBox(v,not hidden and g.overlayNativeBox and g.overlaySession)
+ nativeBox(v,not hidden and g.overlayEnabled~=false and g.overlayNativeBox and g.overlaySession)
  if not p then return end
  local s=g.overlayScale; local w=K.hudWidth*s; local h=M.overlayHeight(p)*s
  local screen=screenSize()

@@ -37,6 +37,10 @@ local function reset(h,session)
  h.started=false; h.grid=0; h.finished=false; h.dnf=false; h.dq=false; h.final=0; h.passes=0; h.lost=0; h.rel={}
  h.fieldBest=0; h.fieldBestName=''; h.recap={}; h.recapNew=false; h.stripKey=''; h.corrected=0; h.trackLimits=nil
 end
+-- Beta 1.59 (course du 10 novembre, relancée : second « fin de course » faux, P15 / départ P1 gardés, publiés au pont) :
+-- même course relancée par AC (même indice de session, src/engine.lua : départ retombé) : état de course de l'overlay
+-- remis à zéro, comme à une nouvelle session.
+function M.restart(h) reset(h,h.session) end
 -- Message d'AC (ac.onMessage) : affiché sur la ligne de session pendant sa durée (bornée) ; renvoie vrai la première
 -- fois qu'un titre apparaît dans la session (journal).
 function M.message(h,title,description,kind,time,now)
@@ -144,7 +148,8 @@ function M.update(h,frame,e,now)
  if frame.player<=0 then h.stripCount=0; return end
  local a=frame.cars[frame.player]
  -- Relecture : place corrigée du joueur suivie après son arrivée (les IA arrivées ensuite peuvent la changer).
- if h.recapSerial>0 and e.sanctions then local pos=Sanctions.position(e.sanctions,frame.player); if pos~=h.corrected then h.corrected=pos; recap(h,a) end end
+ -- Beta 1.59 : seulement la course en cours finie (après une remise à zéro, plus de récapitulatif refait à vide).
+ if h.finished and h.recapSerial>0 and e.sanctions then local pos=Sanctions.position(e.sanctions,frame.player); if pos~=h.corrected then h.corrected=pos; recap(h,a) end end
  if not a.valid then return end
  local cars=0; for i=1,frame.count do local b=frame.cars[i]; if b.valid and not b.safetyCar then cars=cars+1 end end
  h.cars=cars
@@ -166,7 +171,8 @@ function M.update(h,frame,e,now)
  if (a.bestLap or 0)>0 then h.best=a.bestLap end
  -- Récapitulatif de course : place au premier feu vert de la session (une relance après drapeau rouge ne la change pas).
  if race then
-  if not h.started and frame.started and a.position>0 then h.started=true; h.grid=a.position end
+  -- Beta 1.59 : jamais sur une image encore marquée finie (course précédente lue au moment de la relance).
+  if not h.started and frame.started and not frame.finished and not a.finished and a.position>0 then h.started=true; h.grid=a.position end
   if h.started and not h.finished then
    if now>=h.at then h.at=now+K.recapPeriod; if frame.length>0 then passes(h,frame) end end
    if a.finished or frame.finished then

@@ -128,6 +128,7 @@ M.rules={
  {'invitation du joueur non suivie: {n} derriere a {} m (ecart lateral {} m, {} km/h, lacet IA {}, joueur {} rad/s) : {p}','player invitation not taken: {1} behind at {2} m (lateral gap {3} m, {4} km/h, AI yaw {5}, player {6} rad/s): {7}'},
  {'radar avant: {n} leve le pied derriere {n} ({} m, {} km/h plus vite){p}','front radar: {1} lifts off behind {2} ({3} m, {4} km/h faster){5}'},
  {'radar avant: {n} freine derriere {n} ({} m, {} km/h plus vite){p}','front radar: {1} brakes behind {2} ({3} m, {4} km/h faster){5}'},
+ {'priorite au virage: {n} cede a {n} (nez derriere)','corner priority: {1} gives way to {2} (nose behind)'},
  {'appel de phares: {n} -> {n}','headlight flash: {1} -> {2}'},
  {'direction_limit: {p}','direction_limit: {1}'},
  {'air sale: {n} derriere {n} ({} m)','dirty air: {1} behind {2} ({3} m)'},
@@ -161,6 +162,8 @@ M.rules={
  {'preset_session: {p} (profil {}, circuit Nordschleife)','preset_session: {1} (profile {2}, Nordschleife track)'},
  {'preset_session: {p} (profil {})','preset_session: {1} (profile {2})'},
  {'onglets: {p} ; regles: {p}','tabs: {1}; rules: {2}'},
+ {'regles de course: {p} (changement)','racing rules: {1} (changed)'},
+ {'course relancee: recapitulatif et place de depart remis a zero','race restarted: summary and starting place reset'},
  {'voiture de securite: modele {} = modele de la grille ({p}), {p}','Safety Car: model {1} = grid model ({2}), {3}'},
  {'voiture de securite: modele {} porte par {} voitures, {p} deployee, {} garees','Safety Car: model {1} used by {2} cars, {3} deployed, {4} parked'},
  {'tete-a-queue, contexte: {n} | etat {} depuis {} s, derniere manoeuvre {p}, decalage {}, prudence {} (base {}), agressivite {} (base {}), niveau {}, aspiration {p}, frein app {}, limite {p}, inattention {p}, etat precedent {} ({})','spin, context: {1} | state {2} for {3} s, last manoeuvre {4}, offset {5}, caution {6} (base {7}), aggression {8} (base {9}), level {10}, wheelspin {11}, app brake {12}, speed limit {13}, lapse {14}, previous state {15} ({16})'},
@@ -234,6 +237,8 @@ M.rules={
  {'voiture de securite: pose en piste impossible ({p}), {p} sous {}','Safety Car: cannot be placed on track ({1}), {2} under {3}'},
  {'incident: {p}, {p}, {} m, {} km/h, {n}','incident: {1}, {2}, {3} m, {4} km/h, {5}'},
  {'incident ecarte: hors piste depuis plus de {} s','incident dismissed: off track for more than {1} s'},
+ {'incident ecarte: arretee hors piste, loin de la trajectoire depuis {} s','incident dismissed: stopped off track, away from the racing line for {1} s'},
+ {'point difficile: {} m ({} incidents en {} s au plus), prudence accrue pour les IA, aucun depassement commence','difficult spot: {1} m ({2} incidents within {3} s), more caution for the AI, no overtake started'},
  {'incident termine apres {} s','incident over after {1} s'},
  {'IA accidentee arretee {} s, {n}','crashed AI stopped {1} s, {2}'},
  {'IA accidentee repart apres {} s ({p})','crashed AI moves off after {1} s ({2})'},
@@ -394,6 +399,29 @@ M.rules={
  {'mise a jour: reprise abandonnee apres {} essais ({} -> {}) : reinstallez l app ({})','update: recovery given up after {1} tries ({2} -> {3}): reinstall the app ({4})'},
  {'mise a jour: reprise impossible ({}) : relancez le jeu ; si le probleme reste, reinstallez l app ({})','update: recovery impossible ({1}): restart the game; if the problem stays, reinstall the app ({2})'},
  {'mise a jour: {p}','update: {1}'},
+ -- Beta 1.59 : vrais passages en piste des IA (src/runs.lua), carburant du passage (applier), audit des entrées aux stands.
+ {'passage en piste: {n}, {p}, {} tour(s) prevu(s), pneu {}, carburant {}, attente {} s','run on track: {1}, {2}, {3} lap(s) planned, tyre {4}, fuel {5}, wait {6} s'},
+ {'passage en piste: {n} reste aux stands (plus assez de temps avant la fin)','run on track: {1} stays in the pits (not enough time left)'},
+ {'passage en piste: {n}, second tour rapide (premier tour gache)','run on track: {1}, second flying lap (first lap spoiled)'},
+ {'passages en piste: gommes non classees pour le modele {}, pneu laisse tel quel','runs on track: compounds not ranked for model {1}, tyre left as it is'},
+ {'carburant du passage: {} L ({} L avant)','fuel for the run: {1} L ({2} L before)'},
+ {'entree aux stands sans demande de l app: {n}, demande d arret AC {p}','pit entry without an app request: {1}, AC pit request {2}'},
+ -- Beta 1.59 : stratégies de départ variées, arrêt aux stands pour dégâts.
+ {'strategie de depart: {n} part en {} au lieu de {} ({p}, place {})','starting strategy: {1} starts on {2} instead of {3} ({4}, P{5})'},
+ {'strategie de depart: gommes de {} non classees, aucun changement','starting strategy: compounds of {1} not ranked, no change'},
+ {'degats: {n} appelee aux stands (carrosserie {} km/h, suspension {}, boite {}, moteur {})','damage: {1} called to the pits (bodywork {2} km/h, suspension {3}, gearbox {4}, engine {5})'},
+ {'degats: {n} attend la fin du drapeau pour rentrer','damage: {1} waits for the flag to end before pitting'},
+ -- Beta 1.59 (undercut arret obligatoire).
+ {'strategie: {n} arret obligatoire avance (undercut)','strategy: {1} mandatory stop brought forward (undercut)'},
+ {'strategie: {n} arret obligatoire avance (couverture de {n})','strategy: {1} mandatory stop brought forward (covering {2})'},
+ {'strategie: {n} arret obligatoire retarde (overcut sur {n})','strategy: {1} mandatory stop delayed (overcut on {2})'},
+ -- Beta 1.59 (export/import) : fichier des préréglages (src/presetfile.lua).
+ {'prereglages exportes: {} prereglage(s), {} profils (Documents\\Assetto Corsa\\AdvancedIA)','presets exported: {1} preset(s), {2} profiles (Documents\\Assetto Corsa\\AdvancedIA)'},
+ {'prereglages exportes: {} prereglage(s), {} profils (dossier de l app dans CSP, repli : ecriture refusee dans Documents\\Assetto Corsa\\AdvancedIA)','presets exported: {1} preset(s), {2} profiles (app folder in CSP, fallback: writing refused in Documents\\Assetto Corsa\\AdvancedIA)'},
+ {'export des prereglages impossible: ecriture refusee (Documents\\Assetto Corsa\\AdvancedIA et dossier de l app dans CSP)','preset export impossible: writing refused (Documents\\Assetto Corsa\\AdvancedIA and the app folder in CSP)'},
+ {'prereglages importes: {} prereglage(s), {} profil(s), {} valeur(s) corrigee(s), {} ignore(s) (Documents\\Assetto Corsa\\AdvancedIA)','presets imported: {1} preset(s), {2} profile(s), {3} value(s) corrected, {4} ignored (Documents\\Assetto Corsa\\AdvancedIA)'},
+ {'prereglages importes: {} prereglage(s), {} profil(s), {} valeur(s) corrigee(s), {} ignore(s) (dossier de l app dans CSP)','presets imported: {1} preset(s), {2} profile(s), {3} value(s) corrected, {4} ignored (app folder in CSP)'},
+ {'import des prereglages refuse: {p}, rien n a change','preset import refused: {1}, nothing changed'},
 }
 -- Morceaux connus en entier ({p}) : raisons, états, choix.
 M.exact={
@@ -429,7 +457,7 @@ M.exact={
  ['derriere une voiture lente']='behind a slow car',['allure de reference inconnue ici']='reference pace unknown here',
  cassee='broken',bloquee='stuck',lente='slow',glissade='sliding',['rentree aux stands']='back in the pits',absente='gone',['hors commande']='not commanded',
  ['deplacee (depannage)']='moved (recovery)',['repos apres manoeuvre']='rest after a manoeuvre',['voiture a cote']='car alongside',
- ['depassements coupes']='overtaking off',['zone sans depassement']='no-overtaking zone',['joueur plus rapide']='player faster',
+ ['depassements coupes']='overtaking off',['zone sans depassement']='no-overtaking zone',['point difficile']='difficult spot',['joueur plus rapide']='player faster',
  ['conditions de passage']='passing conditions',jonction='merge',['premiere sortie']='first exit',
  ['meneur, hors de vue du joueur']='leader, out of the player sight',['premiere sortie, hors de vue du joueur']='first exit, out of the player sight',
  ['jonction, hors de vue du joueur']='merge, out of the player sight',['drapeau bleu']='blue flag',['inconnue, diagnostic seulement']='unknown, diagnostic only',
@@ -460,8 +488,15 @@ M.exact={
  capacites='capabilities',['sens lateral non mesure']='lateral direction not measured',circuit='track',
  ['delta negatif']='negative delta',['pas dans la voie des stands a la reprise apres drapeau rouge']='not in the pit lane at the red-flag restart',
  ['faux depart (depart arrete)']='jump start (standing start)',['arret obligatoire non effectue dans la fenetre']='mandatory stop not made in the window',
- Essais='Free practice',Qualifications='Flying-lap qualifying',Course='Realistic race',Nordschleife='Nordschleife Touristenfahrten',
+ Essais='Free practice',Qualifications='Flying-lap qualifying',Course='Realistic race',Nordschleife='Nordschleife Touristenfahrten',Circuit='Track day',
  Endurance='Multi-class endurance',
+ -- Beta 1.59 : programmes des passages en piste (src/runs.lua).
+ ['simulation de qualification']='qualifying simulation',['long relais']='long run',['essai de pneus']='tyre test',
+ ['essai de carburant']='fuel test',['essai de reglages']='setup test',['tour rapide']='flying lap',
+ ['plus tendre']='softer',['plus dure']='harder',
+ ['inconnue, allure de la classe']='unknown, class pace',['priorite au virage (nez derriere)']='corner priority (nose behind)',
+ -- Beta 1.59 (export/import) : raisons d'un import refusé.
+ ['aucun fichier trouve']='no file found',['fichier illisible ou abime']='unreadable or damaged file',['fichier trop gros']='file too large',['rien a importer']='nothing to import',
 }
 -- Expressions remplacées dans un morceau (mots entiers, la plus longue d'abord) : listes, résumés, détails composés.
 -- Une entrée { motif, remplacement } est un motif Lua écrit à la main (ordre des mots différent en anglais).
@@ -476,6 +511,7 @@ M.generic={
  {'delta negatif %(([^,]+), ([%d%.%-]+) s au mini%-secteur%)','negative delta (%1, %2 s at the mini-sector)'},
  {'depassement sous drapeau jaune %((.*)%)','overtake under yellow (%1)'},
  'sur la minute :','last minute:','abandons :','aborts:','sans progres','no progress','tentative trop longue','attempt too long',
+ 'priorites au virage cedees','corner priorities given', 'trafic :','traffic:','depassements de voiture lente','slow-car passes','dont de file','queue','limites de cession levees pour la file','yield caps lifted for the queue',
  'fins de cession :','yield ends:','duree max','max duration','autres','other',
  'cessions refusees (suiveur pas plus rapide)','yields refused (follower not faster)',
  'lectures de l etat du jeu en echec','failed game-state reads','appels de phares suspendus','headlight flashes suspended','retenus apres abandon','held after an abort',

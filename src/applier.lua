@@ -422,6 +422,22 @@ local function tyreLabel(car,index)
 end
 -- Demande de passage aux stands, seul arbitre de la météo et des règles. Elle reste active dans la voie des stands
 -- jusqu'à l'arrêt ; false n'est envoyé que pour une demande de l'app, car il bloquerait aussi un arrêt natif (SDK).
+-- Beta 1.59 (strategyStartVariety, src/startvar.lua) : gomme de départ variée, posée une fois par voiture et par session,
+-- à l'arrêt sur la grille, avant le départ.
+local function startTyre(a,s,car,cmd,now)
+ local target=cmd.startCompound or -1
+ if target<0 or not car.valid or not car.control or car.player or car.pit or (car.kmh or 0)>K.tyreStopSpeed or not a.caps.tyres.available then return end
+ local id=car.identity or car.id
+ if s.startId==id and s.startSession==a.session and s.startGen==a.sessionGen then return end
+ if car.compoundIndex==target then s.startId=id; s.startSession=a.session; s.startGen=a.sessionGen; return end
+ if now<s.tyreAt then return end
+ claim(a,s,car,now)
+ local before=car.compoundIndex
+ if Caps.call(a.caps,'tyres',car.index,target) then
+  s.tyreAt=now+K.tyreWriteGap; s.startId=id; s.startSession=a.session; s.startGen=a.sessionGen
+  note(a,'INFO',string.format('strategie de depart: %s part en %s au lieu de %s (%s, place %s)',car.name or '',tyreLabel(car,target),tyreLabel(car,before),cmd.startDir or '',(cmd.startPlace or 0)>0 and tostring(cmd.startPlace) or '?'),car.index+1)
+ end
+end
 local function pitRequest(a,s,car,cmd,now)
  if not car.valid or not car.control or car.player or car.offtrack then return end
  local managed=(cmd.weatherManaged or cmd.rulePit) and (not s.reset or car.pit)
@@ -479,6 +495,13 @@ local function pitRequest(a,s,car,cmd,now)
  if fuelKey and s.fuelSetFor~=fuelKey and a.caps.fuelSet.available then
   claim(a,s,car,now)
   if Caps.call(a.caps,'fuelSet',car.index,cmd.fuelSet) then s.fuelSetFor=fuelKey; note(a,'INFO',string.format('carburant au depart: %.1f L (%.1f L avant)',cmd.fuelSet,car.fuel or -1),car.index+1) end
+ end
+ -- Beta 1.59 : carburant d'un passage en piste (essais et qualifications, src/runs.lua), posé une fois par passage à
+ -- l'emplacement, voiture arrêtée (le tour en cours, à l'arrêt, n'est pas un tour lancé).
+ if s.runFuelVisit and s.id~=(car.identity or car.id) then s.runFuelVisit=nil end
+ if (cmd.runFuelSet or -1)>=0 and car.inPitBox and car.kmh<=K.tyreStopSpeed and s.runFuelVisit~=cmd.runFuelVisit and a.caps.fuelSet.available then
+  claim(a,s,car,now); s.runFuelVisit=cmd.runFuelVisit
+  if Caps.call(a.caps,'fuelSet',car.index,cmd.runFuelSet) then note(a,'INFO',string.format('carburant du passage: %.1f L (%.1f L avant)',cmd.runFuelSet,car.fuel or -1),car.index+1) end
  end
  -- Journal : carburant à l'entrée et à la sortie de l'emplacement (sens de la demande vérifié en jeu).
  if car.inPitBox and not s.fuelBoxed then s.fuelBoxed=true; s.fuelBefore=car.fuel or -1
@@ -1082,7 +1105,9 @@ function M.parseCompanionUpdate(text)
  local fields={}
  for key,value in text:gmatch('(%w+)=([^;]*)') do fields[key]=value end
  if not companionStates[fields.state] or not companionVersion(fields.installed) then return nil end
- return {state=fields.state,installed=fields.installed,latest=companionVersion(fields.latest) and fields.latest or nil,needs=companionVersion(fields.needs) and fields.needs or nil}
+ -- Beta 1.59 : version qui ne peut pas se mettre à jour seule (son bouton reste grisé) : mise à jour à la main.
+ local manual=fields.state=='available' and K.companionManualVersions[fields.installed]==true or nil
+ return {state=fields.state,installed=fields.installed,latest=companionVersion(fields.latest) and fields.latest or nil,needs=companionVersion(fields.needs) and fields.needs or nil,manual=manual}
 end
 function M.companionUpdate(key) return M.parseCompanionUpdate(M.loadText(key)) end
 -- Fenêtre de réglages d'une app compagne ouverte (elle y gère seule sa mise à jour) ; false si impossible.
@@ -1239,6 +1264,7 @@ function M.apply(a,frame,commands,g,now)
    Caps.call(a.caps,'tyreKm',car.index,wheel,(car.tyreKm[wheel+1] or 0)+cmd.wearKm)
   end
   weather(a,s,car,cmd,now)
+  startTyre(a,s,car,cmd,now)
   pitRequest(a,s,car,cmd,now)
   safety(a,s,car,cmd,now)
   startDelay(a,s,car,cmd)
@@ -1476,5 +1502,55 @@ function M.bridgeOpen(layout)
  end)
  if ok and type(port)=='table' and port.hello and port.data then return port end
  return nil,tostring(port):sub(1,160)
+end
+-- Beta 1.59 (export/import) : fichier des préréglages (src/presetfile.lua) dans Documents\Assetto Corsa\AdvancedIA,
+-- repli sur le dossier de l'app dans CSP (cfg\extension\state\lua\app\…) si CSP y refuse l'écriture. Seuls accès aux
+-- fichiers de l'export et de l'import ; aucun autre dossier.
+local function presetFolder(id)
+ if not ac or not callable(ac.getFolder) or not ac.FolderID or not ac.FolderID[id] then return nil end
+ local ok,root=pcall(ac.getFolder,ac.FolderID[id])
+ return ok and type(root)=='string' and root~='' and root or nil
+end
+local function presetPlaces()
+ local docs=presetFolder('ACDocuments'); local state=presetFolder('ScriptConfig')
+ return {{docs and docs..'\\'..K.presetFolder or nil,'docs'},{state,'state'}}
+end
+local function presetFile(dir) return dir and dir..'\\'..K.presetFileName or nil end
+local function presetExists(path)
+ if not path or not io or not callable(io.fileExists) then return false end
+ local ok,present=pcall(io.fileExists,path)
+ return ok and present==true
+end
+-- Fichier exporté déjà présent dans Documents (l'export demande alors de confirmer son remplacement).
+function M.presetFileExported() return presetExists(presetFile(presetPlaces()[1][1])) end
+-- Écriture sûre (fichier temporaire, puis remplacement) : 'docs', 'state' (repli) ou nil.
+function M.presetFileWrite(text)
+ if type(text)~='string' or not io or not callable(io.save) then return nil end
+ for _,place in ipairs(presetPlaces()) do
+  local dir=place[1]
+  if dir then
+   if callable(io.createDir) then pcall(io.createDir,dir) end
+   local ok,done=pcall(io.save,presetFile(dir),text,true)
+   if ok and done==true then return place[2] end
+  end
+ end
+ return nil
+end
+-- Lecture : le fichier de Documents s'il existe, sinon celui du dossier de l'app ; le texte et 'docs' ou 'state'.
+function M.presetFileRead()
+ if not io or not callable(io.load) then return nil end
+ for _,place in ipairs(presetPlaces()) do
+  local path=presetFile(place[1])
+  if presetExists(path) then
+   -- Relecture 1.59 : fichier trop gros refusé avant sa lecture (taille donnée par CSP quand elle existe).
+   if callable(io.fileSize) then
+    local okSize,size=pcall(io.fileSize,path)
+    if okSize and type(size)=='number' and size>K.presetFileMaxBytes then return string.rep(' ',K.presetFileMaxBytes+1),place[2] end
+   end
+   local ok,text=pcall(io.load,path)
+   if ok and type(text)=='string' then return text,place[2] end
+  end
+ end
+ return nil
 end
 return M

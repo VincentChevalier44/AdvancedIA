@@ -2,6 +2,163 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 1.59 — 10 November 2026
+
+A review of Beta 1.58 after the driver's races of 10 November, the fixes asked for in the audit, and an « overlay off »
+switch. The new features of this version (each off by default) are described in their own sections.
+
+### Yellow flags and incidents (the driver's 10-lap race: 28 incidents, 13 yellow notices)
+- **Spin.** A spin now needs a real loss of speed (25 km/h since the slide began) or a car slower than the obstacle
+  speed. A long slide on a kerb or the grass at pace no longer raises a yellow flag.
+- **Sliding car as an obstacle.** It must have slid for 0.6 s (`K.spinTime`). A one-frame slip no longer makes the car
+  behind swerve.
+- **Double yellow.** A car on the track that is stopped, driving the wrong way, or slower than the obstacle speed (never
+  counted below 40 km/h). A car still rolling at pace is a single yellow, with the same first-lap fallback speed.
+- **Cleared off track.** A car stopped fully off track (four wheels out or beyond the edge), more than 8 m from the
+  racing line, is cleared after 15 s (`incident ecarte: arretee hors piste, loin de la trajectoire depuis 15 s`). It stays
+  cleared until it moves or has been back on track for 2 s.
+- **One notice per group.** A second incident within the zone length of one already announced gives the player no new
+  notice or message. Zones, speeds, delta and light panels are unchanged.
+- **Difficult spot.** Incidents of three different cars within 100 m in five minutes mark the spot (`point difficile:
+  … m`). The AI then drive there with 15% more caution and start no overtake within 100 m. The spot is forgotten after
+  10 minutes in a race (30 elsewhere). The start, restarts and the careful first lap never arm one, and at most a quarter
+  of the lap is covered.
+
+### First lap
+- The caution cap of the careful lap also applies under a yellow flag.
+- An AI already slower than 60% of its learnt pace is no longer slowed further.
+- The braking-zone caution is ×1.25 (×1.4 before).
+- In a corner, in the pack, the radar lift is graded by the time to contact, as on a straight. A real obstacle (closing
+  at 60 km/h or more) still gets the full lift.
+
+### Race and AI
+- **Last laps.** At most 20% of the race (estimated laps in a timed race), and at least one lap.
+- **Mistakes.** At least 60 s between two mistakes in the field (20 s before).
+- **Failures.** At least 5 minutes between two failures in the field.
+- **General section unticked.** No AI distribution and no staggered pit exits by the app at the session start.
+- **Undercut on the mandatory stop.**
+  - Since 1.47, an AI whose only remaining stop was the mandatory one requested the undercut and withdrew it in the same frame (« arret retire (plus necessaire) »), so it never happened.
+  - Undercut, cover and overcut now really move the mandatory stop, inside the window, within the shared pit-call limit.
+  - It also works against the player: an AI that owes its mandatory stop can now really cover or overcut your stop.
+  - A car towed to its box no longer counts as a rival's stop.
+  - A marked request is only made early enough in the window (the same margin as the pit-stop placement).
+
+### Track-day traffic (decision 19: the driver's 1.58 track days, 139 yields with 5 passes, 393 and 685 refusals)
+Track day, Practice and Qualifying only; the race is unchanged.
+- **A yielding AI really lifts:** top speed 15 km/h under the follower's on straights (40 m range), lowered gently at 6 km/h/s from the highest follower speed seen (no spiral when the follower brakes), released gently at 8 km/h/s; no cap with two cars or more queued behind it for 3 s, nor for a car already slow.
+- **The follower commits** on a car yielding to it: no *target faster*, *no progress*, *no closing* or *attempt too long* abort; safety aborts unchanged.
+- **Yield refusal only for a clearly slower follower** (more than 3 km/h of usual pace lower; the 1.55 rule refused anyone not 3 % faster).
+- **Slow car with an unknown usual pace:** an obstacle under 50% of its class pace (before: diagnostic only); the whole queue behind it (up to six cars) may go round or pass it; AC's light gap braking (under 30%) no longer blocks it on straights.
+- **Front radar:** no braking for a car moving aside that will be clear at contact (the player making room); real overlaps unchanged.
+- **Corner-entry priority (decision 19i, every profile):** side by side at a corner, the car whose nose is more than 2.2 m behind gives way (leaves its pass or defence, gentle lift-off without a car close behind, no move towards the other car), decided in the first second of the corner; journal line and minute counter.
+- **Player moving aside:** AC's own light gap braking (under 30%) no longer blocks the pass when the player is 2 m or more off the AI's line within 40 m on a straight (no invitation was ever logged: the pass guard stopped before it).
+- New minute-summary part: slow-car passes, queue passes, yield caps lifted for a queue.
+- **Queue behind a car that made room (first 1.59 track day: 42 *fast follower* aborts out of 113 attempts):** outside the race, an attempt on a car yielding to it, on the player moved aside or on a slow car or its queue is no longer given up because a faster car arrives behind (it follows through the same gap); a car of the queue already past in the passing lane no longer closes it; against the player moved aside and slower than the AI's usual pace here, no *target faster* abort either.
+- **Review of this section:** the radar exemption needs a straight, a car that is not turning nor in an incident and a lateral speed of 0.5 m/s held 0.15 s; corner priority only opens in a corner or under real braking, one line per corner; the yield cap reference lasts the whole yield; Nordschleife recognised from 15 km.
+- **Yields and passes that work together (second 1.59 track day: 70 yields, 2 completed, 19 passes given up to yield):** outside the race, an AI in the middle of a pass no longer starts an ordinary yield to a faster follower or to another AI's headlight flash (the follower goes through behind it; the player's flash, blue flag, class and flying lap rules are unchanged); a yield granted to an AI is now attacked by that AI unless it is clearly slower here, even at a similar pace; corner priority needs a car really alongside (not the car straight ahead in the line) and only ends the pass when that car is its target.
+
+### Track day built-in preset (decision 20)
+- New built-in **Track day** preset for every track but the Nordschleife: as Nordschleife Touristenfahrten, but free yield and overtaking sides and fewer headlight flashes.
+- The session preset of a track day is now chosen by track: Nordschleife Touristenfahrten when the name contains *nordschleife*, or *nurburgring* / *nuerburgring* over 15 km (fn_nurburgring was missed before); Track day elsewhere (fn_imola got the Nordschleife preset before). A personal preset or Multi-class endurance is kept.
+
+### Pit lane (review of the 1.58 fix)
+- A pass through the lane counts as served only once the car has really stopped in its box.
+- A box touched while still rolling counts as the same arrival: the service is still allowed, and the stop is never
+  counted twice.
+- AC's pit-request field is read on its own, tried once per launch. On a CSP without it, the car reads no longer fall
+  back to the missing-field path.
+
+### Player pit reminder
+- When the window opens, the overlay says so for 15 s.
+- After that, the reminder shows at most once per lap, for 10 s, just before the pit entry once it is known (otherwise in
+  the last third of the lap). It is never permanent.
+- **SpotterEnginer pit plan.** Read only, contract v1, `ac.store` key `SpotterEnginer.pitplan`, read every second
+  while SpotterEnginer is installed.
+  - A fresh plan is followed: the stamp must have moved in the last 6 s of engine time. Nothing is shown before the
+    planned lap, and the reminder comes on that lap.
+  - *Box now* is never shown while the pits are closed. Near the end of the window, our own reminders come back.
+  - In every other case, the app's own reminders apply: a stale, absent or unreadable plan, *none*, a plan lap outside
+    our window, or *done* while the stop is still owed.
+
+### Overlay off (decision 15) and the overlay steps given on Overtake (decision 16)
+- **App overlay (off: AC's own displays)**, in SETTINGS › ADVANCED › Overlay › CONTENT, on by default. When it is off:
+  - the app draws no overlay at all, in any state;
+  - AC's session box is shown again;
+  - the two CSP hide options are given back to the user's values.
+  - The FLAGS window stays empty too, and AC's messages are no longer blocked.
+  - While CSP still hides AC's flags or messages (not re-read yet, write limit, read-only file), only the game's flags,
+    penalties and messages are drawn, so nothing is lost.
+  - Driving, rules, penalties and the bridge are unchanged.
+- **App flag panel while driving** off: the band now shows only the game's own flags and penalties, as its tooltip and
+  the README always said. The lap line, DRS and update notices no longer appear there.
+- Each step is now checked by a test: flag panel in every profile, session info, end-of-race summary, AC messages, the
+  two CSP options, overlay off.
+- The overlay path in the flag-panel tooltip is now SETTINGS › ADVANCED › Overlay.
+
+### Restarting the same race (decision 17, found by the SpotterEnginer session)
+- **Symptom.** When AC restarted the same race (same session index), the previous race's result stayed. A second,
+  empty `fin de course` line was written, and the bridge kept publishing `finished=true` with the old places.
+- **Fix.** The overlay's race state (summary, starting place, finish) now starts again when the session's start drops
+  back. The log says `course relancee: recapitulatif et place de depart remis a zero`.
+- **Bridge.** Its values are now correct after a restart. The layout is unchanged.
+
+### Detailed log
+- DEBUG lines of the pure modules (the 1.58 `arrivee a l emplacement` line) are written only with the detailed log on,
+  like every other DEBUG line.
+
+### Interface and texts
+- **HOME.** A one-click rule-set selector, the same choice as the RACING RULES tab. It is locked while a race is
+  running and logged as `regles de course: … (changement)`.
+- **SpotterEnginer 1.1.0 and 1.1.1.** These versions cannot update themselves, so HOME says to update them by hand.
+- **Sanctions.** The 1.56 settings are under their own headings: *Repeat offences* and *Player*.
+- **Light panels.** The frozen yellow switch is no longer shown; yellow is always on.
+- **Tooltips.** Corrected for the fallback speed, the start caution, the last laps, the careful lap and the General
+  section.
+
+### Settings-effectiveness gate (new)
+- `tests/effectiveness.py` checks every profile setting in two ways:
+  - **Static:** it has a runtime reader outside the settings window.
+  - **Dynamic:** the same scene, run with the setting at both ends, changes the engine's commands or log; or a targeted
+    test names the setting.
+- A setting that passes neither check fails the gate.
+- Six settings that the generic scene cannot show now have a targeted test: zone end after the incident, VSC and
+  red-flag delta, the two Overtake Mode settings, and the weather message.
+
+### New features (each off by default)
+- **Real AI runs in practice and qualifying** (switch **Practice and qualifying: real AI runs**, Yielding section, off by default).
+  - Qualifying: out-lap, one flying lap (rarely a second one), in-lap, a wait in the box, then again, on the softest dry compound with little fuel. A run that no longer fits before the flag is not started.
+  - Practice: a programme drawn per AI and per run (qualifying simulation, long run, tyre test, fuel test, setup test); every run ends in the pits and never goes past the end of the session.
+- **Detailed log:** a line when an AI enters the pits in a race without an app request.
+- **Varied starting strategies** (Race, off by default, AI strategy section).
+  - Part of the AI start on a softer or harder dry compound, one step at most. The back of the grid leans harder and the front softer.
+  - Their stops follow their wear.
+  - Cars with compounds that cannot be ranked by name are left alone.
+- **Pit stop for damage** (Race, Practice and Qualifying, off by default, Accidents section).
+  - Damage is now read while driving.
+  - A damaged AI pits for repairs when its bodywork, suspension or engine damage passes a threshold (gearbox damage cannot be repaired: log only).
+  - Never under a flag or neutralisation (unless the car is unsafe) or in the last two laps, and within the shared pit-call limit.
+- With both switches off (the default), behaviour and journals are unchanged.
+- **Preset export and import** (HOME, under your custom presets).
+  - EXPORT writes your custom presets and the settings of the five profiles to `Documents\Assetto Corsa\AdvancedIA\AdvancedIA-presets.ini`, to keep or share. If CSP refuses that folder, it falls back to the app folder in CSP and says so.
+  - IMPORT reads the file back after a confirmation. Every value is validated; unknown keys are ignored, out-of-range values take the default, and a damaged file is refused as a whole.
+  - The seed, the detailed log and the settings outside presets are never written or imported.
+  - No new setting. Nothing changes unless you use the buttons (journals identical).
+
+### Companion bridge
+- Bridge: spin/wrong/halt/onTrack values corrected (layout unchanged). `spin`, `wrong` and `halt` were always false because the app keeps them as durations; they now follow the incident decision (the 1.59 spin with its speed loss, the wrong-way and stop times). `onTrack` now says whether each car is on the track at that moment, for every car, the player included. Found by the SpotterEnginer session.
+
+### Review of the merged features
+An independent review of the merged features (before the final chain) led to these fixes:
+- Real AI runs: a called car keeps its place until it reaches the pit lane (before, the three places were handed out again every frame); run fuel uses the consumption learnt in the session with a lap and a half of reserve; no dry compound on a wet track; nothing planned during a penalty pass; no box wait under a red flag; compounds ranked like the starting strategies (Pirelli C1–C6 included).
+- Pit stop for damage: calls already under way count towards the shared limit; the gearbox no longer calls an AI in nor makes it « unsafe » (it cannot be repaired); an AI in its box for another reason with damage is repaired too; state reset when the same race restarts.
+- Settings: two nested blocks closed the list of new keys too early, so recent rules and sanctions keys were treated as old ones by the built-in preset match; fixed.
+- Restarts and clock rebases now also cover the real runs and the damage calls; the duplicate « practice and qualifying only » note is gone; the preset file accepts a leading UTF-8 byte-order mark, and a file over the size limit is refused before it is read.
+
+### Verification
+- lint, test_pdr, integration and the effectiveness gate pass.
+- New unit tests are in `tests/review159.lua`, with integration cases for decisions 16 and 17 and mutation anchors.
+- The long chain (mutations, golden, race142, soak, bench, package) runs once on the merged tree.
+
 ## Beta 1.58 — 10 November 2026
 
 First public update since Beta 1.52. It fixes the AI that went crazy in the pit lane after the race and a mandatory
@@ -130,7 +287,7 @@ The app used the same "online" status for three different cases. All three still
 
 ### No reference to another app's visual style
 - The driver's rule: the README, the tooltips (FR/EN), the API notes, the history and the source comments no longer
-  mention SuperHUD or compare the window or the overlay with another app. The README section is now *The settings
+  compare the window or the overlay with another app. The README section is now *The settings
   window*. Texts only: no setting, behaviour or journal line changes.
 
 ### Verification

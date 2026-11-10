@@ -836,7 +836,9 @@ tests.INCIDENT_DEBOUNCE=function()
  local e,f=F.scene('J',3); F.place(f,3,500,120); F.tick(e,f,0.5)
  f.cars[3].slip=80; F.tick(e,f,2/60); f.cars[3].slip=0; F.tick(e,f,3)
  assert(e.incidents.zoneCount==0 and not e.states[2].yellow,'short slip spike ignored')
- f.cars[3].slip=90; f.cars[3].kmh=60; F.tick(e,f,1); assert(e.incidents.cars[3].incident,'real spin flagged')
+ -- Beta 1.59 : glissade tenue qui garde sa vitesse (herbe, vibreur) : pas un tête-à-queue ; avec perte de vitesse : oui.
+ f.cars[3].slip=90; F.tick(e,f,1); assert(not e.incidents.cars[3].incident,'1.59: slide at pace is not a spin')
+ f.cars[3].kmh=60; f.cars[3].speed=60/3.6; F.tick(e,f,0.2); assert(e.incidents.cars[3].incident,'real spin flagged')
  -- Contact d'une ou deux images : retenu sur toute la fenêtre de mesure, l'IA accidentée est arrêtée.
  for offset=0,17 do
   local e2,f2=F.scene('J',3); F.place(f2,2,0,150); F.place(f2,3,5000,100); F.tick(e2,f2,0.5+offset/60)
@@ -1163,7 +1165,8 @@ end
 -- Glissade qui se stabilise : un seul incident, délai d'incident majeur conservé ; fin après 2 s de conduite normale.
 tests.INCIDENT_CLEAR_HYSTERESIS=function()
  local e,f=F.scene('J',3); local car=F.place(f,3,500,60)
- car.slip=90; F.tick(e,f,1); local c=e.incidents.cars[3]; local since=c.since
+ -- Beta 1.59 : tête-à-queue confirmé par la perte de vitesse (60 -> 30 km/h).
+ car.slip=90; F.tick(e,f,0.3); car.kmh=30; car.speed=30/3.6; F.tick(e,f,0.7); local c=e.incidents.cars[3]; local since=c.since
  assert(c.incident and e.incidents.started==1)
  car.slip=0; F.tick(e,f,1.2); assert(c.incident and c.since==since,'brief recovery keeps the incident')
  car.slip=90; F.tick(e,f,1); assert(c.since==since and e.incidents.started==1,'same incident, major timer kept')
@@ -1241,8 +1244,9 @@ end
 -- Tête-à-queue puis arrêt lent : un seul incident.
 tests.SPIN_THEN_STOP_ONE_INCIDENT=function()
  -- Décélération relevée dans le journal : encore au-dessus de 25 km/h juste après la glissade, puis arrêt.
- local e,f=F.scene('J',3); local car=F.place(f,3,500,50)
- car.slip=90; F.tick(e,f,1)
+ -- Beta 1.59 : la glissade perd de la vitesse (90 -> 50 km/h), sinon ce n'est pas un tête-à-queue.
+ local e,f=F.scene('J',3); local car=F.place(f,3,500,90)
+ car.slip=90; F.tick(e,f,0.3); car.kmh=50; car.speed=50/3.6; F.tick(e,f,0.7)
  car.slip=0; car.kmh=30; car.speed=30/3.6; F.tick(e,f,1)
  car.kmh=15; car.speed=15/3.6; F.tick(e,f,1.5)
  car.kmh=0; car.speed=0; F.tick(e,f,2.5)
@@ -1398,7 +1402,9 @@ tests.RED_FLAG_PROCEDURE=function()
  -- Trois têtes-à-queue simultanés qui roulent encore : pas de drapeau rouge.
  local e5,f5=F.scene('C',5); C.preset('Course','C',e5.profiles.C); E.changed(e5)
  -- Beta 1.47 : en travers de la piste (elle serait bloquée), mais elles roulent encore : jamais immobilisées.
- for k,i in ipairs({2,3,4}) do local car=F.place(f5,i,600,40,-4+(k-1)*4); car.slip=90 end; F.place(f5,5,3000,120)
+ -- Beta 1.59 : vrais tête-à-queue (perte de vitesse, 80 -> 40 km/h), qui roulent encore.
+ for k,i in ipairs({2,3,4}) do local car=F.place(f5,i,600,80,-4+(k-1)*4); car.slip=90 end; F.place(f5,5,3000,120)
+ F.tick(e5,f5,0.3); for _,i in ipairs({2,3,4}) do f5.cars[i].kmh=40; f5.cars[i].speed=40/3.6 end
  F.tick(e5,f5,C.K.redIncidentStill+2); assert(e5.incidents.onTrack>=3 and not e5.incidents.red,'spinning cars still moving: no red flag')
  -- Hors course : jamais de drapeau rouge.
  local e3,f3=F.scene('J',5); C.preset('Nordschleife','J',e3.profiles.J); E.changed(e3)
@@ -1608,8 +1614,10 @@ end
 tests.AVOID_ENDS_WHEN_TARGET_MOVES=function()
  local e,f=F.scene('J',3); e.p.personalLineJitter=0
  F.place(f,2,0,100); F.place(f,3,60,100); F.tick(e,f,0.5)
- f.cars[3].slip=80; F.tick(e,f,2/60); f.cars[3].slip=0
- assert(e.states[2].state=='AVOID','one-frame slip: avoidance starts')
+ -- Beta 1.59 (MJFox) : glissade tenue (K.spinTime s) pour être un obstacle, plus une seule image.
+ f.cars[3].slip=80; F.tick(e,f,2/60); assert(e.states[2].state~='AVOID','1.59: one-frame slip: no avoidance')
+ F.tick(e,f,C.K.spinTime); f.cars[3].slip=0
+ assert(e.states[2].state=='AVOID','sustained slide: avoidance starts')
  F.tick(e,f,1.5); assert(e.states[2].state~='AVOID','target back at speed: avoidance ends ('..e.states[2].state..')')
 end
 -- 1.6.0 : recherche d'obstacles sans écraser la position relative de la cible suivie.
@@ -1625,7 +1633,7 @@ end
 tests.BLOCKED_YIELD_RESET=function()
  local e,f=F.scene('J',3); e.p.personalLineJitter=0
  F.place(f,2,0,100); F.place(f,3,-2000,100); F.tick(e,f,0.5)
- local s=e.states[2]; s.blockedYield=10; F.place(f,3,60,100); F.tick(e,f,0.5); f.cars[3].slip=80; F.tick(e,f,2/60)
+ local s=e.states[2]; s.blockedYield=10; F.place(f,3,60,100); F.tick(e,f,0.5); f.cars[3].slip=80; F.tick(e,f,C.K.spinTime+2/60)
  assert(s.state=='AVOID' and s.blockedYield==0,'stale blocked-yield counter cleared')
 end
 -- 1.6.0 : retour à la ligne terminé même si le décalage visé est hors d'atteinte (largeurs inconnues).
@@ -2356,8 +2364,14 @@ tests.PILOT_DECISIONS=function()
  local e3,f3=F.scene('C',3); local p3=e3.profiles.C; p3.mandatoryStops=1; p3.pitWindowOpenPct=25; p3.pitWindowClosePct=75; E.changed(e3)
  f3.sessionLaps=20; f3.leaderLaps=10; f3.timedRace=false; F.tick(e3,f3,1)
  assert(e3.incidents.playerPitDue==1 and e3.panel.kind=='pit','reminder when the window opens')
- F.tick(e3,f3,20); assert(e3.panel.kind~='pit','reminder hidden in the middle of the window')
- f3.leaderLaps=14; F.tick(e3,f3,0.5); assert(e3.panel.kind=='pit','reminder near the end of the window')
+ F.tick(e3,f3,20); assert(e3.panel.kind~='pit' and not e3.incidents.playerPitRemind,'reminder hidden in the middle of the window (panel and bridge state)')
+ -- Beta 1.59 (demande du pilote) : plus de rappel continu vers la fin de la fenêtre ; au plus une fois par tour, dans le
+ -- dernier tiers du tour, K.pitHintShow s.
+ f3.leaderLaps=14; F.tick(e3,f3,0.5); assert(e3.panel.kind~='pit' and e3.incidents.playerPitRemind,'1.59: no permanent reminder near the end of the window, bridge state unchanged')
+ F.place(f3,1,f3.length*0.7,100); F.tick(e3,f3,0.5); assert(e3.incidents.playerPitShowRemind,'1.59: reminder once in the last third of the lap')
+ F.tick(e3,f3,5); assert(e3.panel.kind=='pit','1.59: reminder on the panel (after the lap line)')
+ F.tick(e3,f3,C.K.pitHintShow); assert(not e3.incidents.playerPitShowRemind and e3.panel.kind~='pit','1.59: reminder short-lived, not again this lap')
+ F.place(f3,1,f3.length*1.7,100); F.tick(e3,f3,0.5); assert(e3.incidents.playerPitShowRemind,'1.59: next lap, once again')
  f3.leaderLaps=16; F.tick(e3,f3,1); assert(e3.penalties.count==1 and e3.penalties.reason=='stop','missed stop: penalty')
  -- File sous VSC : jamais plus vite que la voiture de devant.
  local e4,f4=F.scene('C',4); e4.profiles.C.neutralization='vsc'; E.changed(e4)
@@ -5394,7 +5408,7 @@ end
 tests.SPIN_CONTEXT_131=function()
  local e,f=F.scene('P',3)
  F.place(f,1,-3000,100); F.place(f,2,0,120); F.place(f,3,3000,100); F.tick(e,f,0.5)
- f.cars[2].slip=50; F.tick(e,f,1.5)
+ f.cars[2].slip=50; F.tick(e,f,0.3); f.cars[2].kmh=60; F.tick(e,f,1.2)
  local found=false
  for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find('tete-a-queue, contexte: Driver_2 | etat ',1,true) and r.message:find('prudence ',1,true) then found=true end end
  assert(found,'spin context logged')
@@ -5597,7 +5611,7 @@ tests.GRID_TIMEOUT_ABORT_134=function()
  local e2,f2=F.scene('C',4); C.preset('Course','C',e2.profiles.C); E.changed(e2); e2.gridCaps=true
  for i=1,4 do f2.cars[i].position=i; F.place(f2,i,-300-i*50,60) end
  F.tick(e2,f2,0.2); e2.incidents.standing='grid'; F.tick(e2,f2,0.5)
- f2.cars[3].slip=C.K.slipDegrees+20; f2.cars[3].kmh=80; F.tick(e2,f2,C.K.spinTime+1)
+ f2.cars[3].slip=C.K.slipDegrees+20; f2.cars[3].kmh=80; F.tick(e2,f2,0.2); f2.cars[3].kmh=30; F.tick(e2,f2,C.K.spinTime+1)
  assert(e2.incidents.standing=='none' and e2.grid.phase=='none' and logged(e2,'depart arrete annule: nouvel incident'),'aborted on a new incident')
  assert(not e2.commands[2].stopHold,'holds released')
 end
@@ -6142,6 +6156,13 @@ for name,test in pairs(require('tests/review155')) do assert(tests[name]==nil,na
 for name,test in pairs(require('tests/review156')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.56 (vos limites de piste, pénalités croissantes, rapport de course)
 for name,test in pairs(require('tests/review157')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.57 (suspension « en ligne » nommée : vraie session, alt-online, lecture impossible)
 for name,test in pairs(require('tests/review158')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.58 (voiture rendue à AC dans la voie des stands : arrivée, arrêt)
+for name,test in pairs(require('tests/review159')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture de la 1.58)
+for name,test in pairs(require('tests/review159ha')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 H-A (vrais passages en piste en essais et qualifications, audit des entrées aux stands)
+for name,test in pairs(require('tests/review159hb')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (stratégies de départ variées, arrêt aux stands pour dégâts)
+for name,test in pairs(require('tests/review159hc')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (export/import des préréglages)
+for name,test in pairs(require('tests/review159r')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture des tranches H fusionnées)
+for name,test in pairs(require('tests/review159t')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (trafic des journées circuit, préréglage Journée circuit)
+for name,test in pairs(require('tests/review159u')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture de la tranche trafic)
 -- Beta 1.50 : pose en piste de la voiture de sécurité (Beta 1.48) gardée en repli ; ces scènes l'exercent avec une voiture
 -- de sécurité qui ne quitte jamais son emplacement, libérée dès la fin de l'appel, sans règle de vue du joueur (testées
 -- dans tests/start150.lua).

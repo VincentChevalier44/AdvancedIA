@@ -68,6 +68,7 @@ function M.summary(e)
  local yEnd,yHold,yYellow=c('yieldEnd'),c('yieldEnd_hold_limit'),c('yieldEnd_yellow')
  local yOther=yEnd-c('yieldEnd_passed')-c('yieldEnd_lost')-yHold-yYellow
  local yNoAdv,fMuted,fHeld=c('yieldNoAdv'),c('flashMuted'),c('flashHeld')
+ local tSlow,tQueue,tCapQ,tCorner=c('slowPass'),c('queuePass'),c('yieldCapQueue'),c('cornerGive')
  for key in pairs(n) do n[key]=0 end
  t.started=0; t.held=0
  -- Pneus des IA à l'instant du résumé, et météo retenue par l'app.
@@ -96,6 +97,8 @@ function M.summary(e)
   ..(yEnd>0 and string.format(' | fins de cession : duree max %d, jaune %d, autres %d',yHold,yYellow,yOther) or '')
   ..(yNoAdv>0 and string.format(' | cessions refusees (suiveur pas plus rapide) %d',yNoAdv) or '')
   ..(fMuted+fHeld>0 and string.format(' | appels de phares suspendus %d, retenus apres abandon %d',fMuted,fHeld) or '')
+  ..(tSlow+tCapQ>0 and string.format(' | trafic : depassements de voiture lente %d (dont de file %d), limites de cession levees pour la file %d',tSlow,tQueue,tCapQ) or '')
+  ..(tCorner>0 and string.format(' | priorites au virage cedees %d',tCorner) or '')
  return string.format('resume: profil %s, garde %s, IA %d, gerees %d | conduite %d, cession %d, depassement %d, evitement %d, recuperation %d | sous jaune %d, incidents %d, zones %d, IA arretees %d, neutralisation %s | cout moyen %.3f ms, max %.3f ms, erreurs %d',
   e.profile,e.guard,ai,managed,drive,yield,pass,avoid,calm,yellow,t.activeCount,t.zoneCount,t.holdCount,t.neutral and t.neutralMode or 'aucune',e.meanFrame,e.maxFrame,e.errors)
   ..(e.maxFrame==0 and ' (cout non mesure : aucun chronometre disponible)' or '')..(#unmanaged>0 and ' | hors gestion : '..table.concat(unmanaged,', ') or '')..minute

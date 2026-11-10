@@ -74,6 +74,28 @@ The lists of Beta 1.46 and older were removed in Beta 1.52 to keep this page abo
 that still apply are under *Still open from earlier versions*, and the git history keeps the full lists. The points
 below have not been observed in game yet.
 
+### Beta 1.59
+
+- [ ] Short race (8 to 10 laps): fewer yellow notices than in 1.57/1.58; a car stopped or crawling on the track still
+  gets a double yellow; a car parked well off the track is cleared after 15 s; a spot with repeated incidents is logged
+  once (`point difficile`) and never at the start.
+- [ ] First lap: careful, but no AI almost stopping in slow corners; one car with wheels on the grass does not slow the pack.
+- [ ] Player pit reminder at most once per lap, before the pit entry; with SpotterEnginer 1.2.0 running, « box this lap »
+  only on its lap.
+- [ ] **App overlay** off: nothing drawn by AdvancedIA, AC's own flags, banners and session box back (after CSP re-reads
+  gui.ini); on again: as before.
+- [ ] HOME rule-set selector: the choice shows in RACING RULES; greyed once the race has started.
+- [ ] Same race restarted: the end-of-race summary and the bridge's finished/final/grid are those of the new race.
+- [ ] Mandatory-stop undercut: `strategie: <name> arret obligatoire avance (undercut)` (or cover/overcut) in a race with
+  a mandatory stop, and the stop happens inside the window.
+- [ ] **Practice and qualifying: real AI runs** (on): qualifying runs of one flying lap with box waits; practice
+  programmes logged as `passage en piste:`; run fuel set in the box (`carburant du passage:`); no AI stuck in its box.
+- [ ] **Varied starting strategies** (on): part of the grid starts on another dry compound, as logged; no extra stop.
+- [ ] **Pit stop for damage** (on): a damaged AI still at pace pits and is repaired; it waits under a VSC; the
+  thresholds feel right.
+- [ ] Preset **EXPORT** writes `Documents\Assetto Corsa\AdvancedIA\AdvancedIA-presets.ini` (or says it used the CSP app
+  folder); **IMPORT** after CONFIRM restores the same settings.
+
 ### Beta 1.58
 
 - [ ] Race of a few laps: after the chequered flag the AI drive into the pit lane and to their boxes without hitting

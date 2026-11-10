@@ -71,7 +71,7 @@ tests.SPIN_CONTEXT_154=function()
  -- Ligne écrite par le moteur : limite, inattention et état quitté, traduite en entier.
  local g,gf=F.scene('P',3)
  F.place(gf,1,-3000,100); F.place(gf,2,0,120); F.place(gf,3,3000,100); F.tick(g,gf,0.5)
- gf.cars[2].slip=50; F.tick(g,gf,1.5)
+ gf.cars[2].slip=50; F.tick(g,gf,0.3); gf.cars[2].kmh=60; F.tick(g,gf,1.2)
  local found
  for k=1,g.log.limit do local r=g.log[k]; if r and r.message and r.message:find('tete-a-queue, contexte: Driver_2 | ',1,true) then found=r.message end end
  assert(found and found:find(', frein app [%d.]+, limite [^,]+, inattention [a-z]+, etat precedent [A-Z_]+ %([%w_ ]+%)$'),tostring(found))

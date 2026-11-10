@@ -19,7 +19,7 @@ M.sections={
   {'yieldHold',{'yieldHoldMin','yieldHoldAfterMin','yieldHoldAfterMax','yieldMaxHold'}},
   {'yieldSlow',{'yieldSlowdownPct','inviteSlowdownPct'}},
   {'yieldPressure',{'pressureEnabled','pressureGap','pressureTime'}},
-  {'yieldQuali',{'qualiTraffic','qualiCoolLaps'}}},
+  {'yieldQuali',{'qualiTraffic','qualiCoolLaps','qualiRuns'}}},
  blue={{'blueFlags',{'blueFlagEnabled','blueFlagRange','blueFlagSide'}}},
  flash={{'flashPlayer',{'flashMode','flashRange','flashMinAdvantage','flashCloseAdvantage','flashRequestTTL'}},
   {'flashAI',{'flashObliviousPct','flashMaxReactors','hornEnabled','aiFlashEnabled'}}},
@@ -30,7 +30,7 @@ M.sections={
   {'overtakeFinal',{'finalLapsEnabled','finalLaps','finalAggressionPct','finalDefensePct'}}},
  traffic={{'trafficGap',{'trafficGapSeconds','trafficDensityGain','trafficVariation','trafficMaxReduction'}}},
  accidents={{'accObstacles',{'obstacleEnabled','obstacleSpeedKmh','obstacleDetect','obstacleLevelDrop','obstacleCautionMult'}},
-  {'accInvolved',{'avoidOffset','contactRecovery','incidentStop','incidentStopMin','incidentStopMax','rejoinGap'}},
+  {'accInvolved',{'avoidOffset','contactRecovery','incidentStop','incidentStopMin','incidentStopMax','rejoinGap','damagePit'}},
   {'accYellow',{'yellowEnabled','yellowBefore','yellowAfter','yellowHold','yellowDecel'}},
   {'accDouble',{'zoneDeltaPct','slowZoneKmh','yellowSpeedKmh'}},
   {'accPlayer',{'yellowHud','flagPanel','yellowMessage','deltaBeeps'}},
@@ -42,14 +42,17 @@ M.sections={
   {'weatherWear',{'lockWearEnabled','lockWearGain','lockFlatSpotKm'}},
   {'weatherMessages',{'weatherMessage'}}},
  -- Beta 1.42 : stratégie des IA (course) et sanctions des IA (essais, qualifications et course).
- strategy={{'strategyPlan',{'strategyEnabled','strategyTyreWearPct','strategyFuelMarginLaps','strategyUndercut'}},
+ strategy={{'strategyPlan',{'strategyEnabled','strategyTyreWearPct','strategyFuelMarginLaps','strategyUndercut','strategyStartVariety'}},
   {'strategyCharacter',{'strategyRiskPct','strategySpreadPct'}},
   {'strategyFailures',{'failuresEnabled','failureRate','failureLossPct'}}},
  sanctions={{'sanctionsTrack',{'sanTrackLimits','sanTrackWarnings','sanCutPenalty','sanCutSeconds'}},
   {'sanctionsProcedure',{'sanJumpStart','sanPitSpeed','sanPitExit','sanProcedureKind'}},
   {'sanctionsFlags',{'sanWrongWay','sanWrongWaySeconds','sanServeLaps'}},
   {'sanctionsServe',{'sanStopGoSeconds','sanTimeSeconds','sanUnservedTime','sanGiveBack','sanGiveBackSeconds'}},
-  {'sanctionsDisplay',{'sanMessages'}}},
+  {'sanctionsDisplay',{'sanMessages','sanReport'}},
+  -- Beta 1.59 : réglages de la 1.56 rangés dans leurs intertitres (plus sous « Autres réglages »), à la même place.
+  {'sanctionsEscalation',{'sanEscalation','sanEscalationStep','sanEscalationMax'}},
+  {'sanctionsPlayer',{'sanPlayerTrackLimits','sanPlayerSession','sanPlayerPenalty'}}},
  -- Panneaux lumineux (Beta 1.37) : l'état du circuit est dessiné à part, en tête de la section.
  lights={{'lightsColours',{'lightsYellow','lightsRed','lightsBlue','lightsWhite','lightsOrange','lightsGreen'}},
   {'lightsDurations',{'lightsGreenTime','lightsHold'}}},
@@ -67,6 +70,9 @@ M.sections={
   {'stopsEach',{'pitTyres','pitRepair','pitCompoundChange','minPitTime','maxStintMin'}},
   {'stopsFuel',{'pitFuel','pitsClosed'}}},
  rules_safety={{'safetyOut',{'safetyCarEscalation','safetyCarSpeedKmh','restartOvertake'}}}}
+-- Beta 1.59 : réglages jamais montrés (valeur gardée sans effet) : lightsYellow est figé à vrai (M.validate), la case
+-- n'avait rien à régler.
+M.hidden={lightsYellow=true}
 -- Liste des groupes affichés d'une section : chaque entrée {id=, controls={...}} ; controls d'après la liste fournie
 -- (contrôles de la section, dans l'ordre du schéma). Le résultat est mémorisé par section (même liste de contrôles).
 local built={}
@@ -78,11 +84,11 @@ function M.build(section,controls)
  local used={}; local list={}
  for _,entry in ipairs(M.sections[section] or {}) do
   local group={id=entry[1],controls={}}
-  for _,k in ipairs(entry[2]) do local control=byKey[k]; if control and not used[k] then used[k]=true; group.controls[#group.controls+1]=control end end
+  for _,k in ipairs(entry[2]) do local control=byKey[k]; if control and not used[k] and not M.hidden[k] then used[k]=true; group.controls[#group.controls+1]=control end end
   if #group.controls>0 then list[#list+1]=group end
  end
  local rest={id='other',controls={}}
- for _,control in ipairs(controls) do if not used[control.schema.key] then rest.controls[#rest.controls+1]=control end end
+ for _,control in ipairs(controls) do local k=control.schema.key; if not used[k] and not M.hidden[k] then rest.controls[#rest.controls+1]=control end end
  if #rest.controls>0 then list[#list+1]=rest end
  built[key]={source=controls,list=list}
  return list

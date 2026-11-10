@@ -148,7 +148,8 @@ local function finalScene(lapsLeft,setup,gap,kmh3)
  e.profiles.C.towBreakEnabled=false
  if setup then setup(e,f) end
  E.changed(e)
- f.sessionLaps=10; f.leaderLaps=10-lapsLeft; f.timedRace=false
+ -- Beta 1.59 : 20 tours (au plus 20 % de la course : les 3 derniers tours restent concernés).
+ f.sessionLaps=20; f.leaderLaps=20-lapsLeft; f.timedRace=false
  -- Beta 1.47 : suiveur nettement d'un côté (condition de la défense).
  F.place(f,1,-4000,100); F.place(f,2,1000,200); F.place(f,3,1000-(gap or 25)-4.4,kmh3 or 200,0.8)
  -- Relecture 1.42 : tours restants de chaque voiture (même tour que le leader ici).

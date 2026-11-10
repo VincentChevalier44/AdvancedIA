@@ -114,9 +114,12 @@ tests.CESSION_GATE_141=function()
  end
  assert(not run(-13),'yielding car pulling away at 13 km/h: no pass (loop of the logs)')
  assert(not run(-13,60),'even when faster in free pace: no pass on a yielding car pulling away')
- assert(not run(5,100/3.6),'same free pace here: no pass')
+ -- Beta 1.59 : hors course, la cession accordée à un suiveur d'allure voisine ou inconnue est attaquée ; nettement plus
+ -- lent ici : toujours pas.
+ assert(run(5,100/3.6),'same free pace here, track day: the yield is used')
+ assert(not run(5,20),'clearly slower here: no pass')
  local ok,e=run(5,60); assert(ok and logged(e,'(cession, '),'really faster here: pass on the yield')
- assert(not run(2),'unknown pace: the advantage of the moment is required')
+ assert(run(2),'unknown pace, track day: the yield is used')
  assert(run(5),'unknown pace, closing: pass')
 end
 -- Échec « cible plus rapide » : paire ignorée 45 s, puis 180 s ; l'IA qui cédait ne l'attend plus ; la retenue ne
@@ -174,7 +177,8 @@ tests.YIELD_LOST_141=function()
  F.tick(e,f,10); assert(not F.yielding(e.states[2].state),'no new yield to the same follower')
  -- Suiveur plus rapide connu, mais allure libre ici pas meilleure : pas de cession à la pression.
  local e2,f2=F.scene('J',3); e2.p.personalLineJitter=0; E.changed(e2); F.tick(e2,f2,0.2)
- F.rear(e2,f2,8,0); F.tick(e2,f2,1/60); learned(e2,f2,2,3,100/3.6); F.tick(e2,f2,8); assert(not F.yielding(e2.states[2].state),'same free pace: no pressure yield')
+ -- Beta 1.59 : hors course, refus seulement à un suiveur nettement plus lent ici (allure voisine : cession).
+ F.rear(e2,f2,8,0); F.tick(e2,f2,1/60); learned(e2,f2,2,2,100/3.6); learned(e2,f2,3,3,90/3.6); F.tick(e2,f2,8); assert(not F.yielding(e2.states[2].state),'clearly slower free pace: no pressure yield')
 end
 -- Vitesse de pointe réduite de K.yieldTopCut km/h pour l'IA qui cède, suiveur proche, en ligne droite.
 tests.YIELD_TOP_SPEED_141=function()
@@ -185,13 +189,20 @@ tests.YIELD_TOP_SPEED_141=function()
   s.state='YIELD_HOLD'; s.target=3; s.targetSide=1; s.followers[3]=true; s.yieldStart=e.time; s.holdUntil=e.time+60; s.yieldDetection=100; s.yieldMargin=5
  end
  for _=1,3*60 do hold(); F.tick(e,f,1/60) end
- assert(math.abs(e.commands[2].speedLimit-(150-K.yieldTopCut))<0.01,'top speed cut: '..e.commands[2].speedLimit)
- -- Allure libre ici plus haute : la limite monte avec elle (vraie réduction de la vitesse de pointe, pas un gel).
+ -- Beta 1.59 : hors course, aussi sous la vitesse du suiveur (150 km/h ici) de K.yieldPassDeltaKmh km/h.
+ local cut=math.min(150-K.yieldTopCut,150-K.yieldPassDeltaKmh)
+ assert(math.abs(e.commands[2].speedLimit-cut)<0.01,'top speed cut: '..e.commands[2].speedLimit)
+ -- Allure libre ici plus haute : la limite monte avec elle, toujours sous celle du suiveur.
  learned(e,f,2,2,170/3.6); for _=1,2 do hold(); F.tick(e,f,1/60) end
- assert(math.abs(e.commands[2].speedLimit-(170-K.yieldTopCut))<0.01,'follows the usual top speed: '..e.commands[2].speedLimit)
+ assert(math.abs(e.commands[2].speedLimit-math.min(170-K.yieldTopCut,150-K.yieldPassDeltaKmh))<0.01,'follows the usual top speed, under the follower: '..e.commands[2].speedLimit)
  learned(e,f,2,2,150/3.6)
- f.cars[2].yawRate=e.run.cornerYawRef*0.9; hold(); F.tick(e,f,1/60); assert(e.commands[2].speedLimit>=K.unlimitedSpeed,'corner: released')
- f.cars[2].yawRate=0; F.place(f,3,-300,150); for _=1,12 do hold(); F.tick(e,f,1/60) end; assert(e.commands[2].speedLimit>=K.unlimitedSpeed,'no close follower: released')
+ -- Beta 1.59 : hors course, levée progressive (jamais sous la vitesse du moment, remontée de K.yieldCapReleaseKmh km/h/s).
+ local released=function() for _=1,math.ceil(K.yieldCapReleaseMargin/K.yieldCapReleaseKmh*60)+2 do hold(); F.tick(e,f,1/60); assert(e.commands[2].speedLimit>=f.cars[2].kmh-1e-6,'never under its speed while released: '..e.commands[2].speedLimit..' vs '..f.cars[2].kmh..' state '..e.states[2].state) end return e.commands[2].speedLimit>=K.unlimitedSpeed end
+ f.cars[2].yawRate=e.run.cornerYawRef*0.9; assert(released(),'corner: released')
+ f.cars[2].yawRate=0
+ for _=1,3*60 do hold(); F.tick(e,f,1/60) end
+ assert(e.commands[2].speedLimit<K.unlimitedSpeed,'capped again on the straight')
+ F.place(f,3,-300,150); for _=1,6 do hold(); F.tick(e,f,1/60) end; assert(released(),'no close follower: released')
 end
 -- Plafond anti-zigzag : le retour sur la ligne personnelle est la ligne ; côté du dépassement dès l'image de la décision.
 tests.DIRECTION_LINE_141=function()
@@ -413,14 +424,15 @@ tests.REVIEW_SLOW_SESSION_RESET_141=function()
  local s=e.states[2]
  assert(not s.abnormal and s.abnormalFor==0 and s.abnormalCalm==0 and not s.slowPitSent and not s.slowPitAsked and not s.slowPitDone,'forgotten at the session change')
 end
--- M3 : rythme habituel encore inconnu : ligne de diagnostic de la 1.39 (allure de la classe), sans obstacle ni stands ;
--- état anormal : une ligne à son entrée.
+-- M3 : rythme habituel encore inconnu : ligne de diagnostic de la 1.39 (allure de la classe). Beta 1.59 (journées circuit
+-- du 10 novembre) : hors course, obstacle quand même sous K.slowUnknownRatio fois l'allure de sa classe ; état anormal :
+-- une ligne à son entrée.
 tests.REVIEW_SLOW_UNKNOWN_RATIO_141=function()
  local e,f=isleOfMan(); for i=2,4 do e.states[i].longRatioTime=0 end
  f.cars[2].damageSuspension=0.4
  F.tick(e,f,30)
- assert(count(e,'IA anormalement lente: Driver_2 (car_2) a 30 km/h')==1 and logged(e,'(habituelle de l IA inconnue, diagnostic seulement)'),'1.39 diagnostic line')
- assert(not e.states[2].abnormal and e.states[3].state~='AVOID' and not e.commands[2].recover,'diagnostic only')
+ assert(count(e,'IA anormalement lente: Driver_2 (car_2) a 30 km/h')==1 and logged(e,'(habituelle de l IA inconnue, allure de la classe)'),'1.39 diagnostic line, 1.59 class pace')
+ assert(e.states[2].abnormal,'1.59: track day, unknown usual pace, 30 km/h where its class runs 200: obstacle all the same')
  local e2,f2=isleOfMan(); F.tick(e2,f2,2+K.slowObstacleTime+3)
  assert(count(e2,'IA lente a contourner: Driver_2, obstacle pour les voitures derriere (30 km/h, habituelle de l IA 200 km/h, 1 voiture(s) derriere)')==1,'entry in the abnormal state logged once')
 end

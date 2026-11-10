@@ -110,7 +110,7 @@ function M.update(t,e,frame,now,dt)
    if crossed and not c.wasPush then c.pushLaps=0 end
    if crossed and c.wasPush then
     c.pushLaps=c.pushLaps+1
-    if t.active and profile=='Q' and p.qualiCoolLaps and p.section_general and a.control and not a.player and c.pushLaps>=M.target(e.runtimeG.seed,i) and timeForCool(frame,a) then
+    if t.active and profile=='Q' and p.qualiCoolLaps and not p.qualiRuns and p.section_general and a.control and not a.player and c.pushLaps>=M.target(e.runtimeG.seed,i) and timeForCool(frame,a) then
      c.cool=true; c.planned=true; c.coolLap=lap; c.coolAt=now; c.pushLaps=0
      e.stats.qualiCool=(e.stats.qualiCool or 0)+1
      if now>=t.logAt then t.logAt=now+K.qualiLogGap; U.log(e.log,now,'INFO',string.format('tour de refroidissement: %s (niveau -%.0f %%)',name(a),K.qualiCoolLevel*100),i) end

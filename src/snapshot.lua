@@ -16,7 +16,14 @@ local carFields={'position','look','speedKmh','side','isConnected','isActive','i
  'physicsAvailable','isInPit','isInPitlane','compoundIndex','isAIUsingRainTyres','drsPresent','drsAvailable','drsActive',
  'currentPenaltyType','currentPenaltyParameter','fuel','maxFuel','fuelPerLap','wheelsOutside','splinePosition','lapCount',
  'isLapValid','currentSector','lapTimeMs','bestLapTimeMs','previousLapTimeMs','brake','gas','aiLevel','aiAggression','velocity',
- 'isRaceFinished','racePosition','isRequestingPitStop','highBeams','headlightsActive','lowBeams','flashingLightsActive','hornActive','aabbSize','wheels','waterTemperature','kersCharge'}
+ 'isRaceFinished','racePosition','highBeams','headlightsActive','lowBeams','flashingLightsActive','hornActive','aabbSize','wheels','waterTemperature','kersCharge'}
+-- Beta 1.59 : champ du journal détaillé seulement (demande d'arrêt d'AC), hors de la liste des champs des voitures.
+local requestingKnown=nil
+local function readRequesting(raw) return raw.isRequestingPitStop end
+local function requestingPit(raw)
+ if requestingKnown==nil then local ok,value=pcall(readRequesting,raw); requestingKnown=ok; return ok and value==true end
+ return requestingKnown and raw.isRequestingPitStop==true
+end
 -- Sans eux, rien à lire de la session : une vraie erreur de lecture (garde « online », genre « read »).
 local essentialSim={'carsCount','currentSessionIndex'}
 local safe={}
@@ -123,8 +130,10 @@ local function readCar(a,index,dt,lane)
  a.control=raw.isAIControlled==true and not a.player and not raw.isRemote and raw.physicsAvailable~=false
  a.pit=raw.isInPit==true or raw.isInPitlane==true
  a.inPitBox=raw.isInPit==true
- -- Beta 1.58 : demande d'arrêt d'AC (journal détaillé, arrivée à l'emplacement).
- a.requestingPit=raw.isRequestingPitStop==true
+ -- Beta 1.58 : demande d'arrêt d'AC (journal détaillé, arrivée à l'emplacement). Beta 1.59 (relecture) : lue à part,
+ -- essayée une seule fois par lancement : sur un CSP sans ce champ, elle n'envoie plus toutes les lectures des voitures par
+ -- le chemin des champs absents.
+ a.requestingPit=requestingPit(raw)
  a.compoundIndex=U.finite(raw.compoundIndex) and raw.compoundIndex>=0 and math.floor(raw.compoundIndex) or nil
  a.currentTyreIsDry=a.compoundIndex~=nil and a.dryCompounds~=nil and a.dryCompounds[a.compoundIndex]==true
  a.nativeRainTyres=raw.isAIUsingRainTyres==true
@@ -139,7 +148,7 @@ local function readCar(a,index,dt,lane)
  -- Dégâts lus seulement à l'emplacement ; un champ absent laisse la voiture valide, sans dégât connu.
  -- Beta 1.24 : aussi sur une IA lente ou arrêtée (voiture cassée à évacuer aussitôt).
  -- Beta 1.28 : aussi sur une IA anormalement lente surveillée par le moteur (diagnostic).
- if not (a.control and (a.inPitBox or a.kmh<K.damageReadSpeed or a.watchDamage) and pcall(damageRead,a,raw)) then a.damageBody=0; a.damageSuspension=0; a.engineLife=K.engineLifeNew; a.repairingNative=false; a.damageGearbox=0 end
+ if not (a.control and (a.inPitBox or a.kmh<K.damageReadSpeed or a.watchDamage or a.damageScan) and pcall(damageRead,a,raw)) then a.damageBody=0; a.damageSuspension=0; a.engineLife=K.engineLifeNew; a.repairingNative=false; a.damageGearbox=0 end
  a.nativeRainTyresKnown=type(raw.isAIUsingRainTyres)=='boolean'
  a.offtrack=not U.finite(raw.wheelsOutside) or raw.wheelsOutside>2
  a.splineValid=U.finite(raw.splinePosition) and raw.splinePosition>=0 and raw.splinePosition<=1

@@ -180,13 +180,22 @@ tests.FIXSA_STRATEGY_MINORS_142=function()
  F.tick(x,fx,K.strategyRetry+0.5)
  assert(not x.strategy.cars[2].wanted,'fuel consumption off: no fuel stop')
  -- Panne « batterie » seulement sur une voiture hybride (charge de batterie vue).
- with({failureCheck=1},function()
+ -- Beta 1.59 : espacement des pannes (K.failureGap) levé ici pour tirer plusieurs pannes à la fois.
+ with({failureCheck=1,failureGap=0},function()
   local y,fy=race(12,30,5,{failuresEnabled=true,failureRate=3600,strategyEnabled=true})
   for i=2,fy.count do local b=fy.cars[i]; b.kers=0; b.kmh=150; b.speed=150/3.6 end
   F.tick(y,fy,3)
   local n=0
   for i=2,fy.count do local c=y.strategy.cars[i]; if c.failState==1 then n=n+1; assert(c.failKind~='battery','no battery failure without a battery') end end
   assert(n>=3,'failures drawn: '..n)
+ end)
+ -- Beta 1.59 : avec l'espacement (K.failureGap), une seule panne à la fois dans le plateau.
+ with({failureCheck=1},function()
+  local y,fy=race(12,30,5,{failuresEnabled=true,failureRate=3600,strategyEnabled=true})
+  for i=2,fy.count do local b=fy.cars[i]; b.kers=0; b.kmh=150; b.speed=150/3.6 end
+  F.tick(y,fy,3)
+  local n=0; for i=2,fy.count do if y.strategy.cars[i].failState==1 then n=n+1 end end
+  assert(n==1,'1.59: failures spaced, one at a time: '..n)
  end)
  -- Blocage déjà journalisé : pas de ligne « usure: » fantôme au changement de session.
  local w,fw=race(3,20,5)

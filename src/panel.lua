@@ -159,9 +159,14 @@ function M.native(panel,frame,now,p,profile)
  local a=frame.player>0 and frame.cars[frame.player] or nil
  if a and a.drsActive then panel.drsUsed=true elseif not (a and a.drsAvailable) then panel.drsUsed=false end
  if not kind and panel.info and panel.info.finished then kind='finish' end
- if not kind and panel.info and now<panel.info.lapUntil then kind='lap' end
- if not kind and (not p or p.drsAssist~=false) and a and a.valid and a.drsPresent and a.drsAvailable and not a.drsActive and not panel.drsUsed then kind='drs'; value=1 end
- if not kind and now<panel.updateUntil then kind='update'; value=panel.updateVersion end
+ -- Beta 1.59 (vérification des étapes données à un joueur sur Overtake) : panneau de l'app coupé par le pilote
+ -- (panel.ownOnly, réglage du profil) : drapeaux et pénalités du jeu seulement, comme le disent l'infobulle et le README ;
+ -- ni passage de la ligne, ni DRS, ni avis de mise à jour. Onglets décochés (hotlap par défaut) : comme avant.
+ if not panel.ownOnly then
+  if not kind and panel.info and now<panel.info.lapUntil then kind='lap' end
+  if not kind and (not p or p.drsAssist~=false) and a and a.valid and a.drsPresent and a.drsAvailable and not a.drsActive and not panel.drsUsed then kind='drs'; value=1 end
+  if not kind and now<panel.updateUntil then kind='update'; value=panel.updateVersion end
+ end
  show(panel,kind or 'none',value,false,nil,now,profile)
  panel.noPass=false; panel.drsBlocked=false; panel.warnPending=false
 end
@@ -219,7 +224,7 @@ local function restartInfo(panel,t,frame,kind)
 end
 -- lights : état des panneaux lumineux (véhicule lent devant, dégâts du joueur), facultatif.
 function M.update(panel,t,frame,p,profile,now,lights)
- if not p.flagPanel then return M.native(panel,frame,now,p,profile) end
+ if not p.flagPanel or panel.ownOnly then return M.native(panel,frame,now,p,profile) end
  if now<panel.at then return end
  panel.at=now+K.panelPeriod
  local kind,value,double='none',0,false
@@ -291,7 +296,8 @@ function M.update(panel,t,frame,p,profile,now,lights)
   elseif t.playerPitNotice~=nil and t.playerPitNotice~='' then kind='pit'; value=t.playerPitDue or 0; extra=t.playerPitNotice=='same' and 3 or 4
   elseif t.playerPlanNotice then kind='pit'; value=t.playerPitDue or 0; extra=5
   elseif t.playerPitHint then kind='pit'; value=t.playerPitDue or 0; extra=2
-  elseif t.playerPitRemind then kind='pit'; value=t.playerPitDue or 0; extra=t.playerPitCompound and 1 or 0
+  -- Beta 1.59 : rappel montré (ouverture de la fenêtre, puis au plus une fois par tour), pas l'état publié au pont.
+  elseif t.playerPitShowRemind then kind='pit'; value=t.playerPitDue or 0; extra=t.playerPitCompound and 1 or 0
   -- Mise à jour disponible (Beta 1.33) : la plus basse des informations, aux stands seulement.
   elseif now<panel.updateUntil then kind='update'; value=panel.updateVersion end
  end
