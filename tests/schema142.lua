@@ -61,7 +61,8 @@ tests.SCHEMA_142_HIDDEN=function()
   for _,profile in ipairs({'J','P','Q','H'}) do assert(C.hidden(profile,key),key..': hidden in '..profile) end
  end
  for key in pairs(C.sanctionKeys) do
-  assert(C.hidden('J',key) and C.hidden('H',key) and not C.hidden('C',key),key..': weekend only')
+  -- Beta 1.56 : vos sorties en essais et qualifications (sanctionPracticeKeys) masquées en course.
+  assert(C.hidden('J',key) and C.hidden('H',key) and C.hidden('C',key)==(C.sanctionPracticeKeys[key]==true),key..': weekend only')
   assert(C.hidden('P',key)==(C.sanctionRaceKeys[key]==true),key..': practice')
  end
  for _,key in ipairs({'sanTrackLimits','sanWrongWay','sanWrongWaySeconds','sanMessages'}) do assert(not C.hidden('Q',key),key..': shown in qualifying') end

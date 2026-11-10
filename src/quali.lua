@@ -16,25 +16,32 @@ local M={}
 -- Beta 1.51 : planned (refroidissement prévu d'une IA, niveau abaissé), pushLaps (tours lancés de suite), lapSeen (tour
 -- vu à l'image d'avant), wasPush, coolAt et coolEnd (début du refroidissement prévu, fin et retour du niveau).
 -- Beta 1.52 : why, raison d'une voiture pas lancée pour le journal ('' si lancée).
+-- Beta 1.55 : catchT et catchG (relevés de l'écart en temps au joueur, au même point de la piste), catchN, catchBin (case
+-- du dernier relevé), candAt (arrivée
+-- à qualiWarnTime s au plus), candOut (hors de portée depuis), candLogged (refus noté).
 local function car() return {seen=false,wasPit=false,out=false,outLap=-1,exitAt=-math.huge,cool=false,coolLap=-1,slow=0,warnAt=-math.huge,
- planned=false,pushLaps=0,lapSeen=-1,wasPush=false,coolAt=-math.huge,coolEnd=-math.huge,why=''} end
+ planned=false,pushLaps=0,lapSeen=-1,wasPush=false,coolAt=-math.huge,coolEnd=-math.huge,why='',
+ catchT={},catchG={},catchN=0,catchBin=0,candAt=-math.huge,candOut=0,candLogged=false} end
 function M.new()
- local t={active=false,push={},cars={},logAt=-math.huge}
+ local t={active=false,push={},cars={},logAt=-math.huge,playerAt={},playerBin=0}
  for i=1,K.maxCars do t.cars[i]=car(); t.push[i]=false end
  return t
 end
 function M.reset(t)
- t.active=false; t.logAt=-math.huge
+ t.active=false; t.logAt=-math.huge; t.playerAt={}; t.playerBin=0
  for i=1,K.maxCars do t.cars[i]=car(); t.push[i]=false end
 end
 function M.rebase(t,amount)
  if U.finite(t.logAt) then t.logAt=t.logAt-amount end
+ for b,v in pairs(t.playerAt) do t.playerAt[b]=v-amount end
  for i=1,K.maxCars do
   local c=t.cars[i]
   if U.finite(c.exitAt) then c.exitAt=c.exitAt-amount end
   if U.finite(c.warnAt) then c.warnAt=c.warnAt-amount end
   if U.finite(c.coolAt) then c.coolAt=c.coolAt-amount end
   if U.finite(c.coolEnd) then c.coolEnd=c.coolEnd-amount end
+  if U.finite(c.candAt) then c.candAt=c.candAt-amount end
+  for k=1,c.catchN do c.catchT[k]=c.catchT[k]-amount end
  end
 end
 local function name(a) return a and a.name or '?' end
@@ -145,25 +152,79 @@ function M.update(t,e,frame,now,dt)
  for i=frame.count+1,K.maxCars do t.push[i]=false end
  if not t.active then return end
  -- Avis au joueur pas lancé : IA lancée qui arrive derrière lui (à qualiWarnTime s au plus, qui se rapproche).
+ -- Beta 1.55 (essais du 9 novembre à Imola : avis pour des voitures qui ne rattrapaient jamais le joueur, l'écart de
+ -- vitesse du moment bondissant à chaque freinage) : écart en temps au même point de la piste (instant où le joueur
+ -- y est passé), rapprochement confirmé sur la durée (voir le bloc k155 de config.lua) ; ni voiture aux stands ni hors
+ -- piste. Mètres et km/h ne servent plus qu'au journal.
  local pl=frame.player
- local row=pl>0 and e.perception.rows[pl]
- if pl>0 and not t.push[pl] and row and not frame.cars[pl].pit then
-  local best,gapTime=nil,math.huge
-  for j=1,row.count do
-   local r=row.neighbors[j]; local b=frame.cars[r.index]
-   if r.long<0 and r.gap>=0 and t.push[r.index] and not b.player and r.sa>=K.qualiWarnSa then
-    local time=r.gap/max(b.speed,1)
-    if time<=K.qualiWarnTime and time<gapTime then best,gapTime=r,time end
+ local me=pl>0 and frame.cars[pl] or nil
+ if not (me and me.valid and me.splineValid and not t.push[pl] and not me.pit) then t.playerBin=0; return end
+ local bins=e.delta.bins
+ local here=Delta.bin(me.spline,bins)
+ if here~=t.playerBin then
+  -- Cases sautées (image lente) : même instant pour les quelques cases franchies d'un coup.
+  local from=t.playerBin
+  local step=from>0 and (here-from)%bins or 0
+  -- Première case (entrée pas vue) et saut trop grand : rien de relevé.
+  if from>0 and step>0 and step<=K.qualiCatchFill then for k=1,step do t.playerAt[(from+k-1)%bins+1]=now end end
+  t.playerBin=here
+ end
+ local best,gapTime=nil,math.huge
+ for j=1,frame.count do
+  local b=frame.cars[j]; local c=t.cars[j]
+  -- Écart relevé à l'entrée de la voiture dans chaque case, comparé à l'instant d'entrée du joueur dans la même case
+  -- (deux entrées : aucune dent de scie due à la taille des cases).
+  -- Voie des stands déjà exclue par t.push ; hors piste exclue ici.
+  if j~=pl and t.push[j] and b.valid and b.splineValid and not b.player and not b.offtrack then
+   local here=Delta.bin(b.spline,bins)
+   if here~=c.catchBin then
+    local fresh=c.catchBin>0
+    c.catchBin=here
+    local at=t.playerAt[here]
+    local g=fresh and at and now-at
+    if g and g>=0 and g<=K.qualiCatchWatch then
+     if c.catchN>=K.qualiCatchSamples then for k=1,c.catchN-1 do c.catchT[k]=c.catchT[k+1]; c.catchG[k]=c.catchG[k+1] end; c.catchN=c.catchN-1 end
+     c.catchN=c.catchN+1; c.catchT[c.catchN]=now; c.catchG[c.catchN]=g
+    elseif fresh then c.catchN=0 end
+   end
+  else c.catchBin=0; c.catchN=0 end
+  local seen=c.catchN>0 and now-c.catchT[c.catchN]<=K.qualiCatchForget and c.catchG[c.catchN] or nil
+  if not seen then
+   if c.catchN>0 or U.finite(c.candAt) then
+    c.candOut=c.candOut+dt
+    if c.candOut>=K.qualiCatchForget then c.catchN=0; c.candAt=-math.huge; c.candLogged=false end
+   end
+  else
+   c.candOut=0
+   -- Rapprochement (s par seconde) depuis le relevé le plus récent qui couvre chaque durée.
+   local last=c.catchT[c.catchN]
+   local rateLong,rateShort=nil,nil
+   for k=c.catchN-1,1,-1 do
+    local span=last-c.catchT[k]
+    if not rateShort and span>=K.qualiCatchSpanShort then rateShort=(c.catchG[k]-seen)/span end
+    if not rateLong and span>=K.qualiCatchSpanLong then rateLong=(c.catchG[k]-seen)/span end
+   end
+   local rate=max(rateLong and rateLong>=K.qualiCatchRateLong and rateLong or 0,rateShort and rateShort>=K.qualiCatchRateShort and rateShort or 0)
+   local confirmed=rate>0 and seen/rate<=K.qualiCatchProject
+   if seen<=K.qualiWarnTime then
+    if not U.finite(c.candAt) then c.candAt=now end
+    if confirmed and now-c.candAt<=K.qualiCatchWindow then
+     if seen<gapTime then best,gapTime=j,seen end
+    elseif now-c.candAt>K.qualiCatchWindow and not c.candLogged then
+     c.candLogged=true
+     if e.runtimeG.debugLog then U.log(e.log,now,'DEBUG',string.format('tour lance non confirme: %s (ecart %.1f s, rapprochement %.2f s/s)',name(b),seen,max(rateLong or 0,rateShort or 0)),j) end
+    end
    end
   end
-  if best then
-   local c=t.cars[best.index]
-   if now-c.warnAt>=K.qualiWarnRepeat then
-    c.warnAt=now; e.stats.qualiWarn=(e.stats.qualiWarn or 0)+1
-    local b=frame.cars[best.index]
-    if p.yellowMessage then Incidents.message(inc,'fastCar',best.index-1,math.floor(gapTime*10+0.5)/10,name(b)) end
-    U.log(e.log,now,'INFO',string.format('tour lance: %s arrive derriere le joueur (%s) a %.1f s (%.0f m, %+.0f km/h)',name(b),t.cars[pl].why~='' and t.cars[pl].why or 'pas lance',gapTime,best.gap,best.sa),best.index)
-   end
+ end
+ if best then
+  local c=t.cars[best]
+  if now-c.warnAt>=K.qualiWarnRepeat then
+   c.warnAt=now; e.stats.qualiWarn=(e.stats.qualiWarn or 0)+1
+   local b=frame.cars[best]
+   local meters=((me.spline-b.spline)%1)*frame.length
+   if p.yellowMessage then Incidents.message(inc,'fastCar',best-1,math.floor(gapTime*10+0.5)/10,name(b)) end
+   U.log(e.log,now,'INFO',string.format('tour lance: %s arrive derriere le joueur (%s) a %.1f s (%.0f m, %+.0f km/h)',name(b),t.cars[pl].why~='' and t.cars[pl].why or 'pas lance',gapTime,meters,(b.speed-me.speed)*3.6),best)
   end
  end
 end

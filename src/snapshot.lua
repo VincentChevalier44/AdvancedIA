@@ -2,6 +2,57 @@ local U=require('src/util')
 local K=require('src/config').K
 local M={}
 local function hexByte(c) return string.format('%02x',string.byte(c)) end
+-- Beta 1.57 (Ved, Overtake : CSP 0.3.0-preview212, « en ligne » hors connexion) : une version de CSP plus ancienne n'a
+-- pas tous les champs d'ac.getSim() et d'ac.getCar() ; lire un champ absent d'une structure FFI lève une erreur, et un
+-- seul champ absent faisait échouer toute la lecture (session suspendue pour toujours, voitures jamais lues). Au premier
+-- échec, chaque champ connu est essayé une fois sous protection ; les absents sont retenus pour tout le lancement et lus
+-- ensuite comme absents (valeur neutre) par une vue de la structure, sans protection à chaque image. Version complète :
+-- aucune vue, lecture directe comme avant.
+local simFields={'isOnlineRace','isAltOnlineRace','isReplayActive','isReplayOnlyMode','isPaused','isInMainMenu','isSessionStarted',
+ 'isSessionFinished','raceSessionType','currentSessionIndex','trackLengthM','currentSessionTime','gameTime','timeToSessionStart',
+ 'sessionTimeLeft','rainWetness','rainIntensity','rainWater','carsCount','pitsSpeedLimit','raceFlagType','pitWindowStartTime',
+ 'pitWindowEndTime','time','leaderLapCount','fuelConsumptionRate','mechanicalDamageRate'}
+local carFields={'position','look','speedKmh','side','isConnected','isActive','isUserControlled','isAIControlled','isRemote',
+ 'physicsAvailable','isInPit','isInPitlane','compoundIndex','isAIUsingRainTyres','drsPresent','drsAvailable','drsActive',
+ 'currentPenaltyType','currentPenaltyParameter','fuel','maxFuel','fuelPerLap','wheelsOutside','splinePosition','lapCount',
+ 'isLapValid','currentSector','lapTimeMs','bestLapTimeMs','previousLapTimeMs','brake','gas','aiLevel','aiAggression','velocity',
+ 'isRaceFinished','racePosition','isRequestingPitStop','highBeams','headlightsActive','lowBeams','flashingLightsActive','hornActive','aabbSize','wheels','waterTemperature','kersCharge'}
+-- Sans eux, rien à lire de la session : une vraie erreur de lecture (garde « online », genre « read »).
+local essentialSim={'carsCount','currentSessionIndex'}
+local safe={}
+local function fieldOf(raw,name) return raw[name] end
+local function viewMeta(kind) return {__index=function(t,k) if safe[kind].missing[k] then return nil end return rawget(t,'raw')[k] end} end
+-- État par structure : champs absents (ensemble et liste), vue active, essai déjà fait ; vues réutilisées.
+function M.resetFields()
+ safe.sim={missing={},list={},on=false,probed=false}; safe.car={missing={},list={},on=false,probed=false}
+ safe.simView=setmetatable({},viewMeta('sim')); safe.carViews={}; safe.carMeta=viewMeta('car'); safe.serial=(safe.serial or 0)+1
+end
+M.resetFields()
+-- Champs essayés une fois : vrai si un nouveau champ absent a été trouvé (la vue s'active).
+local function probe(kind,raw,names)
+ local st=safe[kind]; local found=false
+ st.probed=true
+ for _,name in ipairs(names) do
+  if not st.missing[name] and not pcall(fieldOf,raw,name) then st.missing[name]=true; st.list[#st.list+1]=name; found=true end
+ end
+ if found then st.on=true; safe.serial=safe.serial+1 end
+ return found
+end
+local function simGet()
+ local r=ac.getSim()
+ if r~=nil and safe.sim.on then safe.simView.raw=r; return safe.simView end
+ return r
+end
+local function carGet(index)
+ local raw=ac.getCar(index)
+ if raw==nil or not safe.car.on then return raw end
+ local view=safe.carViews[index]
+ if not view then view=setmetatable({},safe.carMeta); safe.carViews[index]=view end
+ view.raw=raw
+ return view
+end
+-- Champs absents pour le journal et le diagnostic ; numéro de version de la liste (changé à chaque nouveau champ).
+function M.missingFields() return safe.sim.list,safe.car.list,safe.serial end
 -- Champ absent de certaines versions de CSP : lu sous protection, sans fermeture créée à chaque image.
 local function collidedWith(raw) return raw.collidedWith end
 -- Dégâts d'une IA à son emplacement (Beta 1.20) : carrosserie (somme des quatre côtés, km/h), suspension la plus
@@ -14,7 +65,7 @@ local function damageValues(raw)
   U.number(raw.engineLifeLeft,0,K.engineLifeNew,K.engineLifeNew),U.number(raw.gearboxDamage,0,1,0)
 end
 local function sizeRead(a)
- local size=ac.getCar(a.index).aabbSize
+ local size=carGet(a.index).aabbSize
  a.length=size and U.finite(size.z) and size.z>=K.minLength and size.z<=K.maxLength and size.z or K.length
  a.width=size and U.finite(size.x) and size.x>=K.minWidth and size.x<=K.maxWidth and size.x or K.width
 end
@@ -24,15 +75,15 @@ end
 -- Dégâts du joueur (Beta 1.32, drapeau noir à disque orange) : rangés à part (ceux des IA ne sont lus qu'à leur
 -- emplacement), avec le taux de dégâts mécaniques de la session (0 : dégâts désactivés).
 local function playerDamage(s,a)
- local raw=ac.getCar(a.index)
+ local raw=carGet(a.index)
  s.playerBody,s.playerSuspension,s.playerEngine,s.playerGearbox=damageValues(raw)
  local blown=false; local wheels=raw.wheels
  if wheels then for w=0,3 do local wheel=wheels[w]; if wheel and wheel.isBlown==true then blown=true end end end
- s.playerBlown=blown; s.damageRate=U.number(ac.getSim().mechanicalDamageRate,0,1000,1); s.playerDamageSlot=a.slot
+ s.playerBlown=blown; s.damageRate=U.number(simGet().mechanicalDamageRate,0,1000,1); s.playerDamageSlot=a.slot
 end
 function M.new()
  local s={cars={},count=0,player=0,errors=0,invalid=0,track='',trackName='',patch='',conflict='',metaAt=-1,session=-1,
-  online=true,replay=false,paused=false,menu=false,started=false,finished=false,length=0,time=0,startIn=0,left=0,wet=0,rain=0,water=0,type=1,stamp=-1,configType=0,configTrackDay=false,configSession=-1,
+  online=true,onlineKind='',readError='',missingSim='',missingCar='',replay=false,paused=false,menu=false,started=false,finished=false,length=0,time=0,startIn=0,left=0,wet=0,rain=0,water=0,type=1,stamp=-1,configType=0,configTrackDay=false,configSession=-1,
   flag=0,fuelRate=1,pitWindowStart=0,pitWindowEnd=0,simTime=0,sessionLaps=0,sessionMinutes=0,timedRace=false,leaderLaps=0,
   playerDamageSlot=0,playerDamageAt=-1,playerBody=0,playerSuspension=0,playerEngine=1000,playerGearbox=0,playerBlown=false,damageRate=1}
  for i=1,K.maxCars do s.cars[i]={slot=i,index=i-1,valid=false,control=false,player=false,pit=false,offtrack=false,
@@ -51,7 +102,7 @@ local function laneProbe()
 end
 local function readCar(a,index,dt,lane)
  a.valid=false; a.control=false; a.player=false; a.teleport=false
- local raw=ac.getCar(index)
+ local raw=carGet(index)
  -- Champs vectoriels lus une fois : chaque lecture d'un champ structuré d'une cdata crée une référence (déchet).
  local position,look=raw and raw.position,raw and raw.look
  if not raw or not vector(position) or not vector(look) or not U.finite(raw.speedKmh) then return false end
@@ -72,6 +123,8 @@ local function readCar(a,index,dt,lane)
  a.control=raw.isAIControlled==true and not a.player and not raw.isRemote and raw.physicsAvailable~=false
  a.pit=raw.isInPit==true or raw.isInPitlane==true
  a.inPitBox=raw.isInPit==true
+ -- Beta 1.58 : demande d'arrêt d'AC (journal détaillé, arrivée à l'emplacement).
+ a.requestingPit=raw.isRequestingPitStop==true
  a.compoundIndex=U.finite(raw.compoundIndex) and raw.compoundIndex>=0 and math.floor(raw.compoundIndex) or nil
  a.currentTyreIsDry=a.compoundIndex~=nil and a.dryCompounds~=nil and a.dryCompounds[a.compoundIndex]==true
  a.nativeRainTyres=raw.isAIUsingRainTyres==true
@@ -132,8 +185,12 @@ local function readCar(a,index,dt,lane)
  return a.valid
 end
 local function simRead(s)
- local r=ac.getSim()
+ local r=simGet()
  s.online=r.isOnlineRace==true or r.isAltOnlineRace==true
+ -- Beta 1.57 (Ved, Overtake : « en ligne » hors connexion) : genre de la suspension, pour l'affichage et le journal
+ -- seulement (s.online reste le seul drapeau qui suspend) : vraie course en ligne, mode alt-online d'un script New
+ -- Modes de CSP (annoncé même hors connexion), ou lecture impossible (M.read).
+ s.onlineKind=r.isOnlineRace==true and 'online' or r.isAltOnlineRace==true and 'alt' or ''
  s.replay=r.isReplayActive==true or r.isReplayOnlyMode==true
  -- Le menu setup/garage n'arrête pas la session : seules les fenêtres en dépendent, le moteur continue.
  s.paused=r.isPaused==true; s.menu=s.paused or r.isInMainMenu==true
@@ -153,11 +210,15 @@ local function simRead(s)
  if s.sectorsSession~=s.session or s.sectorsLength~=s.length then
   s.sectorsSession=s.session; s.sectorsLength=s.length
   local ok,n=pcall(function() return #r.lapSplits end); s.sectorCount=ok and U.number(n,0,64,0) or 0
+  -- Beta 1.56 : pénalités d'AC (lecture seule, une fois par session) : vos limites de piste gérées par l'app préviennent
+  -- d'une double sanction. Champ absent : inconnu (nil).
+  local okP,pen=pcall(function() return r.penaltiesEnabled end); s.penaltiesEnabled=okP and type(pen)=='boolean' and pen or nil
+  local okT,out=pcall(function() return r.allowedTyresOut end); s.allowedTyresOut=okT and U.finite(out) and math.floor(out) or nil
  end
 end
 -- Drapeau, fenêtre d'arrêt et tours du leader (1.3.0), lus à part : un champ indisponible les laisse neutres.
 local function raceRead(s)
- local r=ac.getSim()
+ local r=simGet()
  s.flag=math.floor(U.number(r.raceFlagType,0,64,0))
  s.pitWindowStart=U.number(r.pitWindowStartTime,0,1e13,0); s.pitWindowEnd=U.number(r.pitWindowEndTime,0,1e13,0)
  s.simTime=U.number(r.time,0,1e13,0); s.leaderLaps=math.floor(U.number(r.leaderLapCount,0,100000,0))
@@ -174,7 +235,7 @@ end
 -- Beta 1.42 : usure, distance virtuelle et températures des pneus, eau et batterie d'une IA (une fois par seconde) ;
 -- tables créées une fois par voiture.
 local function wearRead(a)
- local raw=ac.getCar(a.index)
+ local raw=carGet(a.index)
  local wheels=raw and raw.wheels
  if not wheels then a.wearKnown=false; return end
  if not a.tyreWear then a.tyreWear={0,0,0,0}; a.tyreKm={0,0,0,0}; a.tyreTemp={0,0,0,0}; a.tyreOptimum={0,0,0,0} end
@@ -188,7 +249,7 @@ local function wearRead(a)
  a.waterTemp=U.number(raw.waterTemperature,-50,300,-1); a.kers=U.number(raw.kersCharge,0,1,-1); a.wearKnown=true
 end
 local function tyres(a)
- a.tyresID=a.identity or ''; a.tyresKnown=false; a.dryCompound=-1; a.wetCompound=-1; a.interCompound=-1; a.dryCompounds={}; a.dryList={}; a.tyreNames={}; a.tyreLongNames={}; a.dryPrimary={}
+ a.tyresID=a.identity or ''; a.tyresKnown=false; a.dryCompound=-1; a.wetCompound=-1; a.interCompound=-1; a.dryCompounds={}; a.dryList={}; a.tyreNames={}; a.tyreLongNames={}; a.dryPrimary={}; a.tyreClass={}
  if not ac.getTyresName then return end
  local any=false; local primary={}
  for index=0,K.maxTyreCompounds-1 do
@@ -200,21 +261,48 @@ local function tyres(a)
   local legal=true
   if ac.areTyresLegal then local good,allowed=pcall(ac.areTyresLegal,short); if good and allowed==false then legal=false end end
   if legal then
-   if short:upper()=='I' or short:upper()=='INT' or name:find('intermediate',1,true) or name:find('intermedia',1,true) then a.interCompound=index
-   elseif short:upper()=='W' or name:find('wet',1,true) or name:find('rain',1,true) or name:find('pluie',1,true) then a.wetCompound=index
+   if short:upper()=='I' or short:upper()=='INT' or name:find('intermediate',1,true) or name:find('intermedia',1,true) then a.interCompound=index; a.tyreClass[index]='intermediaire'
+   elseif short:upper()=='W' or name:find('wet',1,true) or name:find('rain',1,true) or name:find('pluie',1,true) then a.wetCompound=index; a.tyreClass[index]='pluie'
    else
+    a.tyreClass[index]='sec'
     a.dryCompounds[index]=true; a.dryList[#a.dryList+1]=index; if a.dryCompound<0 or index==a.compoundIndex then a.dryCompound=index end
     if not primary[short:upper()] then primary[short:upper()]=true; a.dryPrimary[#a.dryPrimary+1]=index end
    end
-  end
+  else a.tyreClass[index]='non autorise' end
  end
  a.tyresKnown=any
  a.currentTyreIsDry=a.compoundIndex~=nil and a.dryCompounds[a.compoundIndex]==true
 end
+-- Beta 1.55 : lecture des gommes exposée aux tests (classes retenues).
+M.tyres=tyres
+-- Beta 1.57 : texte d'erreur de CSP ou de Lua pour le journal : une ligne, sans dossier (seul le nom du fichier reste),
+-- au plus K.readErrorChars caractères.
+function M.cleanError(err)
+ -- Chemin d'un fichier Lua avant « fichier:ligne: » (espaces permis, « Assetto Corsa »), puis tout autre dossier.
+ local text=tostring(err or ''):gsub('[\r\n]+',' '):gsub('%a:[\\/][^:]*[\\/]([^\\/:]+:)','%1'):gsub('%S*[\\/]','')
+ if #text>K.readErrorChars then text=text:sub(1,K.readErrorChars) end
+ return text
+end
 function M.read(s,dt,now,light)
- local ok=pcall(simRead,s)
- if not ok then s.online=true; s.count=0; s.errors=math.min(K.counterMax,s.errors+1); return false end
- if not pcall(raceRead,s) then s.flag=0; s.pitWindowStart=0; s.pitWindowEnd=0; s.errors=math.min(K.counterMax,s.errors+1) end
+ local ok,err=pcall(simRead,s)
+ -- Beta 1.57 : premier échec : champs de la session essayés un par un (version de CSP plus ancienne), puis relecture
+ -- par la vue ; seul un champ essentiel absent reste une erreur de lecture.
+ if not ok and not safe.sim.probed then
+  local got,r=pcall(ac.getSim)
+  if got and r~=nil and probe('sim',r,simFields) then ok,err=pcall(simRead,s) end
+ end
+ -- Champs absents recopiés dans l'instantané (journal, diagnostic) seulement quand la liste change.
+ if s.fieldsSerial~=safe.serial then s.fieldsSerial=safe.serial; s.missingSim=table.concat(safe.sim.list,', '); s.missingCar=table.concat(safe.car.list,', ') end
+ if ok and safe.sim.on then for _,name in ipairs(essentialSim) do if safe.sim.missing[name] then ok=false; err='champ de CSP essentiel absent: '..name; break end end end
+ -- Beta 1.57 : lecture impossible, toujours suspendue comme une session en ligne, mais nommée (texte de l'erreur sans
+ -- chemin, raccourci).
+ if not ok then s.online=true; s.onlineKind='read'; s.readError=M.cleanError(err); s.count=0; s.errors=math.min(K.counterMax,s.errors+1); return false end
+ if not pcall(raceRead,s) then
+  -- Beta 1.57 : même essai champ par champ si la session a pu être lue sans lui.
+  local retried=false
+  if not safe.sim.probed then local got,r=pcall(ac.getSim); if got and r~=nil and probe('sim',r,simFields) then retried=pcall(raceRead,s) end end
+  if not retried then s.flag=0; s.pitWindowStart=0; s.pitWindowEnd=0; s.errors=math.min(K.counterMax,s.errors+1) end
+ end
  -- Beta 1.52 : première lecture toujours complète (place du joueur connue avant toute lecture légère).
  if light and not s.playerSlot then light=false end
  if not light and s.lightLast then s.metaAt=-1; s.configSession=-1 end
@@ -222,6 +310,11 @@ function M.read(s,dt,now,light)
  s.player=0
  if not light then for i=1,s.count do
   local a=s.cars[i]; local good,result=pcall(readCar,a,i-1,dt,s.laneWanted)
+  -- Beta 1.57 : premier échec d'une voiture : champs des voitures essayés un par un, puis relecture par la vue.
+  if not good and not safe.car.probed then
+   local got,raw=pcall(ac.getCar,i-1)
+   if got and raw~=nil and probe('car',raw,carFields) then good,result=pcall(readCar,a,i-1,dt,s.laneWanted) end
+  end
   if not good or not result then a.valid=false; a.control=false; s.invalid=math.min(K.counterMax,s.invalid+1) end
   if a.player and a.valid then s.player=i end
  end
@@ -388,7 +481,7 @@ function M.carStep(loader,clock,arg)
  if not ok then loader.list={}; loader.done=true end
  return loader.done
 end
-local function menuVisible() local sim=ac.getSim(); return sim.isPaused==true or sim.isInMainMenu==true end
+local function menuVisible() local sim=simGet(); return sim.isPaused==true or sim.isInMainMenu==true end
 function M.menu()
  local ok,visible=pcall(menuVisible)
  return ok and visible==true

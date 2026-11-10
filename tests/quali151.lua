@@ -84,14 +84,17 @@ tests.QUALI_NO_ATTACK_151=function()
  assert(passed2,'player not pushing: the AI may pass')
 end
 tests.QUALI_PLAYER_WARNING_151=function()
+ -- Beta 1.55 : avis seulement sur un rapprochement confirmé (écart en temps au même point de la piste) : voitures en
+ -- mouvement, l'IA lancée 30 % plus rapide que le joueur.
  local e,f=quali(3); e.quali.cars[1].out=true; e.quali.cars[2].out=false; e.quali.cars[2].exitAt=-math.huge
  F.place(f,3,5000,100); F.place(f,1,0,100); F.place(f,2,-60,130)
  for i=1,3 do e.states[i].nextPerception=0 end
- F.tick(e,f,0.2)
+ F.tick(e,f,0.2,true)
  assert(e.quali.push[2] and not e.quali.push[1],'AI pushing, player on the out-lap')
- assert(e.incidents.messageKind=='fastCar' and e.incidents.messageText=='Driver_2' and e.incidents.messageValue==1,'player warned: '..tostring(e.incidents.messageKind))
+ for _=1,4*60 do F.tick(e,f,1/60,true); if e.incidents.messageKind=='fastCar' then break end end
+ assert(e.incidents.messageKind=='fastCar' and e.incidents.messageText=='Driver_2' and e.incidents.messageValue<=3,'player warned: '..tostring(e.incidents.messageKind))
  local id=e.incidents.messageId
- F.tick(e,f,1); assert(e.incidents.messageId==id and (e.stats.qualiWarn or 0)==1,'once per car within qualiWarnRepeat s')
+ F.tick(e,f,1,true); assert(e.incidents.messageId==id and (e.stats.qualiWarn or 0)==1,'once per car within qualiWarnRepeat s')
  assert(count(e,'arrive derriere le joueur')==1,'logged once')
 end
 tests.QUALI_PIT_EXIT_HOLD_151=function()

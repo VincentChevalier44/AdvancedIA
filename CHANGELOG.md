@@ -2,6 +2,377 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 1.58 — 10 November 2026
+
+First public update since Beta 1.52. It fixes the AI that went crazy in the pit lane after the race and a mandatory
+stop that could be serviced in a loop, and it brings everything from Beta 1.53 to Beta 1.57.
+
+### Fix: AI handed back to AC in the pit lane
+Reported by a player on Overtake and seen by the driver too: after the chequered flag, AI returning to the pits crashed
+into the pit wall and into each other instead of driving to their spots.
+
+- **Cause.** The app never writes to a car in the pit lane (`src/applier.lua`, the per-car loop: `driven` requires
+  `not car.pit`). When a car it was driving entered the lane, its last values stayed: lateral offset, speed cap,
+  level, aggression, caution, grip. The restore path also skipped cars in the pits, so a finished car kept them while it
+  drove to its box. The same happened during a race pit stop when the tyres are managed by the app.
+- **Fix.** In the pit lane, a car the app was driving is handed back to AC: the offset returns to zero over a short ramp
+  (`K.laneReleaseRate`, 1 per second, at most one second), then the speed cap is lifted and the original level,
+  aggression, caution and grip are given back. Cars held on purpose (parked, held at their box, Safety Car) are not
+  touched, and a pit stop requested by the app stays requested. The car is driven again normally when it leaves the
+  lane.
+- **Log.** `voiture rendue a AC apres l arrivee: <name>` or `voiture rendue a AC dans la voie des stands: <name>`, once
+  per car and session, only when an offset or a speed cap was left. English patterns added.
+
+### Fix: a requested stop serviced in a loop
+Seen in the driver's race at Imola (10 laps, F1 rules, mandatory stop with a compound change): one AI sat in its box for
+the last three minutes, fitted with new tyres eight times (SS, S, SS, S…), and its mandatory stop never counted.
+
+- **Cause.** Its stop was requested, then it went off and stopped; AC or CSP moved it to its box. An arrival at the box
+  right after a move does not count as a stop (a recovery is not a stop), so the request stayed. The app never cancels
+  AC's pit request inside the pit lane, so AC kept bringing the car back to its box without it ever leaving the lane,
+  and every new arrival was serviced again (`src/pits.lua`, the box arrival; `src/applier.lua`, the pit request). Each
+  service picked "another dry compound than the one fitted", so the tyres alternated.
+- **Fix.**
+  - An AI whose stop is requested and that reaches its box after a move by AC or CSP is serviced there and that stop
+    counts. A recovery by the app still never counts as the stop.
+  - **One service per pass through the pit lane**: back in its box without having left the lane, a car gets no new
+    tyres or repairs and no stop is counted (`emplacement de nouveau sans sortie de la voie des stands`, once per car).
+  - Once the car has been serviced and has left its box, and the app no longer wants a stop, AC's pit request is lifted
+    inside the lane too; a stop that did not count is requested again once the car is back on track.
+  - F1 rule: until the car has raced on two different dry compounds, the app fits one it has not raced on yet (never
+    back to the starting compound after a recovery); after that, as before, another than the one fitted.
+  - Safety net for the mandatory stop only: serviced twice during its request without counting, the request is dropped
+    for the session, with one warning (`arret demande abandonne`); a GT red-flag parking without work does not count.
+  - Detailed log: one line per arrival at the box with AC's pit request (`isRequestingPitStop`), to check the cause in game.
+
+### Everything since Beta 1.52
+- **AI levels above 100 %** (1.53): in Automatic mode the native level is written up to 110 %; the probe result and the
+  applied level are shown in the log and in DIAGNOSTICS.
+- **DIAGNOSTICS in English** (1.53) when the interface is in English; the log file stays in French.
+- **Overtaking and yielding** (1.54, 1.55): no more endless attempts on a car that is just as fast; outside the race,
+  attempts without progress stop after 8 s (15 s at most); an AI only yields to a car that is really faster; fewer AI
+  headlight flashes.
+- **Rain tyres in the dry** (1.55): CSP's rain-tyre flag is set back to dry when it comes back on a dry track; the tyre
+  list of each car model is logged.
+- **Flying-lap warning** (1.55): « let it pass » only for a car that is really catching you.
+- **Your own track limits** (1.56, off by default): warnings, then a time penalty or AC's throttle cut; escalating
+  penalties and a CSV race report, also off by default. The section is now called « Sanctions ».
+- **Older CSP versions and « online » by mistake** (1.57): an older CSP (for example preview212) no longer makes the app
+  believe it is online; the suspension says why (online session, CSP alt-online mode, game state unreadable).
+
+### How to report a problem
+Please send three things: your log (`Documents\Assetto Corsa\logs\AdvancedIA.log`; the `.1`, `.2` and `.3` files are
+the previous sessions), your CSP version (Content Manager, Custom Shaders Patch settings, or the DIAGNOSTICS tab), and
+the session type (track day, practice, qualifying, race, hotlap), with the track and the car if you can.
+
+### Verification
+- lint 49 files, 0 errors; test_pdr 742 checks, 0 failures (11 new in `tests/review158.lua`); integration 152 cases, all
+  pass (4 new: finished car handed back in the lane, app pit request kept in the lane, a requested stop after a move to
+  the box served once while the car stays in the lane, a recovery then the mandatory stop); mutations 1,794 / 1,794
+  detected (31 new); English journal coverage 59,708 lines, 0 problems (the driver's 10 November race log included);
+  parameter audit 230 + 50.
+- Journals against Beta 1.57: golden, race142 and the 8-hour soak identical line for line; golden and golden142 result
+  files byte-identical. The unit-suite journal adds the new tests' lines and loses one: a player arrival at the box
+  again without leaving the pit lane (a test artefact) is no longer counted as a second stop. Integration differs by
+  the new cases, the updater fixtures' version numbers, timings and the weather pit case, where AC's pit request is now
+  lifted once the car has left its box.
+- Three existing tests follow the new rules: the reload case keeps the car on track (in the pit lane it is now handed
+  back), the repair revisits leave the pit lane between visits, and the red-flag tow check has no pending request.
+- Bench medians 9 / 30 / 60 AI: 0.067 / 0.304 / 0.756 ms (1.57: 0.067 / 0.304 / 0.751); long track 0.350 ms mean, P99
+  0.761 ms (1.57: 0.349 / 0.768); 8-hour soak 0 errors, 0.21 ms mean (the same two strict criteria as before stay open);
+  companion bridge unchanged. The package is accepted by the Beta 1.57, 1.56 and 1.52 updaters; `bridge_layout.lua`
+  identical to SpotterEnginer's.
+- To see in game: the AI after the chequered flag drive to their boxes cleanly; a requested stop is served once, even
+  after AC moves the car to its box (`docs/VALIDATION.md`).
+
+## Beta 1.57 — 10 November 2026
+
+A player on Overtake (offline, connection off, CSP 0.3.0-preview212) saw *Online session: commands suspended* and the
+app did nothing. Two fixes: the suspension is named, and an older CSP is read field by field. With a complete CSP
+(preview675) nothing changes in behaviour: the golden, race and soak journals are identical to Beta 1.56.
+
+### Named suspension (texts and log only)
+The app used the same "online" status for three different cases. All three still suspend every command as before.
+
+- **Named suspension.** The snapshot keeps `online` as the only flag that suspends, and adds its kind: a real online race
+  (`isOnlineRace`), a CSP **alt-online** mode (`isAltOnlineRace`, a fake online race run by a New Modes Lua script,
+  reported even offline), or a **failed read** of the game state (the protected read that already fell back to
+  "online").
+- **Texts (FR/EN).** The header status, the status chip and the HOME banner name each case: *CSP alt-online mode:
+  commands suspended* (the banner says to start a normal offline session from Content Manager) and *Cannot read the game
+  state: commands suspended* (the banner points to DIAGNOSTICS and the log). The real online texts are unchanged. The
+  engine guard stays `online`, so the SpotterEnginer bridge is unchanged.
+- **Log.** One line when a suspension starts or its kind changes: `suspension: session en ligne, aucune commande`,
+  `suspension: mode alt-online de CSP (script New Modes, …)`, `suspension: lecture de l etat du jeu impossible
+  (<error>)`. The error text is one line, without folders, at most 120 characters. A suspension of the same kind that
+  comes back is logged again at most every 60 s. English patterns added for the DIAGNOSTICS log.
+- **README**: Compatibility (alt-online), the safety guard table and a Troubleshooting entry.
+
+### Older CSP versions read field by field
+- The same player runs **CSP 0.3.0-preview212** (our reference is preview675), on a plain offline Track Day, and the app
+  stayed "online". `ac.getSim()` and `ac.getCar()` return FFI structures, and reading a field that an older CSP lacks
+  raises an error. The whole session read was protected as one block, so a single missing field (for example
+  `isAltOnlineRace`) made it fail every frame, and the safety fallback suspended the app for ever. The car reads had the
+  same weakness: one missing car field and no car was ever read.
+- Now, at the first failure, every known session field (and, at the first failed car, every known car field) is tried
+  once under protection. Missing ones are remembered for the whole launch and read as absent through a view of the
+  structure, which gives the usual neutral value (online false, replay false, no DRS…). There is no protection per field
+  and per frame: with a complete CSP no view is used and the reads are exactly as before.
+- Only a missing car count or session index stays a real read error, now named: *Cannot read the game state*, log
+  `suspension: lecture de l etat du jeu impossible (champ de CSP essentiel absent: carsCount)`.
+- The race read (flag, pit window, leader laps) degrades the same way. The missing fields are logged once per new list
+  (`champs de CSP absents (version plus ancienne, lus comme absents): session … | voitures …`, English pattern added) and
+  listed under DIAGNOSTICS › CSP capabilities.
+- The player's logs (Beta 1.52) showed `session: indice -1, … voitures 0, longueur 0 m` and `garde online, IA 0` for
+  8 minutes with `erreurs 0`: the failed reads were counted nowhere visible. The minute summary now ends with
+  ` | lectures de l etat du jeu en echec N` (since the launch, written only when N > 0), and DIAGNOSTICS › Rejected
+  data includes them. A car that cannot be read is still marked invalid on its own; the other cars stay read.
+
+### No reference to another app's visual style
+- The driver's rule: the README, the tooltips (FR/EN), the API notes, the history and the source comments no longer
+  mention SuperHUD or compare the window or the overlay with another app. The README section is now *The settings
+  window*. Texts only: no setting, behaviour or journal line changes.
+
+### Verification
+- lint 49 files, 0 errors; test_pdr 731 checks, 0 failures (7 new in `tests/review157.lua`); integration 148 cases, all
+  pass (1 new: alt-online and real online named); mutations 1,763 / 1,763 detected (20 new); English journal coverage
+  59,208 lines, 0 problems; parameter audit 230 + 50.
+- Journals against Beta 1.56: golden, race142 and the 8-hour soak identical line for line; pdr only adds the new tests'
+  lines; integration differs only by the new case, the updater fixtures' version numbers and timings. golden and
+  golden142 result files byte-identical.
+- Bench medians 9 / 30 / 60 AI: 0.067 / 0.306 / 0.781 ms (1.56: 0.070 / 0.317 / 0.768); long track 0.344 ms mean, P99
+  0.686 ms (1.56: 0.341 / 0.702); 8-hour soak 0 errors, 0.20 ms mean (the same two strict criteria as before stay open).
+- Package accepted by the Beta 1.56 and 1.55 updaters; `bridge_layout.lua` identical to SpotterEnginer's.
+- Still to see in game: an older CSP (the player's preview212) listing its missing fields and driving the AI.
+
+## Beta 1.56 — 9 November 2026
+
+The driver approved three options after comparing AdvancedIA with Mavil Track Limit Manager. All three are **off by
+default**: with the defaults the app behaves exactly as Beta 1.55.
+
+### Your track limits handled by the app (optional)
+- New switch **Your track limits handled by the app** in the **Sanctions** section (Practice, Qualifying, Race). It is
+  meant for players who switch AC's own penalties off in Content Manager because a single off is enough for AC to
+  penalise them.
+- Same rules as the AI: at least three wheels off for 0.3 s at 40 km/h or more, no spin or contact just before, not under
+  your yellow flag, a red flag or a neutralisation, nothing in the first seconds of a race or in the pits. The rule that
+  ignores a place where the AI line itself leaves the limits does not apply to you, and your offs never feed it.
+- Practice and Qualifying (**Your offs in practice and qualifying**): lap invalidated in the app (default), or a warning
+  only. AC's lap times and grid never change.
+- Race: the shared **Warnings before a penalty**, then **Your track-limits penalty (race)**: a time penalty in the app's
+  corrected classification (default), or AC's native throttle cut. The throttle cut goes through the same channel as
+  the flag penalties, never counts towards the black flag, and is never written over a decision taken less than 1 s
+  earlier; if it is not written within 2 s (or CSP lacks it), a time penalty is given instead and the throttle cut is
+  never written afterwards. Track-limit penalties never lead to a black flag.
+- The app never drives your car. Notices go to the overlay's session line (also with AI notices off); the race recap
+  adds *Track limits: N warning(s), +N s*.
+- AC's penalties still on (read once per session) while the option is on: one WARN line
+  (`limites de piste joueur: penalites d AC actives (roues dehors autorisees N), …`), a HOME warning that links to the
+  section, and one overlay notice; AC's own cut banner seen: `limites de piste joueur: AC sanctionne encore les coupes`.
+  The app's rule keeps running (the driver's choice). The app never changes AC's settings.
+
+### Escalating penalties for repeat offences (optional)
+- **Escalating penalties for repeat offences**, **Increase per repeat (s)** (5) and **Maximum penalty per off (s)** (30):
+  each further track-limits time penalty of the same car, AI or you, adds the increase (5, 10, 15 s…), never above the
+  maximum nor below **Time penalty (s)**. Track limits only; never a black flag. The journal line ends with
+  `, recidive N`.
+- Consistency fix that also applies with the option off (no visible change then): a place later found to be the AI
+  line's own off gives back exactly the seconds that were added.
+
+### Race report (optional)
+- **Race report (CSV file)**: `Documents/Assetto Corsa/logs/AdvancedIA-race.csv`, written once per race when every car
+  still racing has finished or 90 s after you finish; a partial report (`complete=0`) on a session change or when the
+  app unloads during a started race. Five kept, rotated like the session log, at most 256 KB. RFC 4180, comma-separated:
+  positions (corrected and AC), driver, car, class, laps, warnings, penalties by type, served, unserved time added,
+  places given back, time added, black flag.
+
+### Section name
+- « Sanctions des IA » / "AI sanctions" is now « Sanctions » / "Sanctions" (label only; setting ids and stored settings
+  are unchanged).
+
+**Verification**: 724 checks, 0 failures (`tests/test_pdr.py`, 9 new tests in `tests/review156.lua`; the 1.42 schema test allows the
+practice-only setting, the 1.42 practice track-limits test also checks the player's new wording); 147 integration cases
+(five new: defaults, race time penalty, AC throttle cut and its fallback, AC penalties on, race report; the settings case
+covers the seven new settings); 1,743 mutations, all detected (19 new); clean lint (49 files); parameter audit (230
+profile parameters, 50 global options). Journal coverage: every new line has its English pattern; the 59,203 distinct
+lines of the suites, the soak and the author's in-game logs of 9 November all translate. **With the defaults, French
+journals identical to Beta 1.55**: golden (2,150 distinct lines, 2,255 lines) and full race (182 / 193) identical, golden
+result files byte-identical, 8-hour soak identical (54,030 distinct lines, 75,078 lines); unit suite: no line removed,
+only the lines of the new tests added; integration: the new cases, the updater fixtures' version numbers and timings.
+With the three options switched on in the race defaults: golden race scenarios, full race and 8-hour soak without error
+(soak memory 7.5–8.4 MB, as with the defaults). Benchmark medians against Beta 1.55 (9/30/60 AI): 0.068 / 0.300 /
+0.732 ms (0.065 / 0.301 / 0.745); long track 0.355 ms mean, P99 0.763 ms (0.341 / 0.742); companion bridge 0.007 /
+0.011 / 0.019 ms; soak 0.21 ms mean, memory 7.4–8.3 MB (the same two strict criteria as before stay open). Package
+accepted by the Beta 1.55 and Beta 1.54 updaters.
+
+## Beta 1.55 — 9 November 2026
+
+The driver chose three fixes from the audit of the 9 November session logs (Nordschleife track day, Imola practice),
+then reported AI on rain tyres in the dry and flying-lap warnings for cars that never came.
+
+### Futile overtake attempts (outside the race)
+- On the Nordschleife, attempts lasted 9 s on average and up to 62 s, and 27 of 43 ended « target faster »: the AI sat
+  off its line behind a car exactly as fast, because the « not closing » abort is reset by every small closing moment.
+- Outside the race, before the cars are side by side, an attempt that gains less than 3 m on the target in 8 s is
+  aborted (`sans progres`), and an attempt is capped at 15 s unless it gained ground in the last 4 s
+  (`tentative trop longue`). An attempt that keeps gaining is never cut. Both feed the same per-pair wait as « target
+  faster » (45 s, 3 min, 10 min). Never against the player; the race is unchanged.
+- The minute summary counts them in `annules` and appends `abandons : sans progres N, tentative trop longue N` when
+  there were any.
+- Integration case (6 min, a target that matches the attacker's pace when attacked): Beta 1.54 made 3 attempts, the
+  longest 166 s; Beta 1.55 makes 1 attempt, cut after 8 s, then waits.
+
+### Yields without a pass
+- 36 yields in 10 min, 4 followed by a pass: an ordinary yield was triggered by a closing moment of 6 km/h (often a
+  braking zone), so the yielding car kept the follower's pace and nobody passed.
+- An ordinary yield to an AI (not a blue flag, a class, a flying lap or a headlight flash) now also requires the
+  follower to be really faster at this point (learned free pace); unknown pace still yields. The player is not
+  affected. A refusal is logged once per follower and episode: `cession refusee: A ne cede pas a B (pas plus rapide ici)`.
+  The yield slowdown is unchanged.
+- The minute summary appends how the yields ended besides passes and lost followers:
+  `fins de cession : duree max N, jaune N, autres N`, and `cessions refusees (suiveur pas plus rapide) N`.
+- Integration case (6 min, a follower of the same learned pace closing in bursts): 10 yields with Beta 1.54, none with
+  Beta 1.55.
+
+### Headlight flashes (outside the race)
+- 80 AI flashes in 10 min, the same car yielding to the same flasher four times without being passed.
+- After two yields to the same AI's flashes that end with no pass, that AI no longer flashes that car for 2 minutes
+  (`appels de phares suspendus: A -> B apres 2 cessions sans passage, plus d appel pendant 120 s`). After an attempt
+  that ended « fast follower » or « yields to its follower », the AI waits 20 s before flashing that target again
+  (before: at once, 8 s after its previous flash). Race flashes (lapping, faster class) are unchanged.
+- Integration case (6 min, a flasher held behind a car that yields but is never passed): 35 flashes and 69 yields with
+  Beta 1.54, 4 flashes and 8 yields with Beta 1.55.
+
+### AI rain tyres in the dry (Imola practice)
+- The minute summary only counted compounds (`secs 23, pluie 0`), while CSP keeps a separate AI rain-tyre flag
+  (`isAIUsingRainTyres`, set by `physics.setAIRainTyres`), independent of the compound index. Once the app had asked
+  for dry tyres, a later return of that flag to « rain » was never corrected.
+- On a dry track with tyres managed, the dry request is given again when the flag is back on (at most every 10 s;
+  `pneus pluie de CSP revenus sur piste seche: consigne sec redonnee`, once per car).
+- The `pneus IA` part of the minute summary ends with `drapeau pluie de CSP N` (the AI whose flag is on).
+- Each AI car model's compounds are logged once per session with the class the app gives them:
+  `gommes du modele <model>: <short> (<long>) sec|intermediaire|pluie|non autorise, …`.
+
+### Flying-lap warning to the player (Practice, Qualifying)
+- At Imola the player on an out-lap was warned five times in 45 s for cars that never caught them: the warning used
+  the instantaneous closing speed and gap/speed, which swing in every braking zone.
+- The warning now uses the time gap measured at the same point of the track (the moment the player passed that point
+  against the moment the AI passes it) and needs a confirmed catch: at least 0.1 s gained per second over 3 s, or
+  0.3 s per second over 1 s, a projected catch within 15 s, confirmed within 6 s of the car coming within 3 s. A car
+  in the pit lane or off the track is never announced. The criterion is the one SpotterEnginer 1.1.1 uses. With the
+  debug log on, an unconfirmed candidate is noted once: `tour lance non confirme: <name> (ecart, rapprochement)`.
+- Integration case (Qualifying, 60 s): a car at the player's pace with ±25 km/h swings was announced twice by Beta 1.54,
+  never by Beta 1.55; a car 25 % faster is announced by both.
+
+**Verification**: 715 checks, 0 failures (`tests/test_pdr.py`, 11 new tests in `tests/review155.lua`; the Beta 1.51
+flying-lap warning test now drives moving cars, since a warning needs a confirmed catch); 142 integration cases (four new:
+futile attempts, yields without a real advantage, flashes toward a car that yields without being passed, the flying-lap
+warning); 1,724 mutations, all detected (32 new; four older anchors follow the reworded lines, and the « not closing »
+mutation is now caught by a race test, where it is still the only judge); clean lint (49 files); parameter audit
+(223 profile parameters, 50 global options). Journal coverage: 6,023 distinct lines of the suites, all covered; the
+59,172 distinct lines of the suites, the soak and the author's in-game logs of 9 November (Nordschleife, Imola) all
+translate. French journals against Beta 1.54: full race identical; golden: the same counters in all three scenarios,
+plus the new ones (track day: one yield refused, one flash suspension, five flash holds), two attempts starting 1 m
+earlier and one front-radar line moved by that divergence; every minute summary gains `drapeau pluie de CSP N` and, when
+used, the new parts; each session lists the compounds once per car model. 8-hour soak (40 AI): attempts 24,836 against
+24,811, 3 « no progress » and 22 « attempt too long » aborts (none before), « target faster » 249 against 239, strict
+waits 51 against 25, 205 yields refused, 5 flash suspensions, AI flashes 146 against 134, incidents 6 = 6, 0 errors.
+Benchmark medians against Beta 1.54 (9/30/60 AI): 0.068 / 0.314 / 0.785 ms (0.067 / 0.308 / 0.766); long track
+0.355 ms mean, P99 0.736 ms (0.361 / 0.773); companion bridge 0.008 / 0.013 / 0.019 ms; soak 0.21 ms mean, memory drift
+819 KB over 8 h, 11 KB in the last hour (the same two strict criteria as before stay open). Package accepted by the
+Beta 1.54 and Beta 1.53 updaters.
+
+## Beta 1.54 — 9 November 2026
+
+The driver's request after a track day on the Nordschleife (38 AI, 10 min): « many incidents, 14 spins, and AI stuck
+behind another AI ».
+
+### Overtake loop on the same target (fixed)
+- In the session log, one AI attacked the same car six times in 6 minutes, each attempt ending « target faster », and
+  flashed it 33 times. The pair wait after a « target faster » failure (45 s, then 3 min, then 10 min) existed, but a
+  quicker learned pace at that point let a closing-only attempt through during the wait, and AI-to-AI flashes ignored the
+  wait altogether (the target no longer yields to that car during it).
+- From the second « target faster » failure on the same car (`K.passIgnoreStrict`), the wait only lets through an
+  abnormally slow (damaged) target or an invitation; the learned-pace exception of Beta 1.47 still applies after the first
+  failure. Outside the race an AI never flashes a car it is waiting behind (race flashes for lapping and classes are
+  unchanged). A line `depassement suspendu: A -> B apres N echecs (cible plus rapide), plus de tentative pendant T s` is
+  logged when the stricter wait starts.
+- Integration case reproducing the loop: 8 attempts and 31 flashes in 6 min with Beta 1.53, 3 attempts and 1 flash
+  (after the wait) with Beta 1.54.
+
+### Spins: investigation, no retuning
+- The 14 spins happened at the same places as in the Beta 1.50 sessions on this track (21 km, 18 km, 17 km), at a rate
+  of 1.3 per minute against 1.9 to 2.7 in 1.50. The spinning AI were at levels 0.90 to 1.02 (no higher than the
+  others), with no app braking, no injected mistake and no manoeuvre just before. Nothing in the log points at a 1.53
+  change; whether the app plays a part at all needs an APP OFF run. Nothing was retuned.
+- The spin context line now also gives the app's speed limit, whether a lapse in focus was running and the state the
+  AI had just left (`limite …, inattention …, etat precedent …`), so the next session tells whether the spacing cap,
+  a lapse or a return from an off-track excursion comes first.
+
+**Verification**: 704 checks, 0 failures (`tests/test_pdr.py`, 4 new tests in `tests/review154.lua`); 138 integration cases
+(one new: the overtake loop on the same target, 6 minutes); 1,692 mutations, all detected (9 new); clean lint (49 files);
+parameter audit (223 profile parameters, 50 global options). Journal coverage: 5,949 distinct lines of the suites, all
+covered; the 58,250 distinct lines of the soak, the suites and the author's in-game logs of 9 November all translate.
+French journals against Beta 1.53: full race identical; golden adds one `depassement suspendu` line (race scenario, second
+failure on the same pair; same overtake, flash and abort counts); the 8-hour soak diverges after its first strict wait
+(25 of them): 24,811 attempts against 24,839, 239 « target faster » failures against 245, flashes unchanged (134);
+spin context lines carry the three new fields. Golden fingerprints: the track-day ones identical, the race ones change
+from frame 30,000 by the one extra journal line (the fingerprint counts journal lines). Benchmark medians against
+Beta 1.53 (5 alternated passes, 30,000 frames): 0.066 / 0.312 / 0.748 ms at 9 / 30 / 60 AI (1.53: 0.066 / 0.311 / 0.784);
+long track (60.6 km, 46 AI): 0.335 ms mean, P99 0.753 ms (1.53: 0.341 / 0.735); companion bridge 0.008 / 0.012 /
+0.018 ms. 8-hour soak: 0 errors, 0.31 ms mean, memory drift 1,010 KB, 10 KB in the last hour; the strict peak and memory
+criteria are still open, as in earlier versions. The package is accepted by the Beta 1.53 and Beta 1.52 updaters.
+
+## Beta 1.53 — 9 November 2026
+
+Two requests from the driver: AI levels above 100% (« I see no AI above 100% »), and the DIAGNOSTICS window entirely in
+English when the interface is in English.
+
+### AI levels above 100% (driver's decision)
+- CSP's `physics.setAILevel` accepts a level from 0 to 2 (SDK); only the `aiLevel` value it reads back is documented
+  from 0 to 1. Until now the **Automatic** mode waited for a 1.05 read-back, and with a read-back capped at 1.00 (and the
+  grip bonus off by default) every command stopped at 100%: no AI could go above it.
+- **Automatic** now writes the native level up to 110% (`K.nativeLevelMax`) as soon as the command exists. The 1.05
+  probe is still made once (original value restored) and becomes information: a read-back below 1 proves a cap
+  (`caps.clampProven`); only then, and only if the grip bonus is allowed, does Automatic switch to the grip bonus.
+  Writing 1.05 to a CSP that caps the value gives the same result as the old cap.
+- **Native if confirmed** keeps its meaning (needs the 1.05 read-back, caps at 100% otherwise); **Grip bonus allowed**
+  and **Cap at 100%** are unchanged. A cap seen later on any car no longer cuts Automatic back to 1.00; it is logged once.
+- Session log: `niveau au-dessus de 100 %: sonde 1.05 relue … (niveau d origine …) -> natif (jusqu a 110 %) (mode demande
+  auto, bonus de grip non autorise)` at the end of the probe, a line at each later mode change, and a WARN line with the
+  car, the value written and the value read back when a cap is first seen while driving.
+- DIAGNOSTICS: the level mode note says *native (CSP 0–2), read-back: 1.05* or *read-back capped at 1.00*; the **AI CARS
+  DRIVEN** table shows *requested>applied* (for example *1.05>1.00*) when the level written to the car differs from the
+  one asked for.
+- With 95% and an 8% spread (track day defaults), the AI range from about 87% to 103% plus the 2% slow pace variation:
+  only some of them go above 100%, by a few points.
+
+### DIAGNOSTICS window in English
+- The event log of the DIAGNOSTICS window now shows its lines in the interface language. The session log file
+  (`Documents/Assetto Corsa/logs/AdvancedIA.log`) stays in French, byte for byte as before (audits and tests read it).
+- New `src/journal_en.lua`: 346 patterns, one per journal line format (driver names, values and CSP or Lua error texts
+  copied as they are), 186 known phrases (reasons, states, choices) and the expressions of composite lines (minute
+  summary, lists). `src/journal.lua` compiles it on first use; the window translates each new line once per language,
+  never per frame, and redraws the lines when the language changes.
+- Driver names from Content Manager can contain parentheses (« Name (100%, 100%) »): the patterns take the longest name
+  that leaves the rest of the line valid.
+- New `tests/journal_coverage.py`: every line written by the PDR, extended, integration, golden and race suites must be
+  recognised by a pattern and keep, once in English, no accented letter and no common French word (names and copied
+  values masked); ERROR lines and DEBUG state codes are kept as they are.
+
+**Verification**: 700 checks, 0 failures (`tests/test_pdr.py`, 5 new tests in `tests/review153.lua`); 137 integration cases (one new:
+auto mode above 100% with a capped read-back, applied level and English log in the DIAGNOSTICS window, French again after
+the language change); 1,683 mutations, all detected (11 new); clean lint (49 files); parameter audit (223 profile
+parameters, 50 global options). Journal coverage: 5,927 distinct lines of the suites, all covered; the 57,944 distinct
+lines of the 8-hour soak, the suites and the author's in-game logs of 9 November all translate with no French left. French
+journals against Beta 1.52: golden, full race and soak identical line for line; integration only adds the new level
+lines (and the test fixtures' version numbers and timings). Golden fingerprints identical to Beta 1.52. Benchmark medians
+against Beta 1.52 (5 alternated passes, 30,000 frames): 0.065 / 0.319 / 0.786 ms at 9 / 30 / 60 AI (1.52: 0.067 / 0.315 /
+0.800, within noise); long track (60.6 km, 46 AI): 0.345 ms mean, P99 0.743 ms (1.52: 0.364 / 0.792); companion bridge
+0.010 / 0.014 / 0.023 ms. 8-hour soak: 0 errors, 0.29 ms mean, memory drift 917 KB, 13 KB in the last hour; the open
+criteria (single-frame peak under 1 ms, total memory variation under 256 KiB) are still open, as in earlier versions. The
+package is accepted by the Beta 1.52 and Beta 1.49 updaters.
+
 ## Beta 1.52 — 9 November 2026
 
 A full adversarial review of Beta 1.51 (five reviewers, then four areas fixed and merged), plus one feature asked for
@@ -479,7 +850,7 @@ Companion-app bridge for SpotterEnginer, inactive unless SpotterEnginer is insta
 
 ## Beta 1.45 — 4 November 2026
 
-No grey frame around the settings window any more: the window has no CSP background or padding, like SetupLab, and the app paints its dark background edge to edge.
+No grey frame around the settings window any more: the window has no CSP background or padding, and the app paints its dark background edge to edge.
 
 - **Window**: `manifest.ini` `[WINDOW_0]` gains `NO_BACKGROUND` and `PADDING=0,0`, and loses `BACKGROUND_COLOR=SETUP`. Nothing else changes: same size, minimum size, settings group, no title bar, no scroll bar.
 - **When it shows**: CSP reads the window declaration when the game loads the app (`App is loaded … windows: 1` in `custom_shaders_patch.log`); the restart after an in-app update only reloads the script. After updating from the app, the window keeps its old frame until the next game launch.

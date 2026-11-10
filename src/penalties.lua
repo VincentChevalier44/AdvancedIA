@@ -57,6 +57,15 @@ local function decide(t,reason,seconds,now,p)
  if t.count>p.penaltyDisqualify then t.kind='dq'; t.disqualified=true; t.seconds=0 else t.kind='slow'; t.seconds=seconds end
  return reason
 end
+-- Beta 1.56 (décision du pilote) : vos limites de piste gérées par l'app, option « coupure des gaz » : même canal que
+-- les pénalités sous drapeau (écriture native par l'applicateur), sans compter vers la disqualification (t.count
+-- inchangé). Refusée (nil) si une autre décision a moins de K.sanPlayerQueueGap s (peut-être pas encore écrite) : la
+-- pénalité devient alors du temps (src/sanctions.lua). Raison 'limits' (8 caractères au plus pour le pont).
+function M.requestTrackLimits(t,seconds,now)
+ if t.disqualified or now-t.lastAt<K.sanPlayerQueueGap then return nil end
+ t.requestId=t.requestId%K.counterMax+1; t.reason='limits'; t.kind='slow'; t.seconds=seconds; t.lastAt=now; t.dirty=true
+ return t.requestId
+end
 -- Dépassement pendant la transition (freinage au déclenchement d'un drapeau) : en attente jusqu'à l'échéance, annulé
 -- si la place est rendue.
 local function deadline(regimeAt,now) return max(regimeAt+K.passGiveBack,now+K.giveBackMin) end

@@ -36,7 +36,11 @@ function M.probe(c,frame,now,g)
   if probeSwapped(c,a) then return end
   if not a or not a.valid or not a.control or a.pit or a.offtrack or frame.online or frame.replay then return end
   if now<c.probeAt then return end
+  -- Beta 1.53 : valeur relue gardée pour le journal ; une relecture sous 1 (+ tolérance) prouve l'écrêtage de la
+  -- lecture (clampProven), seule raison pour laquelle le mode automatique passe au bonus de grip (s'il est autorisé).
+  c.probeRead=a.aiLevel
   c.native110=a.aiLevel>=K.probeLevel-K.probeTolerance
+  c.clampProven=a.aiLevel<1+K.probeTolerance
   probeRestore(c,a)
  elseif not c.probeDone and c.level.available then
   for i=1,frame.count do
@@ -50,8 +54,36 @@ function M.probe(c,frame,now,g)
  end
  M.mode(c,g)
 end
+-- Beta 1.53 (décision du pilote) : physics.setAILevel accepte 0 à 2 (SDK CSP) ; seule la lecture aiLevel est
+-- documentée de 0 à 1. Mode automatique : niveau natif jusqu'à K.nativeLevelMax dès que la commande existe, sans
+-- attendre la relecture ; bonus de grip seulement si la relecture prouve l'écrêtage et que le bonus est autorisé.
+-- « Natif si confirmé » garde son sens (relecture à 1.05 nécessaire) ; « bonus de grip » et « plafond » inchangés.
 function M.mode(c,g)
  local desired=g.levelMode
- c.levelMode=c.native110 and (desired=='auto' or desired=='native') and 'native' or ((desired=='auto' or desired=='grip') and g.useGripBoost and c.grip.available and 'grip' or 'none')
+ local grip=g.useGripBoost and c.grip.available
+ if desired=='auto' then c.levelMode=c.level.available and not (c.clampProven and grip) and 'native' or grip and 'grip' or 'none'
+ elseif desired=='native' then c.levelMode=c.native110 and 'native' or 'none'
+ elseif desired=='grip' then c.levelMode=grip and 'grip' or 'none'
+ else c.levelMode='none' end
+end
+-- Beta 1.53 (le pilote ne voyait aucune IA au-dessus de 100 % sans savoir pourquoi) : lignes du journal sur le niveau
+-- au-dessus de 100 %, construites seulement au moment de les écrire (fin de sonde, changement de mode, déclassement).
+local modeJournal={native='natif (jusqu a %.0f %%)',grip='bonus de grip',none='plafond 100 %%'}
+local function modeText(c,g)
+ return string.format(modeJournal[c.levelMode] or modeJournal.none,K.nativeLevelMax*100)..string.format(' (mode demande %s, bonus de grip %s)',tostring(g.levelMode),g.useGripBoost and 'autorise' or 'non autorise')
+end
+function M.probeText(c,g)
+ return string.format('niveau au-dessus de 100 %%: sonde %.2f relue %.2f%s (niveau d origine %.2f) -> ',K.probeLevel,c.probeRead or -1,c.clampProven and ' (lecture ecretee)' or '',c.probeOriginal or -1)..modeText(c,g)
+end
+function M.modeText(c,g) return 'niveau au-dessus de 100 %: mode '..modeText(c,g) end
+function M.demotionText(c,g,name,written,read)
+ return string.format('niveau au-dessus de 100 %%: %s relu %.2f apres %.2f ecrit (lecture ecretee) -> ',tostring(name),read,written)..modeText(c,g)
+end
+-- Journal du mode : la fin de sonde (une fois) puis chaque changement de mode (réglages, déclassement déjà noté).
+function M.report(c,g)
+ if not c.probeDone or c.probeRead==nil then return nil end
+ if not c.probeReported then c.probeReported=true; c.reportedMode=c.levelMode; return M.probeText(c,g) end
+ if c.reportedMode~=c.levelMode then c.reportedMode=c.levelMode; return M.modeText(c,g) end
+ return nil
 end
 return M

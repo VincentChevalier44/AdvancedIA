@@ -8,7 +8,7 @@ function M.create(native110,options)
   currentSessionTime=100000,timeToSessionStart=0,sessionTimeLeft=600000,isSessionStarted=true,isSessionFinished=false,
   isOnlineRace=false,isAltOnlineRace=false,isReplayActive=false,isReplayOnlyMode=false,isPaused=false,isInMainMenu=false,gameTime=1,rainWetness=0,leaderLapCount=0},
   cars={},values={},storage={},releases={},sessions={},controls={},clicked='',clip='',windows={},sameLines=0,extraGrip=0,grips={},tyreCatalog={},rainHints={},pitRequests={},nativeRainSupport=false,stops={},awakes={},positions={},velocities={},hudHidden={},transparent={},messageListeners={},blocked=0,messages={},flag=0,nativeFlag=0,flagOverrides=0,parked={},teleports=0,files={},
-  throttleLimits={},throttleWrites=0,tyreKmWrites={},sliderLabels={},sliderEdits={},checkboxLabels={},checkboxValues={},buttons={},accented={},pitRequested={},startDelays={},startDelayWrites=0,bodyRepairs={},suspensionRepairs={},engineRepairs={},penalties={},penaltyKinds={},badgeTexts={},wrappedPanel={},sounds={},played=0,disposed=0,draws=0,fontDepth=0,panelTexts={},wrappedTexts={},panelColors={},styleDepth=0,styleMax=0,hoverAll=false,tooltips={},missingTips={},pendingWidget=nil,pendingTipped=true,inputEdits={},comboEdits={},comboValues={},windowOpen={},speedLimits={},fuelRequests={},fuelSets={},width=420,cursor=0,lastRight=0,categoryRows=1,overflow=false,tabHeightMax=0,fontScale=1,rendered=0,accessCalls=0}
+  throttleLimits={},throttleWrites=0,tyreKmWrites={},sliderLabels={},sliderEdits={},checkboxLabels={},checkboxValues={},buttons={},accented={},pitRequested={},startDelays={},startDelayWrites=0,bodyRepairs={},suspensionRepairs={},engineRepairs={},penalties={},penaltyKinds={},badgeTexts={},wrappedPanel={},sounds={},played=0,disposed=0,draws=0,fontDepth=0,panelTexts={},wrappedTexts={},panelColors={},styleDepth=0,styleMax=0,hoverAll=false,tooltips={},missingTips={},pendingWidget=nil,pendingTipped=true,inputEdits={},comboEdits={},comboValues={},windowOpen={},speedLimits={},laneWrites=0,laneBase={},fuelRequests={},fuelSets={},width=420,cursor=0,lastRight=0,categoryRows=1,overflow=false,tabHeightMax=0,fontScale=1,rendered=0,accessCalls=0}
  for i=0,3 do
   h.cars[i]={index=i,position={x=0,y=0,z=i==0 and -1000 or (i-1)*120},look={x=0,z=1},side={x=right and 1 or -1,z=0},velocity={x=0,z=30},speedKmh=108,
    isConnected=true,isActive=true,isAIControlled=i~=0,isUserControlled=i==0,isRemote=false,physicsAvailable=true,
@@ -23,9 +23,13 @@ function M.create(native110,options)
   end})
  end
  -- Pendant le déchargement seulement (h.releasing), restitution admise en pause, en replay et aux stands.
- local function verify(index,value)
+ -- Beta 1.58 : aux stands, seules les valeurs rendues à AC sont admises (restore) : décalage ramené vers 0, vitesse
+ -- illimitée, niveau et agressivité d'avant la première écriture de l'app, prudence 1, grip de base, accélérateur 1.
+ local function verify(index,value,restore)
   assert(U.finite(value)); assert(index~=0 and h.cars[index].isAIControlled and not h.cars[index].isUserControlled)
-  assert(h.releasing or not h.cars[index].isInPit and not h.cars[index].isInPitlane)
+  local pits=h.cars[index].isInPit or h.cars[index].isInPitlane
+  assert(h.releasing or restore or not pits,'command written in the pits')
+  if pits and restore and not h.releasing then h.laneWrites=h.laneWrites+1 end
   assert(not h.sim.isOnlineRace and not h.sim.isAltOnlineRace and (h.releasing or not h.sim.isReplayActive and not h.sim.isPaused))
   h.calls=h.calls+1
  end
@@ -122,17 +126,18 @@ function M.create(native110,options)
   h.calls=h.calls+1; return h.controls[index]
  end
  physics.allowed=function() h.accessCalls=h.accessCalls+1; return true end
- physics.setAILevel=function(index,value) verify(index,value); h.cars[index].aiLevel=math.min(native110 and not h.clampLevel and 2 or 1,value) end
- physics.setAIAggression=function(index,value) verify(index,value); h.cars[index].aiAggression=value end
- physics.setAICaution=function(index,value) verify(index,value) end
- physics.setExtraAIGrip=function(index,value) verify(index,value); h.extraGrip=value; h.grips[index]=value end
+ local function base(index,key,value) local b=h.laneBase[index] or {}; h.laneBase[index]=b; if b[key]==nil then b[key]=value end; return b[key] end
+ physics.setAILevel=function(index,value) local b=base(index,'level',h.cars[index].aiLevel); verify(index,value,math.abs(value-b)<1e-9); h.cars[index].aiLevel=math.min(native110 and not h.clampLevel and 2 or 1,value) end
+ physics.setAIAggression=function(index,value) local b=base(index,'aggression',h.cars[index].aiAggression); verify(index,value,math.abs(value-b)<1e-9); h.cars[index].aiAggression=value end
+ physics.setAICaution=function(index,value) verify(index,value,value==1) end
+ physics.setExtraAIGrip=function(index,value) verify(index,value,math.abs(value-1.2)<1e-9); h.extraGrip=value; h.grips[index]=value end
  physics.setAIBrakeMistake=function(index,time) assert(type(index)=='number' and type(time)=='number' and time>0); h.mistakes[#h.mistakes+1]={index=index,kind='brake',time=time} end
  physics.setAITractionMistake=function(index,time,severity) assert(type(index)=='number' and time>0 and severity>0); h.mistakes[#h.mistakes+1]={index=index,kind='traction',time=time,severity=severity} end
  physics.setCarDRS=function(index,active) assert(type(index)=='number' and type(active)=='boolean'); h.drsOpen[index]=active end
  physics.allowCarDRS=function(index,disable) assert(type(index)=='number' and type(disable)=='boolean'); h.drsBlocks[index]=disable end
- physics.setAITopSpeed=function(index,value) verify(index,value); h.speedLimits[index]=value end
+ physics.setAITopSpeed=function(index,value) verify(index,value,value>=1e9); h.speedLimits[index]=value end
  -- Beta 1.42 : limite d'accélérateur et distance virtuelle d'un pneu.
- physics.setAIThrottleLimit=function(index,value) verify(index,value); assert(value>=0 and value<=1); h.throttleLimits[index]=value; h.throttleWrites=h.throttleWrites+1 end
+ physics.setAIThrottleLimit=function(index,value) verify(index,value,value==1); assert(value>=0 and value<=1); h.throttleLimits[index]=value; h.throttleWrites=h.throttleWrites+1 end
  physics.setTyresVirtualKM=function(index,wheel,km) verify(index,km); assert(wheel>=0 and wheel<=3); h.tyreKmWrites[#h.tyreKmWrites+1]={index=index,wheel=wheel,km=km} end
  local function weatherVerify(index)
   assert(index~=0 and h.cars[index].isAIControlled and not h.cars[index].isUserControlled)
@@ -202,7 +207,7 @@ function M.create(native110,options)
   local short=h.tyreCatalog[index][compound+1].short; h.cars[index].isAIUsingRainTyres=short=='W' or short=='I'
  end
  physics.setAISplineOffset=function(index,value,override)
-  verify(index,value); assert(override==nil or type(override)=='boolean')
+  verify(index,value,math.abs(value)<=math.abs(h.offsets[index] or 0)+1e-9); assert(override==nil or type(override)=='boolean')
   h.cars[index].position.x=(right and -value or value)*5; h.offsets[index]=value; h.offsetCalls=h.offsetCalls+1
  end
  -- Couverture des infobulles : chaque commande doit être suivie d'une infobulle avant la commande suivante.

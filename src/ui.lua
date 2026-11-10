@@ -16,6 +16,7 @@ local Locale=require('src/locale')
 local Update=require('src/update')
 local Groups=require('src/groups')
 local Cspgui=require('src/cspgui')
+local Journal=require('src/journal')
 local K=C.K
 local M={}
 -- Identifiant « préfixe..clé » mémorisé : même chaîne à chaque image, aucune concaténation dans le dessin.
@@ -404,6 +405,8 @@ local function hiddenNote(view,key,shown)
  if key=='floodRangeKm' and not C.hidden(view,'spawnMode') then return 'flood' end
  -- Beta 1.51 : tours lancés (essais et qualifications), refroidissements des IA (qualifications).
  if key=='qualiTraffic' then return 'quali' end
+ -- Beta 1.56 : vos sorties en essais et qualifications, masquées en course.
+ if C.sanctionPracticeKeys[key] then return not shown.quali and 'quali' or nil end
  if key=='qualiCoolLaps' then return not C.hidden(view,'qualiTraffic') and 'qualiQ' or not shown.quali and 'quali' or nil end
  return nil
 end
@@ -1202,6 +1205,12 @@ local function aiCars(e)
  end
  return aiValue
 end
+-- Beta 1.57 : garde affichée : une garde « online » prend le genre de sa suspension (mode alt-online de CSP, lecture
+-- impossible) pour ses textes ; la puce, le bandeau et leur style restent ceux d'« online ».
+local function guardId(e)
+ local kind=e.guard=='online' and e.guardKind
+ return kind=='alt' and 'altonline' or kind=='read' and 'readerror' or e.guard
+end
 local function stateKey(e)
  if not e.g.enabled then return 'disabled' end
  if e.panic then return 'panic' end
@@ -1228,7 +1237,7 @@ end
 local function headerBar(v,e)
  local c=W.colors(); local fw=W.frame().w; local host=v.host
  -- Bandeau « en ligne » masqué par « Compris » : de nouveau montré dès que la garde change (tous les onglets).
- if v.bannerHide and v.bannerHide~=e.guard then v.bannerHide=nil end
+ if v.bannerHide and v.bannerHide~=guardId(e) then v.bannerHide=nil end
  local x=14
  if v.logo and callable(ui.drawImage) then pcall(ui.drawImage,v.logo,W.point(10,2),W.point(54,46)); x=58 end
  W.text('ADVANCED',x,10,23,c.text,'display')
@@ -1274,9 +1283,10 @@ local function headerBar(v,e)
  local picked=W.segment('lang',v.languageLabels,lx,12,28*#codes,24,at,v.tips.ui.language,v.languageIds)
  if picked and codes[picked]~=Locale.current then language(v,codes[picked]) end
  local key=stateKey(e)
- if v.pillFor~=key or v.pillProfile~=e.profile then
-  v.pillFor=key; v.pillProfile=e.profile
-  v.pillText=(key=='ready' or key=='paused' or key=='noai') and L.pillStates[key]..L.shortProfiles[e.profile] or L.pillStates[key]
+ local pill=key=='online' and guardId(e) or key
+ if v.pillFor~=pill or v.pillProfile~=e.profile then
+  v.pillFor=pill; v.pillProfile=e.profile
+  v.pillText=(key=='ready' or key=='paused' or key=='noai') and L.pillStates[key]..L.shortProfiles[e.profile] or L.pillStates[pill] or L.pillStates[key]
  end
  -- Puce d'état à point de couleur (Beta 1.38, maquette).
  local cw=W.dotChipWidth(v.pillText)
@@ -1297,10 +1307,11 @@ local function headerBar(v,e)
   -- Garde (Beta 1.38, maquette) : prête, la session détectée, sa source et le profil en cours (« Prêt · course
   -- (race.ini) → profil Course (auto) ») ; sinon le texte de la garde. Refait seulement quand l'un d'eux change.
   local kind,source=sessionKind(frame)
-  if v.guardFor~=e.guard or v.guardCount~=e.activeCount or v.guardKind~=kind or v.guardProfile~=e.profile or v.guardAuto~=e.g.autoProfile then
-   v.guardFor=e.guard; v.guardCount=e.activeCount; v.guardKind=kind; v.guardProfile=e.profile; v.guardAuto=e.g.autoProfile
+  local gid=guardId(e)
+  if v.guardFor~=gid or v.guardCount~=e.activeCount or v.guardKind~=kind or v.guardProfile~=e.profile or v.guardAuto~=e.g.autoProfile then
+   v.guardFor=gid; v.guardCount=e.activeCount; v.guardKind=kind; v.guardProfile=e.profile; v.guardAuto=e.g.autoProfile
    v.carsLine=ready and string.format(L.headerCars,e.activeCount) or L.headerNoCars
-   v.guardLine=' · '..(e.guard=='ready' and kind and string.format(L.guardReady,kind,source,L.profiles[e.profile],e.g.autoProfile and L.guardAuto or L.guardManual) or L.guards[e.guard] or e.guard)
+   v.guardLine=' · '..(e.guard=='ready' and kind and string.format(L.guardReady,kind,source,L.profiles[e.profile],e.g.autoProfile and L.guardAuto or L.guardManual) or L.guards[gid] or L.guards[e.guard] or e.guard)
   end
   local cwid=math.min(W.width(v.carsLine,12,'sb'),mw-12)
   W.cell(v.carsLine,mx+12,27,mw-12,12,ready and c.cyanText or c.muted,'sb')
@@ -1367,8 +1378,9 @@ local function banner(v,e,x,y,w)
  local key=stateKey(e)
  local style=bannerStyles[key]
  -- « Compris » (en ligne, Beta 1.38) : bandeau masqué jusqu'au prochain changement de garde (vu par l'en-tête).
- if not style or key=='online' and v.bannerHide==e.guard then return 0 end
- local c=W.colors(); local texts=L.banners[key]
+ local gid=guardId(e)
+ if not style or key=='online' and v.bannerHide==gid then return 0 end
+ local c=W.colors(); local texts=key=='online' and L.banners[gid] or L.banners[key]
  local tw=W.width(W.upper(texts[1]),13,'cond')
  local bw=texts[3] and math.max(110,W.width(W.upper(texts[3]),12,'display')+34) or 0
  local h=math.max(40,#W.lines(texts[2],w-tw-bw-44,12)*W.lineHeight(12)+14)
@@ -1379,7 +1391,7 @@ local function banner(v,e,x,y,w)
   if key=='disabled' then e.g.enabled=true; v.dirty()
   elseif key=='panic' then e.panic=false; Engine.reset(e,e.time,true)
   elseif key=='init' then v.tab='diagnostic'
-  elseif key=='online' then v.bannerHide=e.guard end
+  elseif key=='online' then v.bannerHide=gid end
  end
  return h+8
 end
@@ -1400,7 +1412,7 @@ local function entrySignature(v,entry)
 end
 -- Points à vérifier (Beta 1.10) : texte, lien vers la section concernée.
 -- spotter : fenêtre de SpotterEnginer (Beta 1.52), ouverte par l'hôte.
-local warnTargets={spotter={},signs={'diagnostic'},endurance={'settings','endurance'},weather={'settings','weather'},tabs={'settings','accidents'},lights={'settings','lights'}}
+local warnTargets={spotter={},signs={'diagnostic'},endurance={'settings','endurance'},weather={'settings','weather'},tabs={'settings','accidents'},lights={'settings','lights'},acpenalties={'settings','sanctions'}}
 local function openTarget(v,kind)
  local t=warnTargets[kind]
  if not t then return end
@@ -1557,6 +1569,8 @@ local function homeTab(v,e,host)
  if host.raceFlagsHidden==false then addWarning(v,flagsNext(host) and L.nativeFlagsNext or L.nativeFlagsShown) end
  if p.configured and not C.on(p,'accidents') and not C.on(p,'rules') then addWarning(v,L.newTabsOff,'tabs') end
  if host.oldSettings then addWarning(v,L.oldSettings) end
+ -- Beta 1.56 : vos limites de piste gérées par l'app, pénalités d'AC encore actives (double sanction possible).
+ if e.acPenaltyWarned then addWarning(v,L.acPenaltiesOn,'acpenalties') end
  if host.upgraded and #host.upgraded>0 then
   if v.upgradedFor~=host.upgraded or v.upgradedCount~=#host.upgraded then v.upgradedFor=host.upgraded; v.upgradedCount=#host.upgraded; v.upgradedList=table.concat(host.upgraded,', ') end
   addWarning(v,fmt(v,'upgraded','%s%s',L.upgraded,v.upgradedList))
@@ -2016,7 +2030,15 @@ local function diagnosticTab(v,e,host)
  local ready=0; for _,name in ipairs(names) do local r=host.caps[name].reason; if r=='ready' or r=='present' then ready=ready+1 end end
  if v.capsFor~=ready then v.capsFor=ready; v.capsReady=intText(ready); v.capsTotal=' / '..#names end
  local rows=math.ceil(#names/2)
- local notesText=fmt(v,'capsNotes','%s%s',L.levelMode,host.caps.probeDone and L.choices[host.caps.levelMode] or L.probe)
+ -- Beta 1.53 : mode natif détaillé (CSP accepte 0 à 2) avec l'état de la relecture ; textes refaits au changement seul.
+ local caps=host.caps; local levelNote
+ if caps.levelMode=='native' then
+  levelNote=fmt(v,'capsLevel',not caps.probeDone and L.levelNativePending or caps.clampProven and L.levelNativeClamped or L.levelNativeRead,caps.probeRead or 0)
+ else levelNote=caps.probeDone and L.choices[caps.levelMode] or L.probe end
+ -- Beta 1.57 : champs de CSP absents de cette version (lus comme absents), après le mode de niveau.
+ local frame=e.frame; local missing=frame and ((frame.missingSim or '')~='' or (frame.missingCar or '')~='')
+ local notesText=missing and fmt(v,'capsNotes','%s%s · %s',L.levelMode,levelNote,fmt(v,'capsMissing',L.cspMissingFields,frame.missingSim~='' and frame.missingSim or '–',frame.missingCar~='' and frame.missingCar or '–'))
+  or fmt(v,'capsNotes','%s%s',L.levelMode,levelNote)
  local nh=#W.lines(notesText,w-20,12)*W.lineHeight(12)+#W.lines(L.gripUnits,w-20,11)*W.lineHeight(11)+8
  local kh=8+24+6+rows*20+6+nh+8
  W.panel(x,y,w,kh)
@@ -2088,8 +2110,9 @@ local function diagnosticTab(v,e,host)
  W.heading(L.carsHeading,rx+12,top+7,rw-24,v.carsNote,'body',c.label)
  local cols=v.diagCols
  local tw=rw-16
- cols[1][2]=0; cols[2][2]=tw-366; cols[3][2]=tw-226; cols[4][2]=tw-170; cols[5][2]=tw-40
- cols[1][3]=tw-376; cols[2][3]=134; cols[3][3]=48; cols[4][3]=124; cols[5][3]=40
+ -- Beta 1.53 : colonne N / A / P élargie (niveau demandé > niveau appliqué quand ils diffèrent).
+ cols[1][2]=0; cols[2][2]=tw-402; cols[3][2]=tw-262; cols[4][2]=tw-206; cols[5][2]=tw-40
+ cols[1][3]=tw-412; cols[2][3]=134; cols[3][3]=48; cols[4][3]=160; cols[5][3]=40
  for _,col in ipairs(cols) do W.label(col[1],rx+8+col[2],top+36) end
  local tableTop=top+54; local tableBodyH=tableH-58
  local tableOffset=W.scroll(v.scrolls,'diag_cars',rx+4,tableTop,rw-8,tableBodyH,v.contentHeights.diagCars or 0)
@@ -2107,11 +2130,13 @@ local function diagnosticTab(v,e,host)
      -- Textes refaits seulement quand les valeurs affichées (arrondies) changent : aucune chaîne neuve à chaque image.
      local off=math.floor(cmd.offset*100+0.5); local lv=math.floor(cmd.level*100+0.5); local ag=math.floor(cmd.aggression*100+0.5)
      local ca=math.floor(cmd.caution*10+0.5); local gp=s.gap<math.huge and math.floor(s.gap+0.5) or -1
-     if row.id~=a.index or row.name~=a.name or row.off~=off or row.lv~=lv or row.ag~=ag or row.ca~=ca or row.gp~=gp then
-      row.id=a.index; row.name=a.name; row.off=off; row.lv=lv; row.ag=ag; row.ca=ca; row.gp=gp
+     -- Beta 1.53 : niveau réellement écrit dans la voiture (plafond 100 % si CSP refuse plus, sonde, restitution).
+     local hs=host.cars[i]; local la=hs and hs.owned and hs.level and math.floor(hs.level*100+0.5) or lv
+     if row.id~=a.index or row.name~=a.name or row.off~=off or row.lv~=lv or row.la~=la or row.ag~=ag or row.ca~=ca or row.gp~=gp then
+      row.id=a.index; row.name=a.name; row.off=off; row.lv=lv; row.la=la; row.ag=ag; row.ca=ca; row.gp=gp
       row.car=string.format('%02d %s',a.index,a.name~='' and a.name or a.id)
       row.offset=string.format('%+.2f',off/100)
-      row.nap=string.format('%.2f / %.2f / %.1f',lv/100,ag/100,ca/10)
+      row.nap=la~=lv and string.format('%.2f>%.2f / %.2f / %.1f',lv/100,la/100,ag/100,ca/10) or string.format('%.2f / %.2f / %.1f',lv/100,ag/100,ca/10)
       row.gap=gp>=0 and string.format('%d m',gp) or '—'
      end
      if n%2==0 then W.rect(rx+4,y,rw-8,20,c.rowAlt) end
@@ -2135,7 +2160,7 @@ local function diagnosticTab(v,e,host)
  W.heading(L.performance,rx+12,py+7,rw-24,L.perfScope)
  local tile=(rw-24-15)/4
  -- Valeurs affichées (au millième) comparées une à une : textes refaits seulement quand l'une change.
- local mean,peak=math.floor(e.meanFrame*1000+0.5),math.floor(e.maxFrame*1000+0.5); local rejected=host.rejected+(frame and frame.invalid or 0)
+ local mean,peak=math.floor(e.meanFrame*1000+0.5),math.floor(e.maxFrame*1000+0.5); local rejected=host.rejected+(frame and frame.invalid or 0)+(frame and frame.errors or 0)
  if v.perfFor~=mean or v.perfPeak~=peak or v.perfErr~=e.errors or v.perfHost~=host.errors or v.perfRej~=rejected or v.perfTimer~=(host.timer~=nil) then
   v.perfFor=mean; v.perfPeak=peak; v.perfErr=e.errors; v.perfHost=host.errors; v.perfRej=rejected; v.perfTimer=host.timer~=nil
   v.perfMean=host.timer and string.format('%.3f',e.meanFrame) or '—'
@@ -2170,7 +2195,12 @@ local function diagnosticTab(v,e,host)
   local r=e.log[(e.log.head-k-1)%K.logLines+1]
   if v.logFilter==1 or r.level==L.logLevels[v.logFilter] then
    if W.visible(y,18) then
-    if r.shownText==nil or r.shownSerial~=r.serial then r.shownSerial=r.serial; r.shownText=string.format('%.1f %s [%d] %s',r.time,r.level,r.index,r.message) end
+    -- Beta 1.53 : ligne traduite dans la langue de l'interface (le fichier du journal reste en français), refaite
+    -- seulement pour une ligne nouvelle ou au changement de langue.
+    if r.shownText==nil or r.shownSerial~=r.serial or r.shownLang~=Locale.current then
+     r.shownSerial=r.serial; r.shownLang=Locale.current
+     r.shownText=string.format('%.1f %s [%d] %s',r.time,r.level,r.index,Locale.current=='fr' and r.message or (Journal.english(r.message)))
+    end
     W.cell(r.shownText,rx+14,y+2,rw-30,11,r.level=='ERROR' and c.dangerText or r.level=='WARN' and c.warn or r.level=='DEBUG' and c.label or c.muted,'mono')
    end
    y=y+18
@@ -2588,7 +2618,7 @@ function M.overlayHeight(p)
  if p.pills then h=h+K.hudPillH+4 end
  return h
 end
--- Ligne de session (SuperHUD, bandeau) : libellé discret, valeur en chiffres alignés, de gauche à droite tant qu'il y a
+-- Ligne de session (bandeau) : libellé discret, valeur en chiffres alignés, de gauche à droite tant qu'il y a
 -- la place ; message d'AC à droite (en rouge s'il signale une faute).
 local function sessionStrip(v,colors,e,p,y,w,u)
  local hud=e.hud; local pad=K.hudPad*u; local h=K.hudStripH*u
@@ -2780,7 +2810,7 @@ end
 function M.restoreNative(v) if v.sessionBoxHidden then nativeBox(v,false) end end
 local function screenSize() return Adapter.screen() or vec2(1920,1080) end
 -- Contenu de la fenêtre transparente, puis, déverrouillée : glisser pour déplacer, coin bas droit pour la taille,
--- clic droit pour verrouiller (comme SuperHUD) ; verrouillée sans clics traversants : clic droit pour déverrouiller.
+-- clic droit pour verrouiller ; verrouillée sans clics traversants : clic droit pour déverrouiller.
 local function hudContent(v)
  local g=v.e.g
  M.flags(v,not g.overlayLocked)
@@ -2813,13 +2843,13 @@ local function hudContent(v)
   font('cond',true); write(L.hudUnlocked,10*g.overlayScale,box(R1,0,h-hw,math.max(1,w-hw-4),h),c.cyan,FINISH); font('cond',false)
  elseif callable(ui.windowHovered) and ui.windowHovered() and ui.mouseClicked(1) then g.overlayLocked=false; v.dirty() end
 end
--- Overlay en jeu (Beta 1.25), comme ceux de SuperHUD : fenêtre transparente dessinée par l'app (rappel IN_GAME du
+-- Overlay en jeu (Beta 1.25) : fenêtre transparente dessinée par l'app (rappel IN_GAME du
 -- manifeste), à la position et à l'échelle réglées (position automatique : centrée, en haut), gardée dans l'écran ;
 -- masquée en rediffusion ou aux stands si réglé. Clics traversants une fois verrouillée (réglage).
 function M.hud(v)
  local e=v.e; local g=e.g
  -- Bandeau « en ligne » masqué par « Compris » : remis dès que la garde change, fenêtre fermée comprise.
- if v.bannerHide and v.bannerHide~=e.guard then v.bannerHide=nil end
+ if v.bannerHide and v.bannerHide~=guardId(e) then v.bannerHide=nil end
  fontsOnce(v)
  if not callable(ui.transparentWindow) then nativeBox(v,false); return end
  local frame=e.frame; local player=frame and frame.player>0 and frame.cars[frame.player] or nil

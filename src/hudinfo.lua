@@ -35,7 +35,7 @@ end
 local function reset(h,session)
  h.session=session; h.lap=-1; h.lapUntil=-math.huge; h.best=0; h.seen={}; h.msgUntil=-math.huge; h.aiUntil=-math.huge
  h.started=false; h.grid=0; h.finished=false; h.dnf=false; h.dq=false; h.final=0; h.passes=0; h.lost=0; h.rel={}
- h.fieldBest=0; h.fieldBestName=''; h.recap={}; h.recapNew=false; h.stripKey=''; h.corrected=0
+ h.fieldBest=0; h.fieldBestName=''; h.recap={}; h.recapNew=false; h.stripKey=''; h.corrected=0; h.trackLimits=nil
 end
 -- Message d'AC (ac.onMessage) : affiché sur la ligne de session pendant sa durée (bornée) ; renvoie vrai la première
 -- fois qu'un titre apparaît dans la session (journal).
@@ -95,6 +95,8 @@ local function recap(h,a)
  lines[4]=string.format(L.recapStats,h.passes,h.lost,math.max(0,a.lap))
  -- Beta 1.42 : place corrigée par les pénalités de temps des IA (classement de l'app ; celui d'AC ne change pas).
  if h.corrected>0 and h.corrected~=place and not h.dq and not h.dnf then lines[5]=string.format(L.sanctionTexts.classification,'P'..h.corrected) end
+ -- Beta 1.56 : vos limites de piste gérées par l'app (avertissements et temps ajouté), seulement s'il y en a eu.
+ if h.trackLimits then lines[#lines+1]=h.trackLimits end
  h.recapSerial=h.recapSerial+1; h.recapNew=true
 end
 -- Ligne de session : éléments {label, valeur, alerte}, refaits au plus toutes les K.hudStripPeriod s.
@@ -175,6 +177,7 @@ function M.update(h,frame,e,now)
      if b.valid and not b.safetyCar and (b.bestLap or 0)>0 and (h.fieldBest<=0 or b.bestLap<h.fieldBest) then h.fieldBest=b.bestLap; h.fieldBestName=b.name~='' and b.name or b.id end
     end
     h.corrected=e.sanctions and Sanctions.position(e.sanctions,frame.player) or 0
+    h.trackLimits=e.sanctions and Sanctions.playerSummary(e.sanctions,frame.player) or nil
     recap(h,a)
    end
   end

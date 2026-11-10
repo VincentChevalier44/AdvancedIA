@@ -36,7 +36,8 @@ tests.SAN_TRACK_LIMITS_PRACTICE_142=function()
  assert(#e.sanctions.rows>=2 and e.sanctions.rows[1].text:find('Driver_3',1,true),'Diagnostic rows, newest first')
  speed(f,5,20); out(f,5,true); F.tick(e,f,1); out(f,5,false); F.tick(e,f,0.1)
  assert(not logged(e,'tour invalide IA: Driver_5'),'a crawl off the track is not track limits')
- out(f,1,true); F.tick(e,f,1); out(f,1,false); F.tick(e,f,0.1); assert(not logged(e,'IA: Driver_1'),'never the player')
+ -- Beta 1.56 : ni sur le chemin des IA, ni sur celui de vos limites de piste (option coupée par défaut).
+ out(f,1,true); F.tick(e,f,1); out(f,1,false); F.tick(e,f,0.1); assert(not logged(e,'IA: Driver_1') and not logged(e,'joueur (app)'),'never the player')
  e.g.safetyCarModel='sc_car'; f.cars[6].id='sc_car'; E.changed(e); F.tick(e,f,0.1); assert(f.cars[6].safetyCar,'safety car identified'); out(f,6,true); F.tick(e,f,1); out(f,6,false); F.tick(e,f,0.1); assert(not logged(e,'tour invalide IA: Driver_6'),'never the safety car')
 end
 -- Endroit où plusieurs IA sortent (la trajectoire elle-même) : ignoré dès la troisième, noté une fois.

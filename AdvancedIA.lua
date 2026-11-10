@@ -215,6 +215,13 @@ local function writeJournal(force)
  Journal.collect(journal,engine.log,Applier.clockText())
  Applier.journalWrite(host,Journal.take(journal))
 end
+-- Beta 1.56 : rapport de course (option) : lignes préparées par les sanctions, écrites par l'applicateur.
+local function writeReport(lines)
+ if not lines then return end
+ local ok,info=Applier.reportWrite(host,lines)
+ if ok then U.log(engine.log,engine.time,'INFO',string.format('rapport de course ecrit: %s (%d voitures)',info,math.max(0,#lines-2)),-1)
+ else U.log(engine.log,engine.time,'WARN',string.format('rapport de course: ecriture impossible (%s)',info),-1) end
+end
 local function cancelProbe() if host.allowed then Caps.cancelProbe(host.caps,frame) end end
 local function syncRestored()
  for i=1,frame.count do
@@ -275,6 +282,8 @@ local function release()
  local up=host.updater; local back=up~=nil and up.after=='rollback'
  local force=back and (not Update.version(up.afterVersion) or Update.newer('Beta 1.40',up.afterVersion))
  pcall(Cspgui.release,csp,cspPort,cspClock,force); Applier.dispose(cspWatch); cspWatch=nil; cspLog()
+ -- Beta 1.56 : course commencée sans rapport (option) : rapport partiel avant la fin du journal.
+ pcall(function() writeReport(engine.reportLines or Sanctions.flushReport(engine.sanctions,engine,frame)); engine.reportLines=nil end)
  pcall(writeJournal,true); Applier.journalWrite(host,'=== fin : '..Applier.clockText()..' ===\n')
 end
 -- Mise à jour depuis GitHub (Beta 1.33) : vérification une fois par lancement, installation d'un clic à l'arrêt. Avant
@@ -400,7 +409,10 @@ local function update(dt)
  -- Beta 1.41 : retenue à la sortie des stands seulement si l'arrêt natif répond.
  engine.stopCap=host.caps.stop.available==true
  engine.pitCap=host.caps.pit.available==true
+ -- Beta 1.56 : pénalité native du joueur écrite (limites de piste, option coupure des gaz), capacité disponible.
+ engine.penaltyWritten=host.penaltyWritten or 0; engine.penaltyCap=host.caps.penalty.available==true
  local ready=Engine.step(engine,frame,dt)
+ if engine.reportLines then local lines=engine.reportLines; engine.reportLines=nil; writeReport(lines) end
  if engine.presetSessionDirty then engine.presetSessionDirty=false; Applier.storeText('humanai:presetsession',engine.presetSession) end
  -- Beta 1.52 : seulement après un nouvel échec d'une capacité (compteur de Caps.call) ; avant : à chaque image.
  if host.caps.failureCount~=capsReported then capsReported=host.caps.failureCount; Applier.reportCaps(host) end
@@ -455,6 +467,8 @@ local function update(dt)
  local probeBefore=host.caps.probeIndex
  if Config.on(engine.p,'general') then Caps.probe(host.caps,frame,engine.time,engine.runtimeG)
  else cancelProbe(); Caps.mode(host.caps,engine.runtimeG) end
+ local levelReport=Caps.report(host.caps,engine.runtimeG)
+ if levelReport then U.log(engine.log,engine.time,'INFO',levelReport,-1) end
  if probeBefore==0 and host.caps.probeIndex>0 then
   local index=host.caps.probeIndex; local s=host.cars[index]; local car=frame.cars[index]
   if not s.owned then s.owned=true; s.id=car.identity or car.id; s.originalLevel=host.caps.probeOriginal; s.originalAggression=car.aiAggression end
@@ -649,7 +663,7 @@ end
 -- Tests : panneau de drapeaux seul (le même contenu que dans l'overlay), hors de tout point d'entrée de CSP (Beta 1.52 :
 -- l'ancien rappel de fenêtre HUMANAI__FLAGS, absent du manifeste depuis la Beta 1.25, est retiré).
 HUMANAI.drawFlags=function() if not released then protectUI(UI.flags,panel) end end
--- Overlay en jeu (Beta 1.25, rappel IN_GAME) : fenêtre transparente dessinée par l'app, comme SuperHUD.
+-- Overlay en jeu (Beta 1.25, rappel IN_GAME) : fenêtre transparente dessinée par l'app.
 function script.HUMANAI__HUD()
  if released then return end
  timedUI(UI.hud,'overlay')

@@ -78,7 +78,7 @@ function M.rebase(t,amount)
  end
 end
 -- Un seul message affiché par image : le plus important l'emporte (rouge, neutralisation, vert, jaune, stands, météo).
-local priorities={penaltyDq=5,aiDq=4,aiBlackFlag=4,aiSanction=2,penaltyDelta=5,penaltyPass=5,penaltyRed=5,penaltyStop=5,red=5,redSession=5,sessionResume=3,redRestartSc=4,standing=4,penaltyJump=5,redRestartVsc=4,redRestartFcy=4,sc=4,fcy=4,vsc=4,vscEnd=4,scIn=3,green=3,restart=3,yellow=2,pitOpen=1,pitOpenCsp=1,pitCompound=1,pitPlanSame=1,pitPlanOk=1,fastCar=1,pitNotCounted=2,pitValidated=1,wet=1,dry=1,drsLaps=1,drsOn=1,drsWet=1,scOut=3,scLeading=2,restartPlace=2,restartRetake=2}
+local priorities={penaltyDq=5,aiDq=4,aiBlackFlag=4,aiSanction=2,playerSanction=3,penaltyDelta=5,penaltyPass=5,penaltyRed=5,penaltyStop=5,red=5,redSession=5,sessionResume=3,redRestartSc=4,standing=4,penaltyJump=5,redRestartVsc=4,redRestartFcy=4,sc=4,fcy=4,vsc=4,vscEnd=4,scIn=3,green=3,restart=3,yellow=2,pitOpen=1,pitOpenCsp=1,pitCompound=1,pitPlanSame=1,pitPlanOk=1,fastCar=1,pitNotCounted=2,pitValidated=1,wet=1,dry=1,drsLaps=1,drsOn=1,drsWet=1,scOut=3,scLeading=2,restartPlace=2,restartRetake=2}
 -- Beta 1.49 : annonces de l'arrêt F1 du joueur (lues par SpotterEnginer) : jamais perdues. Écartées par une annonce plus
 -- importante de la même image, ou remplacées par elle, elles attendent (une seule place, la dernière l'emporte) la
 -- première image suivante sans annonce (M.flushHeld, en fin d'image), au plus K.heldMessageMax s.

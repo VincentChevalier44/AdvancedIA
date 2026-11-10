@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 1.52',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 1.58',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -50,7 +50,7 @@ M.rulePresets={
 -- jamais réglé, lorsque la détection l'active.
 M.recommended={J='Nordschleife',P='Essais',Q='Qualifications',C='Course'}
 -- Réglages qui comptent quelque chose (réactions, voitures, arrêts) : valeurs entières.
-M.integerKeys={flashMaxReactors=true,redFlagCars=true,mandatoryStops=true,penaltySeconds=true,penaltyDisqualify=true,rulesDrsLaps=true,sanTrackWarnings=true,sanServeLaps=true,finalLaps=true}
+M.integerKeys={flashMaxReactors=true,redFlagCars=true,mandatoryStops=true,penaltySeconds=true,penaltyDisqualify=true,rulesDrsLaps=true,sanTrackWarnings=true,sanServeLaps=true,finalLaps=true,sanEscalationStep=true,sanEscalationMax=true}
 -- Réglages des pénalités (jamais en journée circuit) et de la surcouche Endurance (journée circuit et course).
 M.penaltyKeys={playerPenalties=true,deltaTolerance=true,penaltySeconds=true,penaltyDisqualify=true,aiPenalties=true}
 M.overlayKeys={enduranceOverlay=true,stintLevelSwing=true,stintDegradationPct=true}
@@ -68,12 +68,17 @@ M.raceKeys={strategyEnabled=true,strategyTyreWearPct=true,strategyFuelMarginLaps
  finalLapsEnabled=true,finalLaps=true,finalAggressionPct=true,finalDefensePct=true}
 M.sanctionKeys={sanTrackLimits=true,sanTrackWarnings=true,sanCutPenalty=true,sanCutSeconds=true,sanJumpStart=true,sanPitSpeed=true,sanPitExit=true,
  sanProcedureKind=true,sanWrongWay=true,sanWrongWaySeconds=true,sanServeLaps=true,sanStopGoSeconds=true,sanTimeSeconds=true,sanUnservedTime=true,
- sanGiveBack=true,sanGiveBackSeconds=true,sanMessages=true}
+ sanGiveBack=true,sanGiveBackSeconds=true,sanMessages=true,
+ -- Beta 1.56 (décision du pilote) : limites de piste du joueur, pénalités croissantes, rapport de course (tous coupés par défaut).
+ sanPlayerTrackLimits=true,sanPlayerSession=true,sanPlayerPenalty=true,sanEscalation=true,sanEscalationStep=true,sanEscalationMax=true,sanReport=true}
 M.sanctionRaceKeys={sanTrackWarnings=true,sanCutPenalty=true,sanCutSeconds=true,sanJumpStart=true,sanPitSpeed=true,sanPitExit=true,sanProcedureKind=true,
- sanServeLaps=true,sanStopGoSeconds=true,sanTimeSeconds=true,sanUnservedTime=true,sanGiveBack=true,sanGiveBackSeconds=true}
+ sanServeLaps=true,sanStopGoSeconds=true,sanTimeSeconds=true,sanUnservedTime=true,sanGiveBack=true,sanGiveBackSeconds=true,
+ sanPlayerPenalty=true,sanEscalation=true,sanEscalationStep=true,sanEscalationMax=true,sanReport=true}
+-- Beta 1.56 : vos sorties en essais et qualifications, masqué en course.
+M.sanctionPracticeKeys={sanPlayerSession=true}
 -- Interrupteurs des sanctions : tous coupés quand la section est décochée.
-M.sanctionSwitches={'sanTrackLimits','sanCutPenalty','sanJumpStart','sanPitSpeed','sanPitExit','sanWrongWay','sanUnservedTime','sanGiveBack','sanMessages'}
-function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or key=='qualiCoolLaps' and profile~='Q' or false end
+M.sanctionSwitches={'sanTrackLimits','sanCutPenalty','sanJumpStart','sanPitSpeed','sanPitExit','sanWrongWay','sanUnservedTime','sanGiveBack','sanMessages','sanPlayerTrackLimits','sanEscalation','sanReport'}
+function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or key=='qualiCoolLaps' and profile~='Q' or profile=='C' and M.sanctionPracticeKeys[key] or false end
 -- Préférences du pilote (panneau, messages, drapeau du HUD, DRS) : conservées au chargement d'un préréglage intégré.
 M.preferenceKeys={'flagPanel','yellowHud','yellowMessage','pitMessage','drsAssist','drsBeepVolume','deltaBeeps'}
 -- Clés ajoutées depuis la 1.3.0 (préréglages personnels antérieurs et préréglages intégrés 1.2.0).
@@ -342,6 +347,15 @@ b('sanctions','sanUnservedTime','Pénalité non purgée ajoutée au résultat',f
 b('sanctions','sanGiveBack','Place à rendre après un dépassement hors piste',false,false,true)
 n('sanctions','sanGiveBackSeconds','Délai pour rendre la place (s)',5,30,15,15,15)
 b('sanctions','sanMessages','Annonces des sanctions des IA à l’écran',false,true,true)
+-- Beta 1.56 (décision du pilote) : vos limites de piste gérées par l'app (mêmes règles que les IA, jamais votre voiture
+-- pilotée), pénalités de limites de piste croissantes (IA et joueur), rapport de course en CSV. Tous coupés par défaut.
+b('sanctions','sanPlayerTrackLimits','Vos limites de piste gérées par l’app',false,false,false)
+e('sanctions','sanPlayerSession','Vos sorties en essais et qualifications','invalid','invalid','invalid',{'invalid','notice'})
+e('sanctions','sanPlayerPenalty','Votre pénalité de limites de piste (course)','time','time','time',{'time','throttle'})
+b('sanctions','sanEscalation','Pénalités croissantes en cas de récidive',false,false,false)
+n('sanctions','sanEscalationStep','Hausse à chaque récidive (s)',1,30,5,5,5)
+n('sanctions','sanEscalationMax','Pénalité maximale par sortie (s)',5,60,30,30,30)
+b('sanctions','sanReport','Rapport de course (fichier CSV)',false,false,false)
 newKeys.open=nil
 n('traffic','trafficGapSeconds','Intervalle de base (s)',0.5,5,2.5,2.5,2.5)
 n('traffic','trafficDensityGain','Distance ajoutée par IA (m)',0.5,5,2.8,2.8,2.8)
@@ -415,7 +429,7 @@ M.K={maxCars=61,paceBins=400,logLines=200,logRate=20,logDedup=5,maxZones=64,maxZ
  weatherPeriod=1,weatherConfirm=15,weatherWetOn=0.12,weatherWetOff=0.05,weatherRainOn=0.1,weatherRainOff=0.02,weatherWaterOn=0.03,weatherWaterOff=0.01,weatherHeavy=0.6,maxTyreCompounds=32,tyreCatalogBudget=2,tyreStopSpeed=1,tyreSalt=90000,spawnWindow=15,enduranceSuggestionSeconds=3600}
 M.timerFields={'since','aiFlashAt','stintStart','pitExitUntil','pitCautionUntil','pitGuardUntil','pendingUntil','holdUntil','ignoreUntil','restUntil','nextPerception',
  'defendUntil','defendCooldown','calmUntil','speedWindowStart','lastContact','lapseAt','errorUntil','lastDirectionAt','driveUntil','yieldStart'}
-M.optionalTimerFields={'pendingAt','lapseUntil','slowTeleportAt'}
+M.optionalTimerFields={'pendingAt','lapseUntil','slowTeleportAt','flashMuteUntil','flashHoldUntil','flashFailAt','noAdvAt'}
 -- Beta 1.41 (journées circuit du 3 novembre : île de Man, Nordschleife) : trafic des IA. Table à part, versée dans K.
 local traffic141={
  -- Chronomètre du coût par image : boucle d'essai de os.preciseClock au lancement.
@@ -524,6 +538,50 @@ for key,value in pairs(k152c) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- companionUpdatePeriod s.
 local k152e={companionUpdatePeriod=10,companionUpdateBytes=200,companionVersionBytes=32}
 for key,value in pairs(k152e) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.54 (journée circuit du 9 novembre à la Nordschleife : une IA a relancé six fois la même cible, chaque fois
+-- « cible plus rapide », avec 33 appels de phares en 6 min) : à partir de passIgnoreStrict échecs « cible plus rapide »
+-- sur la même cible, l'attente de la paire ne laisse plus passer qu'une cible anormalement lente ou une invitation
+-- (avant : aussi un simple rapprochement avec une avance d'allure apprise, qui échouait de la même façon).
+local k154={passIgnoreStrict=2}
+for key,value in pairs(k154) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.55 (audit des journaux du 9 novembre, choix du pilote) :
+-- - hors course, tentative de dépassement pas encore côte à côte abandonnée sans passProgressGain m gagnés sur la cible
+--   en passProgressTime s, et au plus passAttemptMax s sauf terrain gagné dans les passCapGrace dernières secondes ;
+-- - cession ordinaire (rapprochement) seulement à un suiveur vraiment plus rapide ici (yieldNeedAdvantage), refus noté une
+--   fois par suiveur et par épisode (oublié après yieldNoAdvForget s sans refus) ;
+-- - hors course, après flashFailLimit cessions sur appel de phares sans passage (compte oublié après flashFailForget s),
+--   plus d'appel vers cette voiture pendant flashMuteTime s ; flashAfterAbort s sans appel vers la cible après un abandon
+--   « suiveur rapide » ou « cède à son suiveur » ;
+-- - essais et qualifications : avis « une voiture lancée arrive » seulement sur un rapprochement confirmé : écart en
+--   temps au même point de la piste (relevé à l'entrée de chaque case, jusqu'à qualiCatchWatch s) réduit d'au moins
+--   qualiCatchRateLong s par seconde sur qualiCatchSpanLong s, ou qualiCatchRateShort sur qualiCatchSpanShort s,
+--   rattrapage prévu sous qualiCatchProject s, confirmé dans les qualiCatchWindow s après son arrivée à qualiWarnTime s
+--   au plus (oubliée après qualiCatchForget s hors de portée) ; jamais en mètres ni en km/h (ils bondissent à chaque
+--   freinage) ;
+-- - drapeau pluie de CSP revenu sur piste sèche : consigne « sec » redonnée au plus une fois par rainReassertGap s ;
+--   gommes de chaque modèle notées une fois par session (contrôle toutes les tyreModelsPeriod s).
+local k155={passProgressGain=3,passProgressTime=8,passAttemptMax=15,passCapGrace=4,yieldNeedAdvantage=true,yieldNoAdvForget=60,
+ flashFailLimit=2,flashFailForget=180,flashMuteTime=120,flashAfterAbort=20,rainReassertGap=10,tyreModelsPeriod=1,
+ qualiCatchWatch=8,qualiCatchSpanLong=3,qualiCatchRateLong=0.1,qualiCatchSpanShort=1,qualiCatchRateShort=0.3,
+ qualiCatchProject=15,qualiCatchWindow=6,qualiCatchForget=2,qualiCatchFill=8,qualiCatchSamples=16}
+for key,value in pairs(k155) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.56 (décision du pilote) : vos limites de piste, pénalités croissantes, rapport de course.
+-- - coupure des gaz demandée à AC : écriture attendue sanPlayerCutConfirm s, sinon pénalité de temps ; jamais par-dessus
+--   une pénalité décidée il y a moins de sanPlayerQueueGap s (pas encore écrite) ;
+-- - rapport : écrit quand toutes les voitures sont arrivées, ou sanReportAfterFinish s après votre arrivée ; sanReportKeep
+--   fichiers gardés (rotation comme le journal), au plus sanReportMaxBytes octets.
+local k156={sanPlayerCutConfirm=2,sanPlayerQueueGap=1,sanReportAfterFinish=90,sanReportKeep=5,sanReportMaxBytes=262144,sanReportFile='AdvancedIA-race'}
+for key,value in pairs(k156) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.57 (Ved, Overtake) : suspension « en ligne » nommée : longueur gardée du texte d'une erreur de lecture
+-- (caractères) et écart minimal entre deux lignes d'une suspension du même genre qui revient (s).
+local k157={readErrorChars=120,onlineLogGap=60}
+for key,value in pairs(k157) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.58 (MJFox, Overtake ; vu aussi par le pilote) : voiture gardée par l'app entrée dans la voie des stands (arrivée,
+-- arrêt) : décalage ramené à 0 à laneReleaseRate par seconde (pas d'image au plus laneReleaseStep s), puis niveau,
+-- agressivité, prudence, grip et vitesse rendus à AC ; ce que l'app tient exprès (garée, retenue, voiture de sécurité) reste.
+-- Arrêt demandé : au plus pitRequestServiceMax passages servis à l'emplacement pendant une même demande sans arrêt compté.
+local k158={laneReleaseRate=1,laneReleaseStep=0.1,pitRequestServiceMax=2}
+for key,value in pairs(k158) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.42 : constantes de l'étape de schéma (facteur de niveau, limite d'accélérateur), puis un bloc réservé par fourche.
 local k142schema={levelScaleMin=0.7,throttleMin=0.3,throttleEpsilon=0.01}
 -- Beta 1.42 : aspiration cassée, air sale, urgence des derniers tours (fourche AERO).

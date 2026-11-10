@@ -40,6 +40,9 @@ function M.newState()
  -- Relecture : suiveur que l'IA n'attend plus (cession perdue, échec « cible plus rapide ») ; jamais un drapeau bleu ni
  -- une classe. Demande d'arrêt d'une IA lente et endommagée (course).
  s.yieldIgnore=0; s.yieldIgnoreUntil=0; s.slowPitAsked=false; s.slowPitDone=false
+ -- Beta 1.55 : progrès d'une tentative, cession refusée, appels de phares suspendus (voir le bloc k155 de config.lua).
+ s.passProgRef=0; s.passProgTime=0; s.noAdvFor=0; s.noAdvAt=0; s.yieldFlashBy=0
+ s.flashFailTarget=0; s.flashFailCount=0; s.flashFailAt=0; s.flashMute=0; s.flashMuteUntil=0; s.flashHoldTarget=0; s.flashHoldUntil=0
  -- Beta 1.42 AERO : aspiration cassée (une manœuvre par ligne droite, attentes en secondes restantes : rien à recaler),
  -- air sale (0 à 1) et urgence des derniers tours (0 à 1).
  s.towing=false; s.towDone=false; s.towWait=0; s.towPair=0; s.towPairWait=0; s.dirty=0; s.dirtyBefore=false; s.dirtyLogWait=0; s.urgency=0
@@ -60,6 +63,8 @@ function M.reset(s,now,keepOffset,preserveErrors)
  s.defendUntil=0; s.defendCooldown=0; s.defendAttacker=0; s.defendLap=-1; s.defendUsed=false
  s.ignoreTarget=0; s.ignoreUntil=0; s.lapseUntil=0; s.bluePending=false; s.yieldBlue=false; s.yieldQuali=false; s.urgent=false
  s.passIgnore=0; s.passIgnoreUntil=0; s.passIgnoreCount=0; s.yieldPassed=false; s.yieldCap=nil; s.yieldCapNow=nil; s.yieldIgnore=0; s.yieldIgnoreUntil=0
+ s.passProgRef=0; s.passProgTime=0; s.noAdvFor=0; s.noAdvAt=0; s.yieldFlashBy=0
+ s.flashFailTarget=0; s.flashFailCount=0; s.flashFailAt=0; s.flashMute=0; s.flashMuteUntil=0; s.flashHoldTarget=0; s.flashHoldUntil=0
  s.blockedYield=0; s.radarBrake=0; s.speedWindowStart=now; s.speedWindow=0
  s.trafficReference=0; s.trafficApplied=false; s.yellow=false; s.overtakeArmed=false; s.overtakeSpline=-1; s.yieldClass=false
  if not keepOffset then s.offset=0 end
@@ -75,7 +80,24 @@ end
 -- Beta 1.41 : toutes les raisons d'une fin de tentative en clair (« guard » et « yield » restaient en anglais).
 local passEnd={clear='reussi',chain='reussi, enchaine',abort_slow='cible plus rapide',abort_blocked='cote ferme',abort_stall='sans rapprochement',abort_follower='suiveur rapide',
  target_lost='cible perdue',abort_yellow='drapeau jaune',hold_limit='cote a cote sans progres',direction_limit='plafond anti-zigzag',
- guard='rendue a AC (stands, hors piste ou hors commande)',yield='cede a son suiveur',obstacle='evitement d un obstacle',contact='contact, reprise au calme',spun='tete-a-queue'}
+ guard='rendue a AC (stands, hors piste ou hors commande)',yield='cede a son suiveur',obstacle='evitement d un obstacle',contact='contact, reprise au calme',spun='tete-a-queue',
+ abort_noprogress='sans progres',abort_timeout='tentative trop longue'}
+-- Beta 1.55 : cession sur l'appel de phares de l'IA f finie sans passage : comptée pour f ; à K.flashFailLimit (compte
+-- oublié après K.flashFailForget s), plus d'appel de f vers cette voiture pendant K.flashMuteTime s, noté une fois.
+local function flashFailed(e,s,now)
+ local f=e.states[s.yieldFlashBy]
+ if not f then return end
+ if f.flashFailTarget~=s.slot or now>f.flashFailAt+K.flashFailForget then f.flashFailTarget=s.slot; f.flashFailCount=0 end
+ f.flashFailCount=f.flashFailCount+1; f.flashFailAt=now
+ if f.flashFailCount>=K.flashFailLimit then
+  local count=f.flashFailCount
+  f.flashMute=s.slot; f.flashMuteUntil=now+K.flashMuteTime; f.flashFailCount=0
+  if e.stats then e.stats.flashMuted=(e.stats.flashMuted or 0)+1 end
+  local cars=e.frame and e.frame.cars
+  U.log(e.log,now,'INFO',string.format('appels de phares suspendus: %s -> %s apres %d cessions sans passage, plus d appel pendant %.0f s',
+   cars and cars[f.slot] and cars[f.slot].name or '?',cars and cars[s.slot] and cars[s.slot].name or '?',count,K.flashMuteTime),f.slot)
+ end
+end
 -- Fin d'une tentative de dépassement au journal, avec sa raison (Beta 1.52 : aussi à l'enchaînement sur la voiture
 -- suivante, qui ne quitte pas les états de passage).
 local function passFinished(e,s,reason,now)
@@ -101,6 +123,21 @@ local function transition(e,s,state,reason,now)
  -- vraie, elle coupait l'urgence des derniers tours et l'aspiration cassée, annulait une place à rendre et bloquait
  -- l'attente réciproque jusqu'à la remise à zéro suivante.
  if yieldStates[s.state] and not yieldStates[state] then s.yieldBlue=false; s.yieldQuali=false; s.yieldClass=false end
+ -- Beta 1.55 : fin d'une cession comptée par raison (résumé de la minute) ; cession sur l'appel de phares d'une IA finie
+ -- sans passage : comptée pour elle (hors course).
+ if (s.state=='YIELD_IN' or s.state=='YIELD_HOLD') and state~='YIELD_IN' and state~='YIELD_HOLD' then
+  if e.stats then local key='yieldEnd_'..reason; e.stats.yieldEnd=(e.stats.yieldEnd or 0)+1; e.stats[key]=(e.stats[key] or 0)+1 end
+  if s.yieldFlashBy>0 and not s.yieldPassed and e.profile~='C' then flashFailed(e,s,now) end
+  s.yieldFlashBy=0
+ end
+ -- Beta 1.55 : hors course, tentative finie « suiveur rapide » ou « cède à son suiveur » : pas d'appel de phares vers
+ -- sa cible pendant K.flashAfterAbort s (avant : l'IA, toujours retenue, rappelait au bout de 8 s).
+ if passStates[s.state] and s.state~='OVT_OUT' and (reason=='abort_follower' or reason=='yield') and e.profile~='C' and s.lastPassTarget>0 then
+  s.flashHoldTarget=s.lastPassTarget; s.flashHoldUntil=max(s.flashHoldUntil,now+K.flashAfterAbort)
+  if e.stats then e.stats.flashHeld=(e.stats.flashHeld or 0)+1 end
+ end
+ -- Beta 1.54 : état quitté gardé pour le contexte d'un tête-à-queue (ce que faisait l'IA juste avant).
+ s.prevState=s.state; s.prevReason=s.reason
  s.state=state; s.reason=reason; s.since=now
  local stats=e.stats; if stats then stats[reason]=(stats[reason] or 0)+1 end
  if e.runtimeG.debugLog then U.log(e.log,now,'DEBUG',state..':'..reason,s.slot) end
@@ -448,6 +485,19 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt,rest)
  local c3=ordinary and p.pressureEnabled and s.pressure>=p.pressureTime and (back.index==e.frame.player or realAdvantage(e,e.states[back.index],s,a,p)~=false)
  local c4=permittedFlash
  local c5=aiAccepted
+ -- Beta 1.55 (Nordschleife, 9 novembre : 36 cessions en 10 min, 4 suivies d'un passage) : cession ordinaire sur simple
+ -- rapprochement seulement à un suiveur vraiment plus rapide ici (allure libre apprise ; inconnue : permise), comme la
+ -- pression ; jamais le joueur, jamais un drapeau bleu, une classe, un tour lancé ni un appel de phares. Refus noté une
+ -- fois par suiveur et par épisode.
+ if (c1 or c2) and K.yieldNeedAdvantage and not (c4 or c5 or blue or classYield or quali) and back.index~=e.frame.player
+  and realAdvantage(e,e.states[back.index],s,a,p)==false then
+  c1=false; c2=false
+  if s.noAdvFor~=back.index or now>s.noAdvAt+K.yieldNoAdvForget then
+   s.noAdvFor=back.index; e.stats.yieldNoAdv=(e.stats.yieldNoAdv or 0)+1
+   U.log(e.log,now,'INFO',string.format('cession refusee: %s ne cede pas a %s (pas plus rapide ici)',a.name,other.name),a.slot)
+  end
+  s.noAdvAt=now
+ end
  local trigger=c1 or c2 or c3 or c4 or c5 or blue or classYield or quali
  local needed=(blue or quali) and K.lapConfirm or classYield and p.confirmTime*K.classConfirm or (c4 or c5) and K.flashConfirm or p.confirmTime
  if activeFlash and not c4 then needed=needed*K.flashMargin end
@@ -481,6 +531,8 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt,rest)
  s.confirm=0; s.pendingAt=0; s.pendingTarget=0; s.bluePending=false; s.holdUntil=now+p.yieldHoldMin
  s.linger=0; s.postPass=false; s.yieldStart=now; s.yieldBlue=blue or classYield or quali; s.urgent=c4 and flash.urgent
  s.yieldOrdinary=not (blue or classYield or c4 or c5 or quali); s.yieldStalled=false
+ -- Beta 1.55 : cession sur l'appel de phares d'une IA : son auteur, pour compter les cessions sans passage.
+ s.yieldFlashBy=c5 and back.index or 0
  -- Beta 1.51 : cession à une voiture lancée (journal et compteurs à part, comme un drapeau bleu pour le reste).
  s.yieldQuali=quali and not blue and not classYield and not c4 and not c5
  if s.yieldQuali then
@@ -942,6 +994,15 @@ function M.step(e,i,dt,now)
        s.passStall=s.state~='OVT_ARM' and target.long>0 and not s.passAlongside and target.sa<K.passStallSa and s.passStall+dt or 0
        if s.state=='OVT_ARM' and now-s.since>K.passArmMax then s.passStall=K.passStallTime+dt end
        s.passBlocked=not clear and not s.passAlongside and s.passBlocked+dt or 0
+       -- Beta 1.55 (Nordschleife, 9 novembre : tentatives de 9 s en moyenne, jusqu'à 62 s, 27 sur 43 finies « cible plus
+       -- rapide ») : hors course, pas encore côte à côte, cible devant (jamais le joueur) : abandon sans K.passProgressGain m
+       -- gagnés en K.passProgressTime s, et au bout de K.passAttemptMax s sauf terrain gagné dans les K.passCapGrace
+       -- dernières secondes (un dépassement lent qui progresse n'est jamais coupé).
+       local judged=profile~='C' and s.target~=frame.player and target.long>0 and not s.passAlongside
+       if judged and target.gap<=s.passProgRef-K.passProgressGain then s.passProgRef=target.gap; s.passProgTime=0
+       elseif judged then s.passProgTime=s.passProgTime+dt else s.passProgRef=target.gap; s.passProgTime=0 end
+       local noProgress=judged and s.passProgTime>K.passProgressTime
+       local tooLong=judged and U.finite(s.passStartAt) and now-s.passStartAt>K.passAttemptMax and s.passProgTime>K.passCapGrace
        -- Côte à côte achevé sans marge atteinte (cible repassée devant, ou juste derrière à la même allure) : retour au
        -- bout de quelques secondes sans progrès vers la marge ; un dépassement lent qui progresse n'est jamais coupé.
        if s.passAlongside then
@@ -951,20 +1012,26 @@ function M.step(e,i,dt,now)
        -- renonce pas à une attaque pour une voiture du même tour qui freine plus tard).
        local fastBack=not s.passAlongside and back and back.sa>=K.abortFollowerSpeed and back.gap<K.abortFollowerGap
         and (profile~='C' or Classes.laps(a,frame.cars[back.index],back,frame.length)>0 or faster(p,e.states[back.index],s))
-       if s.passBlocked>K.abortBlocked or s.abortSlow>K.abortSlowTime or s.passStall>K.passStallTime or fastBack or s.holdStall>K.passHoldMax then
+       if s.passBlocked>K.abortBlocked or s.abortSlow>K.abortSlowTime or s.passStall>K.passStallTime or fastBack or s.holdStall>K.passHoldMax or noProgress or tooLong then
         s.aborts=s.aborts+1
-        local why=s.passBlocked>K.abortBlocked and 'abort_blocked' or s.abortSlow>K.abortSlowTime and 'abort_slow' or s.passStall>K.passStallTime and 'abort_stall' or fastBack and 'abort_follower' or 'hold_limit'
+        local why=s.passBlocked>K.abortBlocked and 'abort_blocked' or s.abortSlow>K.abortSlowTime and 'abort_slow' or s.passStall>K.passStallTime and 'abort_stall' or fastBack and 'abort_follower'
+         or s.holdStall>K.passHoldMax and 'hold_limit' or noProgress and 'abort_noprogress' or tooLong and 'abort_timeout' or 'hold_limit'
         transition(e,s,'OVT_OUT',why,now)
         -- Beta 1.41 : cible repartie plus vite : plus de dépassement sur cession ni sur retenue de cette cible pendant
         -- K.passIgnore s, multiplié par K.passIgnoreGrowth à chaque nouvel échec sur elle (au plus K.passIgnoreMax s,
         -- compte oublié K.passIgnoreForget s après la fin de la dernière attente) ; hors course, elle ne lui cède plus
         -- pendant ce temps (jamais un drapeau bleu ni une classe : en course, rien n'est ignoré par elle).
         -- Beta 1.44 : jamais contre le joueur hors course (il ralentit et repart à sa guise pour se faire doubler).
-        if why=='abort_slow' and (profile=='C' or s.target~=frame.player) then
+        -- Beta 1.55 : abandons « sans progrès » et « tentative trop longue » (hors course) dans la même attente.
+        if (why=='abort_slow' or why=='abort_noprogress' or why=='abort_timeout') and (profile=='C' or s.target~=frame.player) then
          if s.passIgnore~=s.target or now>s.passIgnoreUntil+K.passIgnoreForget then s.passIgnore=s.target; s.passIgnoreCount=0 end
          s.passIgnoreCount=s.passIgnoreCount+1
          local hold=min(K.passIgnoreMax,K.passIgnore*K.passIgnoreGrowth^(s.passIgnoreCount-1))
          s.passIgnoreUntil=now+hold
+         -- Beta 1.54 : attente stricte (plus de rapprochement accepté, plus d'appel de phares hors course) notée au journal.
+         if s.passIgnoreCount>=K.passIgnoreStrict then
+          U.log(e.log,now,'INFO',string.format('depassement suspendu: %s -> %s apres %d echecs (%s), plus de tentative pendant %.0f s',a.name,s.passName,s.passIgnoreCount,passEnd[why],hold),i)
+         end
          local o=e.states[s.target]
          if profile~='C' and not o.yieldBlue then o.yieldIgnore=i; o.yieldIgnoreUntil=max(o.yieldIgnoreUntil,now+hold) end
         end
@@ -1006,6 +1073,7 @@ function M.step(e,i,dt,now)
          s.target=front.index; s.clear=0; s.passStall=0; s.passAlongside=false
          U.log(e.log,now,'INFO',string.format('depassement: %s -> %s (enchainement, %.0f m, %+.0f km/h)',a.name,nextCar.name,front.gap,front.sa),i)
          s.passStartAt=now; s.passMinGap=front.gap; s.passName=nextCar.name; s.lastPassTarget=front.index; s.lastPassAt=now
+         s.passProgRef=front.gap; s.passProgTime=0
          transition(e,s,'OVT_IN','chain',now)
         end
        end
@@ -1150,7 +1218,8 @@ function M.step(e,i,dt,now)
       trigger=trigger or invited
       -- Beta 1.47 (boucles : jusqu'à 13 tentatives par paire en 10 min) : paire ignorée après un échec « cible plus rapide »,
       -- plus de dépassement sur simple rapprochement sans vraie avance ici (la retenue et la cession l'étaient déjà).
-      if ignored and adv~=true and not (stuckTrigger or slowTarget or invited) then trigger=false end
+      -- Beta 1.54 : dès K.passIgnoreStrict échecs sur cette cible, l'avance apprise ne suffit plus (elle s'était trompée).
+      if ignored and (adv~=true or s.passIgnoreCount>=K.passIgnoreStrict) and not (stuckTrigger or slowTarget or invited) then trigger=false end
       -- Beta 1.51 (qualifications) : IA pas lancée (tour de sortie, refroidissement) : jamais à l'attaque d'une voiture
       -- lancée devant elle, sauf invitation ou voiture anormalement lente.
       -- Beta 1.52 : refus compté une fois par cible, seulement quand un dépassement aurait été tenté (avance suffisante,
@@ -1190,6 +1259,7 @@ function M.step(e,i,dt,now)
         -- Beta 1.31 : chaque tentative au journal (déclencheur, écart, avance), et sa fin à la sortie des états de passage.
         U.log(e.log,now,'INFO',string.format('depassement: %s -> %s (%s, %.0f m, %+.0f km/h)',a.name,other.name,yieldingToMe and 'cession' or invited and 'invitation' or slowTarget and 'cible lente' or closingOnly and 'rapprochement' or 'retenue',front.gap,front.sa),i)
         s.passStartAt=now; s.passMinGap=front.gap; s.passName=other.name; s.lastPassTarget=front.index; s.lastPassAt=now
+        s.passProgRef=front.gap; s.passProgTime=0
         transition(e,s,profile=='C' and not invited and 'OVT_ARM' or 'OVT_IN',yieldingToMe and 'yielded' or invited and 'invited' or 'pass',now)
        end
       else
@@ -1403,6 +1473,12 @@ function M.step(e,i,dt,now)
   end
   -- Beta 1.52 : IA pas lancée : jamais d'appel de phares à une voiture lancée devant elle (essais et qualifications).
   if allowed and qualiGuard(e,i,front.index) then allowed=false end
+  -- Beta 1.54 : hors course, jamais d'appel de phares vers une cible ignorée après un échec « cible plus rapide » (elle
+  -- ne lui cède plus pendant ce temps : 33 appels en 6 min à la Nordschleife le 9 novembre).
+  if allowed and profile~='C' and front.index==s.passIgnore and now<s.passIgnoreUntil then allowed=false end
+  -- Beta 1.55 : hors course, pas d'appel vers une voiture qui a cédé K.flashFailLimit fois sans passage, ni juste après
+  -- un abandon « suiveur rapide » ou « cède à son suiveur » sur elle.
+  if allowed and profile~='C' and (front.index==s.flashMute and now<s.flashMuteUntil or front.index==s.flashHoldTarget and now<s.flashHoldUntil) then allowed=false end
   if allowed and other.control and not other.player and not yieldStates[otherState.state] then
    local request=e.flash.ai[front.index]
    s.aiFlashAt=now; cmd.flashEvent=(cmd.flashEvent%K.counterMax)+1; e.stats.flash=(e.stats.flash or 0)+1

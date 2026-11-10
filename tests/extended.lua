@@ -4289,7 +4289,8 @@ tests.PIT_REPAIR=function()
  F.tick(e,f,expected); assert(e.commands[2].pitRepair and not e.commands[2].pitHold,'released after the repair time')
  local b=f.cars[3]; b.pit=true; b.inPitBox=true; b.kmh=0; b.speed=0; F.tick(e,f,0.5)
  assert(not e.commands[3].pitRepair and not e.commands[3].pitHold,'no damage: no repair')
- local function revisit() a.inPitBox=false; F.tick(e,f,0.2); a.inPitBox=true; F.tick(e,f,0.5) end
+ -- Beta 1.58 : un nouveau passage sort de la voie des stands (un retour à l'emplacement sans en sortir n'est plus servi).
+ local function revisit() a.inPitBox=false; a.pit=false; F.tick(e,f,0.2); a.pit=true; a.inPitBox=true; F.tick(e,f,0.5) end
  p.pitRepair=false; E.changed(e); revisit(); assert(not e.commands[2].pitRepair and not e.commands[2].pitHold,'repairs off')
  p.pitRepair=true; p.section_rules=false; E.changed(e); revisit(); assert(not e.commands[2].pitRepair,'rules tab unchecked: no repair')
  p.section_rules=true; E.changed(e); revisit(); assert(e.commands[2].pitRepair,'on again at the next visit')
@@ -4509,7 +4510,8 @@ tests.TOWED_NOT_A_STOP=function()
  assert(t.cars[2].stops==1 and t.cars[2].windowStops==1,'a real stop counts')
  local sc=f.cars[3]; sc.safetyCar=true; sc.pit=true; sc.inPitBox=true; step()
  assert(t.cars[3].stops==0,'safety car: no stop counted')
- local red=f.cars[4]; red.pit=true; red.inPitBox=true; red.teleport=true; now=now+0.5; Pits.update(t,f,cmds,run,'C',now,1,nil,true,nil,false)
+ -- Beta 1.58 : sans demande d'arrêt en cours (une demande servie compte même après un déplacement, tests/review158.lua).
+ local red=f.cars[4]; t.cars[4].wanted=false; red.pit=true; red.inPitBox=true; red.teleport=true; now=now+0.5; Pits.update(t,f,cmds,run,'C',now,1,nil,true,nil,false)
  assert(t.cars[4].stops==1,'red flag: every car returns to the pits, counted as before')
  -- Emplacement signalé une image après le dépannage : toujours pas un arrêt ; un vrai arrêt plus tard l'est.
  local late=f.cars[5]; cmds[5].recover=true; step(); cmds[5].recover=false; late.pit=true; late.inPitBox=true; step()
@@ -6134,6 +6136,12 @@ for name,test in pairs(require('tests/review152b')) do assert(tests[name]==nil,n
 for name,test in pairs(require('tests/review152d')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (relecture : réglages, préréglages et interface)
 for name,test in pairs(require('tests/review152c')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (relecture de la couche hôte : restitutions en boucle, sessions recommencées, point de reprise)
 for name,test in pairs(require('tests/review152e')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.52 (mise à jour de SpotterEnginer signalée à l'accueil)
+for name,test in pairs(require('tests/review153')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.53 (niveau au-dessus de 100 %, journal anglais de la fenêtre)
+for name,test in pairs(require('tests/review154')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.54 (attente stricte d'une paire, appels de phares, contexte d'un tête-à-queue)
+for name,test in pairs(require('tests/review155')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.55 (dépassements sans progrès, cessions sans vraie avance, appels de phares suspendus, drapeau pluie)
+for name,test in pairs(require('tests/review156')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.56 (vos limites de piste, pénalités croissantes, rapport de course)
+for name,test in pairs(require('tests/review157')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.57 (suspension « en ligne » nommée : vraie session, alt-online, lecture impossible)
+for name,test in pairs(require('tests/review158')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.58 (voiture rendue à AC dans la voie des stands : arrivée, arrêt)
 -- Beta 1.50 : pose en piste de la voiture de sécurité (Beta 1.48) gardée en repli ; ces scènes l'exercent avec une voiture
 -- de sécurité qui ne quitte jamais son emplacement, libérée dès la fin de l'appel, sans règle de vue du joueur (testées
 -- dans tests/start150.lua).

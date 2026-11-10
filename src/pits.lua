@@ -8,6 +8,10 @@ local function clear(c)
  -- Relecture 1.42 (après correctifs) : passage de pénalité en cours à l'emplacement, arrêt des règles retenu par la limite
  -- d'appels (lu par sanctions.lua : la pénalité attend cet arrêt).
  c.passBox=false; c.deferred=false
+ -- Beta 1.58 (course du pilote, fn_imola, 10 novembre) : composés secs déjà roulés en course (règle F1 des deux composés),
+ -- passages servis sans arrêt compté pendant une même demande d'arrêt obligatoire (borne : jamais redemandée en boucle),
+ -- premier passage à l'emplacement de ce passage dans la voie des stands (un seul service par passage), dépannage de l'app.
+ c.usedDry={}; c.usedCount=0; c.requestServices=0; c.requestAbandoned=false; c.laneVisit=nil; c.reboxLogged=false; c.appTowAt=nil
 end
 function M.new()
  local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false}
@@ -35,12 +39,16 @@ function M.progress(frame)
 end
 -- Pneus posés à l'arrêt : la météo prime si elle exige un autre pneu (pluie, retour au sec) ; sinon un autre
 -- composé sec (F1), sinon un train neuf du même composé.
-function M.compound(a,cmd,p)
+-- Beta 1.58 : used (composés secs déjà roulés en course), usedCount (leur nombre) : tant que moins de deux composés secs
+-- différents ont été roulés, un composé pas encore roulé d'abord (jamais un retour au composé de départ après un
+-- dépannage) ; ensuite, comme avant : un autre que celui monté.
+function M.compound(a,cmd,p,used,usedCount)
  -- Relecture 1.42 (après correctifs) : météo non gérée par l'app et piste mouillée : aucun pneu imposé (choix d'AC).
  if not cmd.weatherManaged and cmd.weatherRain then return -1 end
  if cmd.weatherManaged and cmd.weatherCompound>=0 and (cmd.weatherRain or cmd.weatherCompound~=a.compoundIndex) then return cmd.weatherCompound end
  if not a.tyresKnown or a.compoundIndex==nil then return -1 end
  if p.pitCompoundChange and a.dryCompounds then
+  if used and (usedCount or 0)<2 then for index=0,K.maxTyreCompounds-1 do if a.dryCompounds[index] and index~=a.compoundIndex and not used[index] then return index end end end
   for index=0,K.maxTyreCompounds-1 do if a.dryCompounds[index] and index~=a.compoundIndex then return index end end
  end
  return a.compoundIndex
@@ -102,6 +110,12 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
   -- Dépannage demandé par l'app (image précédente) ou saut de position : l'arrivée à l'emplacement dans les
   -- K.towWindow s suivantes n'est pas un arrêt (AC peut signaler l'emplacement une image après le saut).
   if cmd.recover or a.teleport then c.towedAt=now end
+  -- Beta 1.58 : dépannage de l'app (jamais compté comme l'arrêt demandé, contrairement à un déplacement par AC ou CSP).
+  if cmd.recover then c.appTowAt=now end
+  -- Beta 1.58 : composé sec roulé en piste, course lancée (règle F1 : un composé différent de ceux déjà roulés).
+  if frame.started and not a.pit and a.compoundIndex~=nil and a.dryCompounds and a.dryCompounds[a.compoundIndex] and not c.usedDry[a.compoundIndex] then c.usedDry[a.compoundIndex]=true; c.usedCount=c.usedCount+1 end
+  -- Beta 1.58 : un passage dans la voie des stands finit à sa sortie (un nouveau service redevient possible).
+  if not a.pit then c.laneVisit=nil end
   local towed=c.towedAt~=nil and now>=c.towedAt and now-c.towedAt<=K.towWindow
   -- Un passage à l'emplacement compte une fois, quelle qu'en soit la raison (météo comprise).
   -- Passage de pénalité d'une IA (drive-through, stop-and-go ; cmd.penaltyPass mis par sanctions.lua, Beta 1.42) : ni
@@ -120,9 +134,20 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
    if t.note and not a.player then t.note('INFO',string.format('passage de penalite a l emplacement: %s, non compte comme arret',a.name),i) end
   elseif a.inPitBox and not c.boxed then
    c.boxed=true; c.boxSince=now; c.visit=c.visit+1
+   -- Beta 1.58 : deuxième arrivée à l'emplacement sans être sortie de la voie des stands (demande d'arrêt d'AC restée
+   -- active, déplacement) : ni arrêt compté, ni nouveau service (pneus, réparations) ; une ligne par voiture.
+   local rebox=c.laneVisit~=nil
+   if not rebox then c.laneVisit=c.visit end
+   local appTowed=c.appTowAt~=nil and now>=c.appTowAt and now-c.appTowAt<=K.towWindow
+   if t.note and active and not a.player then t.note('DEBUG',string.format('arrivee a l emplacement: %s, passage %d, demande d arret AC %s, demande de l app %s, deplacee %s',a.name,c.visit,a.requestingPit and 'oui' or 'non',c.wanted and 'oui' or 'non',towed and 'oui' or 'non'),i) end
+   if rebox and not c.reboxLogged and t.note and not a.player then c.reboxLogged=true; t.note('INFO',string.format('emplacement de nouveau sans sortie de la voie des stands: %s, aucun nouveau service',a.name),i) end
    -- Voiture ramenée à son stand par l'app (dépannage, Beta 1.24) ou voiture de sécurité : aucun arrêt compté ; sous
    -- drapeau rouge, toutes les voitures rentrent aux stands : compté comme avant.
-   if not a.safetyCar and (not towed or red) then
+   -- Beta 1.58 (course du pilote, fn_imola) : une IA dont l'arrêt est demandé, ramenée à son emplacement (déplacée par
+   -- AC ou CSP, dépannée), y est servie (pneus, carburant, réparations) : l'arrêt demandé compte. Avant, il n'était jamais
+   -- compté, la demande restait et l'IA était servie en boucle jusqu'à l'arrivée. Sans demande, un dépannage ne compte pas.
+   local countedNow=false
+   if not rebox and not a.safetyCar and (not towed or red or c.wanted and not appTowed) then
     c.stops=c.stops+1
     -- Arrêt sous drapeau rouge : compté seulement si les règles y permettent un changement de pneus (F1), même avant
     -- l'ouverture de la fenêtre (Beta 1.48 : la F1 n'en a pas) ; jamais sinon. Joueur et changement de composé
@@ -132,8 +157,12 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
     c.pendingCompound=nil; c.pendingUntil=nil
     if counts and a.player and p.pitCompoundChange and a.compoundIndex~=nil then c.pendingCompound=a.compoundIndex
     elseif counts then c.windowStops=c.windowStops+1; t.dirty=true end
+    countedNow=counts
     if t.note and active then t.note('INFO',string.format('arret aux stands%s: %d (dont %d dans la fenetre)%s, %s',a.player and ' du joueur' or '',c.stops,c.windowStops,c.pendingCompound and ', compte au changement de compose (arrivee en '..tyreShort(a,c.pendingCompound)..')' or '',a.name),i) end
    end
+   -- Beta 1.58 : demande d'arrêt obligatoire servie sans compter (dépannage de l'app, règles fermées…) : comptée pour la
+   -- borne, seulement si du travail y est fait (pneus ; jamais un garage sous drapeau rouge sans travail).
+   if c.wanted and not rebox and not countedNow and not a.player and p.pitTyres and (not underRed or p.redFlagWork) then c.requestServices=c.requestServices+1 end
   end
   -- Relecture 1.42 (après correctifs) : un passage de pénalité ne remet pas le relais à zéro (relais maximal).
  if not a.inPitBox and c.boxed then
@@ -163,6 +192,10 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
   end
  end
   cmd.rulePit=false; cmd.pitHold=false; cmd.pitCompound=-1; cmd.pitVisit=c.visit; cmd.pitRepair=false
+  -- Beta 1.58 : servie dans ce passage de la voie et sortie de l'emplacement (la demande d'arrêt d'AC peut y être levée).
+  local served=c.laneVisit~=nil and a.pit and not a.inPitBox
+  cmd.laneServed=served
+  local first=c.laneVisit==nil or c.laneVisit==c.visit
   -- IA disqualifiée (garée à son stand), arrivée ou hors course : ni comptée ni appelée, aucune place d'appel retenue.
   if active and a.valid and a.control and not a.player and not a.finished and not a.safetyCar and not (dq and dq[i]) then
    local want=false
@@ -181,21 +214,33 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
      if want and not csp and not c.wanted and planAt>position and planAt<closing-span*K.strategyWindowMargin then want=false end
     end
    end
+   -- Beta 1.58 : borne propre à la demande d'arrêt obligatoire (jamais la fin de relais) : servie K.pitRequestServiceMax
+   -- fois sans être comptée, elle est abandonnée pour la session (une ligne d'avertissement), avant la limite d'appels
+   -- (aucune place d'appel retenue, aucune pénalité retardée).
+   if want and c.requestServices>=K.pitRequestServiceMax and not a.inPitBox then
+    if not c.requestAbandoned and t.note then t.note('WARN',string.format('arret demande abandonne: %s, servie %d fois sans arret compte',a.name,c.requestServices),i) end
+    c.requestAbandoned=true
+   end
+   if c.requestAbandoned then want=false end
    if p.maxStintMin>0 and not c.boxed and now-c.lastStop>=p.maxStintMin*60 and (progress<0 or progress<K.pitLastStint) then want=true end
    if closed and not a.pit then want=false end
+   -- Beta 1.58 : servie dans ce passage de la voie et sortie de l'emplacement : plus d'arrêt demandé avant la sortie de la
+   -- voie (sinon AC la ramène à l'emplacement en boucle) ; redemandé en piste si l'arrêt n'a pas compté.
+   if served then want=false end
    -- Au plus quelques IA appelées en même temps hors de la voie des stands : pas de bouchon à l'entrée.
    c.deferred=false
    if want and not a.pit and not c.wanted then if requested<K.pitConcurrent then requested=requested+1 else want=false; c.deferred=true end end
    if want and not c.wanted and t.note then t.note('INFO',string.format('arret demande: %s, %s',mandatory and c.windowStops<p.mandatoryStops and 'obligatoire' or 'fin de relais',a.name),i) end
    c.wanted=want
+   if not want and not served then c.requestServices=0 end
    cmd.rulePit=want
    cmd.pitHold=a.inPitBox and p.minPitTime>0 and now-c.boxSince<p.minPitTime
-   if a.inPitBox and p.pitTyres and (not underRed or p.redFlagWork) then cmd.pitCompound=M.compound(a,cmd,p) end
+   if a.inPitBox and first and p.pitTyres and (not underRed or p.redFlagWork) then cmd.pitCompound=M.compound(a,cmd,p,c.usedDry,c.usedCount) end
   else c.wanted=false; c.deferred=false end
   -- Réparations (Beta 1.20) : en course, à chaque passage d'une IA endommagée à son emplacement (arrêt des règles ou
   -- arrêt natif) ; elle y reste le temps de la réparation. Sous drapeau rouge, seulement si les règles y permettent le
   -- travail (F1), comme les pneus.
-  if profile=='C' and p.pitRepair and not pass and a.inPitBox and a.valid and a.control and not a.player and not a.safetyCar and (not underRed or p.redFlagWork) and not (dq and dq[i]) then
+  if profile=='C' and p.pitRepair and not pass and first and a.inPitBox and a.valid and a.control and not a.player and not a.safetyCar and (not underRed or p.redFlagWork) and not (dq and dq[i]) then
    if c.repairVisit~=c.visit then c.repairVisit=c.visit; c.repairTime=M.repairTime(a) end
    if c.repairTime>0 then cmd.pitRepair=true; if now-c.boxSince<c.repairTime then cmd.pitHold=true end end
   end

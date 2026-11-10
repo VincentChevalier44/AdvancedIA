@@ -88,9 +88,9 @@ end
 function M.new()
  local a={cars={},allowed=false,errors=0,rejected=0,stores={},dirtyAt=0,dirty=false,lastSave=-math.huge,recoveryDirty=false,storageErrors=0,
   port={present=present,write=write},releaseToken=nil,sessionToken=nil,safety={left=false,right=false,nearest=0},offsetSign=0,aiFunctions={},presets={},presetStores={},menuVisible=false,menuLast=nil,
-  flagOverride=false,flagValue=0,flagAt=-math.huge,trackLights=nil,trackLightsSource='',trackLightsFor=nil}
+  flagOverride=false,flagValue=0,flagAt=-math.huge,trackLights=nil,trackLightsSource='',trackLightsFor=nil,laneNoted={}}
  for i=1,K.maxCars do a.cars[i]={owned=false,reset=false,level=nil,aggression=nil,caution=nil,offset=0,brake=0,grip=nil,
-  originalLevel=1,originalAggression=0.5,lastWrite=-math.huge,id='',readAt=0,speed=nil,offsetReset=true,rainHint=nil,originalRain=false,pitRequest=false,weatherAt=-math.huge,tyreAt=-math.huge,
+  originalLevel=1,originalAggression=0.5,lastWrite=-math.huge,id='',readAt=0,speed=nil,offsetReset=true,rainHint=nil,originalRain=false,pitRequest=false,weatherAt=-math.huge,tyreAt=-math.huge,rainAt=-math.huge,rainLogged=false,
   levelAt=-math.huge,recovered=false,drsBlocked=false,drsAt=-math.huge,stop=false,stopAt=-math.huge,flashEvent=0,flashPulses=0,flashAt=-math.huge,pitAt=-math.huge,tyreVisit=-1,repairVisit=-1,teleportAt=-math.huge,startDelayFor='',placeFor='',placeAt=-math.huge,launchPending=false,launchAt=-math.huge,fuelRequested=-1,fuelSetFor='',fuelBoxed=false,fuelBefore=-1,parked=false,parkAt=-math.huge,teleported=false,redTeleported=false} end
  a.caps=Caps.new(a.port); a.clipboard=M.clipboard
  local ok,timer=pcall(initClock); if ok then a.timer=timer end
@@ -230,7 +230,7 @@ function M.rebase(a,amount)
  a.caps.probeAt=a.caps.probeAt-amount
  if a.flagAt>-math.huge then a.flagAt=a.flagAt-amount end
  for i=1,K.maxCars do
-  local s=a.cars[i]; s.lastWrite=s.lastWrite-amount; s.readAt=s.readAt-amount; s.weatherAt=s.weatherAt-amount; s.tyreAt=s.tyreAt-amount; s.levelAt=s.levelAt-amount
+  local s=a.cars[i]; s.lastWrite=s.lastWrite-amount; s.readAt=s.readAt-amount; s.weatherAt=s.weatherAt-amount; s.tyreAt=s.tyreAt-amount; s.rainAt=s.rainAt-amount; s.levelAt=s.levelAt-amount
   s.pitAt=s.pitAt-amount; s.stopAt=s.stopAt-amount; s.parkAt=s.parkAt-amount; s.teleportAt=s.teleportAt-amount; s.flashAt=s.flashAt-amount; s.drsAt=s.drsAt-amount
   if U.finite(s.placeAt) then s.placeAt=s.placeAt-amount end; if U.finite(s.launchAt) then s.launchAt=s.launchAt-amount end; if U.finite(s.scKickAt) then s.scKickAt=s.scKickAt-amount end
   -- Beta 1.52 : sortie du stand de la voiture de sécurité chronométrée aussi après un recalage du temps.
@@ -265,6 +265,36 @@ local function restoreSkin(s,car)
  local original=s.skinOriginal; s.skinOriginal=nil; s.skinApplied=nil
  if car.valid and callable(ac.findNodes) and callable(ac.getFolder) then
   pcall(function() ac.findNodes('carRoot:'..car.index):applySkin(ac.getFolder(ac.FolderID.ContentCars)..'/'..car.id..'/skins/'..original) end)
+ end
+end
+-- Beta 1.58 (MJFox, Overtake) : une voiture gardée par l'app n'est plus commandée dans la voie des stands (arrivée, arrêt,
+-- fin de session) ; ses dernières valeurs y restaient (décalage, vitesse limitée, prudence…) et l'envoyaient dans le mur.
+-- Rendue à AC dans la voie : décalage ramené à 0 par une rampe courte (une file, aucun voisin à ménager), puis niveau,
+-- agressivité, prudence, grip et vitesse d'origine. La demande d'arrêt, l'accélérateur et le frein gardent leur chemin ;
+-- une voiture garée, retenue ou de sécurité (tenue exprès) n'est pas touchée ; la propriété reste (reprise à la sortie).
+local function laneRelease(a,s,car,now,i)
+ if not now or s.parked or s.stop or s.scHeld or i==a.caps.probeIndex or i==a.calibrationIndex then s.laneAt=nil; return end
+ local dt=s.laneAt and math.max(0,math.min(K.laneReleaseStep,now-s.laneAt)) or 0; s.laneAt=now
+ local released=false
+ if s.offset~=0 or not s.offsetReset then
+  local step=K.laneReleaseRate*dt; local value=math.abs(s.offset)<=step+K.offsetEpsilon and 0 or s.offset-U.sign(s.offset)*step
+  if (value~=s.offset or value==0) and Caps.restoreCall(a.caps,'offset',car.index,value,false) then
+   -- Point de reprise marqué une fois, au retour à 0 (pas à chaque pas de la rampe).
+   released=released or s.offset~=0; s.offset=value; s.offsetReset=value==0; if value==0 then a.recoveryDirty=true end
+  end
+ end
+ if s.speed~=nil and Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil; released=true; a.recoveryDirty=true end
+ if s.level~=nil and Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil; a.recoveryDirty=true end
+ if s.aggression~=nil and Caps.restoreCall(a.caps,'aggression',car.index,s.originalAggression) then s.aggression=nil; a.recoveryDirty=true end
+ if s.caution~=nil and Caps.restoreCall(a.caps,'caution',car.index,K.defaultCaution) then s.caution=nil; a.recoveryDirty=true end
+ if s.grip~=nil and Caps.restoreCall(a.caps,'grip',car.index,K.gripBase) then s.grip=nil; a.recoveryDirty=true end
+ -- Une ligne par voiture et par session, seulement pour un décalage ou une vitesse limitée restés (les valeurs dangereuses).
+ if released then
+  local key=(car.finished and 'f:' or 'p:')..(car.identity or car.id or tostring(i))
+  if not a.laneNoted[key] then
+   a.laneNoted[key]=true
+   note(a,'INFO',string.format(car.finished and 'voiture rendue a AC apres l arrivee: %s' or 'voiture rendue a AC dans la voie des stands: %s',car.name~='' and car.name or car.id),i)
+  end
  end
 end
 -- keepParked : fin de session, les voitures garées restent garées (rendues à la session suivante ou au déchargement).
@@ -322,6 +352,9 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
     if good then s.owned=false; s.reset=false; s.offset=0; s.level=nil; s.aggression=nil; s.caution=nil; s.grip=nil; s.brake=0; s.speed=nil; s.recovered=false; s.restoredAt=now; s.justRestored=true; a.recoveryDirty=true end
    end
   end
+  -- Beta 1.58 : voiture gardée dans la voie des stands (pas au déchargement, traité ci-dessus) : rendue à AC.
+  if not final and s.owned and car.valid and car.control and not car.player and car.pit and (car.identity or car.id)==s.id then laneRelease(a,s,car,now,i)
+  else s.laneAt=nil end
  end
 end
 local function send(a,s,name,index,value,epsilon)
@@ -347,6 +380,7 @@ local function claim(a,s,car,now)
  s.owned=true; s.recovered=false; a.recoveryDirty=true
  s.offset=0; s.level=nil; s.aggression=nil; s.caution=nil; s.brake=0; s.grip=nil; s.speed=nil; s.offsetReset=true
  s.rainHint=nil; if s.restoredAt~=now then s.originalRain=car.nativeRainTyres==true end; s.pitRequest=false; s.weatherAt=-math.huge; s.tyreAt=-math.huge; s.stop=false; s.stopAt=-math.huge
+ s.rainAt=-math.huge; s.rainLogged=false
  s.pitAt=-math.huge; s.tyreVisit=-1
 end
 local function weather(a,s,car,cmd,now)
@@ -355,7 +389,13 @@ local function weather(a,s,car,cmd,now)
   claim(a,s,car,now)
   -- Tant que l'état natif correspond déjà à la décision, la stratégie pluie de CSP n'est pas forcée.
   local native=car.nativeRainTyresKnown and s.rainHint==nil and car.nativeRainTyres==cmd.weatherRain
-  if a.caps.rain.available and s.rainHint~=cmd.weatherRain and not native and Caps.call(a.caps,'rain',car.index,cmd.weatherRain) then s.rainHint=cmd.weatherRain; a.recoveryDirty=true end
+  if a.caps.rain.available and s.rainHint~=cmd.weatherRain and not native and Caps.call(a.caps,'rain',car.index,cmd.weatherRain) then s.rainHint=cmd.weatherRain; s.rainAt=now+K.rainReassertGap; a.recoveryDirty=true end
+  -- Beta 1.55 (essais du 9 novembre à Imola : IA vues en pneus pluie sur piste sèche) : consigne « sec » déjà donnée mais
+  -- drapeau pluie de CSP revenu : consigne redonnée, au plus une fois par K.rainReassertGap s, notée une fois par voiture.
+  if s.rainHint==false and not cmd.weatherRain and car.nativeRainTyresKnown and car.nativeRainTyres and now>=s.rainAt and a.caps.rain.available then
+   s.rainAt=now+K.rainReassertGap
+   if Caps.call(a.caps,'rain',car.index,false) and not s.rainLogged then s.rainLogged=true; note(a,'INFO','pneus pluie de CSP revenus sur piste seche: consigne sec redonnee',car.index+1) end
+  end
   -- Gomme inadaptée dans la voie des stands : changée aussitôt, même en roulant (les IA apparaissent souvent aux stands
   -- en intermédiaires sur piste sèche et repartent avant le contrôle suivant).
   local lane=car.pit and cmd.weatherCompound>=0 and car.compoundIndex~=cmd.weatherCompound
@@ -391,9 +431,11 @@ local function pitRequest(a,s,car,cmd,now)
    s.pitAt=now+K.weatherPeriod
    if (cmd.weatherManaged and cmd.weatherPit or cmd.rulePit) and a.caps.pit.available then
     if not car.pit and Caps.call(a.caps,'pit',car.index,true) then s.pitRequest=true; a.recoveryDirty=true end
-   elseif s.pitRequest and not car.pit and Caps.restoreCall(a.caps,'pit',car.index,false) then s.pitRequest=false; a.recoveryDirty=true end
+   -- Beta 1.58 : servie dans ce passage de la voie et sortie de l'emplacement (cmd.laneServed, pits.lua) : demande levée
+   -- dans la voie aussi (l'arrêt est fait ; restée active, AC ramenait la voiture à son emplacement en boucle).
+   elseif s.pitRequest and (not car.pit or cmd.laneServed) and Caps.restoreCall(a.caps,'pit',car.index,false) then s.pitRequest=false; a.recoveryDirty=true end
   end
- elseif s.pitRequest and s.owned and s.id==(car.identity or car.id) and not car.pit and Caps.restoreCall(a.caps,'pit',car.index,false) then s.pitRequest=false; a.recoveryDirty=true end
+ elseif s.pitRequest and s.owned and s.id==(car.identity or car.id) and (not car.pit or cmd.laneServed) and Caps.restoreCall(a.caps,'pit',car.index,false) then s.pitRequest=false; a.recoveryDirty=true end
  -- Arrêt réglementaire : un train de pneus par passage à l'emplacement. Une autre voiture dans l'emplacement de la
  -- liste (changement de pilote ou de voiture) repart de zéro.
  if s.tyreVisit>=0 and s.id~=(car.identity or car.id) then s.tyreVisit=-1 end
@@ -831,6 +873,8 @@ end
 function M.penalty(a,frame,t)
  if t.requestId==(a.penaltyServed or 0) then return end
  if not a.allowed or frame.online or frame.replay or frame.paused or frame.player==0 then return end
+ -- Beta 1.56 : coupure des gaz des limites de piste remplacée par du temps (pas écrite à temps) : jamais écrite ensuite.
+ if t.cancelled==t.requestId then a.penaltyServed=t.requestId; return end
  local written
  if t.kind=='dq' then
   written=Caps.call(a.caps,'penalty',-1,-1,ac.PenaltyType and ac.PenaltyType.BlackFlag or K.penaltyBlackFlag)
@@ -840,6 +884,8 @@ function M.penalty(a,frame,t)
   if written then note(a,'INFO',string.format('penalite appliquee: coupure des gaz %.0f s',t.seconds),frame.player) end
  end
  if written or not a.caps.penalty.available then a.penaltyServed=t.requestId end
+ -- Beta 1.56 : dernière décision réellement écrite (src/sanctions.lua : coupure des gaz confirmée, sinon du temps).
+ if written then a.penaltyWritten=t.requestId end
 end
 -- Bip « DRS disponible » : fichier son de l'app, joué sans effet 3D ; un événement par bip, le précédent libéré.
 local function disposeBeep(a) if a.beepEvent then pcall(function() a.beepEvent:dispose() end); a.beepEvent=nil end end
@@ -992,6 +1038,37 @@ function M.journalWrite(a,text)
  if ok then a.journalBytes=a.journalBytes+#text else a.journalFailures=(a.journalFailures or 0)+1 end
  if full or not ok and a.journalFailures>=K.capabilityFailures or a.journalBytes>=K.journalMaxBytes then a.journalPath=nil end
  return ok
+end
+-- Beta 1.56 (décision du pilote, option coupée par défaut) : rapport de course en CSV à côté du journal
+-- (logs/AdvancedIA-race.csv), K.sanReportKeep fichiers gardés (.csv puis .1.csv à .4.csv, rotation comme le journal),
+-- au plus K.sanReportMaxBytes octets (lignes en trop laissées de côté). Renvoie vrai et le nom du fichier, ou faux et
+-- la raison (jamais un chemin complet).
+function M.reportWrite(a,lines)
+ if type(lines)~='table' or #lines==0 then return false,'rapport vide' end
+ local parts,size={},0
+ -- En-tête : date de l'écriture (src/sanctions.lua n'a pas accès à l'horloge).
+ local date=M.clockText()
+ for k=1,#lines do
+  local row=(k==1 and (tostring(lines[k]):gsub('{date}',function() return date end)) or tostring(lines[k]))..'\n'
+  if size+#row>K.sanReportMaxBytes then break end
+  parts[#parts+1]=row; size=size+#row
+ end
+ local name=nil
+ local ok,err=pcall(function()
+  if not io or type(io.open)~='function' or not ac.getFolder or not ac.FolderID or not ac.FolderID.Logs then error('fichiers indisponibles',0) end
+  local root=ac.getFolder(ac.FolderID.Logs)
+  if type(root)~='string' or root=='' then error('dossier des journaux inconnu',0) end
+  local base=root..'/'..K.sanReportFile
+  if type(io.fileExists)=='function' and type(io.move)=='function' then
+   for n=K.sanReportKeep-2,1,-1 do local from=base..'.'..n..'.csv'; if io.fileExists(from) then io.move(from,base..'.'..(n+1)..'.csv',true) end end
+   if io.fileExists(base..'.csv') then io.move(base..'.csv',base..'.1.csv',true) end
+  end
+  local f=io.open(base..'.csv','w'); if not f then error('ouverture impossible',0) end
+  f:write(table.concat(parts)); f:close(); name=K.sanReportFile..'.csv'
+ end)
+ if ok and name then return true,name end
+ a.reportFailures=(a.reportFailures or 0)+1
+ return false,tostring(err or 'ouverture impossible'):sub(1,80)
 end
 function M.storeText(key,text) if ac.store then return pcall(ac.store,key,text) end return false end
 function M.loadText(key) if not ac.load then return nil end local ok,text=pcall(ac.load,key); return ok and text or nil end
@@ -1218,7 +1295,14 @@ function M.apply(a,frame,commands,g,now)
    -- L'instantané précède les écritures : seul un niveau écrit lors d'une image précédente est relu,
    -- et seulement s'il dépasse nettement 1 ; un écrêtage se distingue alors de la tolérance de lecture.
    if now>=s.readAt and s.levelAt~=now then s.readAt=now+K.readbackPeriod
-    if s.level and s.level>1+K.probeTolerance and car.aiLevel<1+K.probeTolerance then a.caps.native110=false; a.caps.probeDone=true end
+    if s.level and s.level>1+K.probeTolerance and car.aiLevel<1+K.probeTolerance and not a.caps.clampProven then
+     -- Beta 1.53 : lecture écrêtée prouvée. « Natif si confirmé » repasse au plafond (comme avant) ; le mode automatique
+     -- reste natif (CSP accepte l'écriture jusqu'à 2) et ne passe au bonus de grip que s'il est autorisé. Noté une fois
+     -- (voiture, valeur écrite, valeur relue) ; la ligne générique du changement de mode n'est pas répétée.
+     a.caps.native110=false; a.caps.clampProven=true; a.caps.probeDone=true; Caps.mode(a.caps,g)
+     a.caps.reportedMode=a.caps.levelMode; if a.caps.probeRead==nil then a.caps.probeRead=car.aiLevel; a.caps.probeReported=true end
+     note(a,'WARN',Caps.demotionText(a.caps,g,car.name~='' and car.name or car.id,s.level,car.aiLevel),car.index+1)
+    end
    end
   elseif s.brake>0 and a.caps.brake.available and car.valid and car.control and not car.player then
    -- Frein additionnel relâché dès que la voiture n'est plus commandée (stands, hors piste, fin de manœuvre).
@@ -1244,6 +1328,8 @@ function M.unregister(a)
 end
 function M.nextSession(a,frame)
  M.releaseBlackFlag(a); M.releaseDrs(a,frame); a.flagBlocked=nil
+ -- Beta 1.58 : lignes « voiture rendue a AC » de nouveau possibles à chaque session.
+ a.laneNoted={}
  -- Beta 1.47 : drapeau écrit pendant ce lancement : restitution redemandée à chaque nouvelle session (CSP a gardé le
  -- rouge, 5, après la relance d'une session à Monza ; plus rien ne le levait).
  if a.flagEver and a.allowed and not frame.online and not frame.replay and Caps.restoreCall(a.caps,'flag',-1,K.flagNone) then

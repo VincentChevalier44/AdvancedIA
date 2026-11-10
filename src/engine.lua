@@ -24,6 +24,8 @@ local Merge=require('src/merge')
 -- Beta 1.47 : premier tour attentif (départ et relances, course).
 local FirstLap=require('src/firstlap')
 local Quali=require('src/quali')
+-- Beta 1.56 : annonce des pénalités d'AC actives (vos limites de piste gérées par l'app).
+local L=require('src/lang')
 local K=C.K
 local M={}
 -- Journal du départ (Beta 1.24) : maintien de ligne (IA mesurées, décalées de la trajectoire) et pneus de chaque IA,
@@ -49,6 +51,24 @@ local function startReport(e,frame,now)
   e.run.startLaneHold and 'actif' or 'coupe',n,measured,offset,held,sides,e.runtimeG.offsetSign or 0,e.run.startCautionMult,e.run.startAggrMult,e.run.blueFlagEnabled and 'actifs' or 'coupes',e.run.blueFlagRange,e.runtimeG.useBrakeAssist and 'actif' or 'coupe'),-1)
  local parts={}; for _,key in ipairs(order) do parts[#parts+1]=tyres[key]..' x '..key end
  U.log(e.log,now,'INFO','pneus au depart: '..(#parts>0 and table.concat(parts,', ') or 'inconnus'),-1)
+end
+-- Beta 1.55 (essais du 9 novembre à Imola : IA vues en pneus pluie, toutes comptées en gommes sèches) : gommes de chaque
+-- modèle de voiture des IA (noms courts et longs, classe retenue par l'app), une fois par session.
+local function tyreModels(e,frame,now)
+ if now<e.tyreModelsAt then return end
+ e.tyreModelsAt=now+K.tyreModelsPeriod
+ for i=1,frame.count do
+  local a=frame.cars[i]
+  if a.valid and a.tyresKnown and not a.player and a.id and a.tyreClass and not e.tyreModels[a.id] then
+   e.tyreModels[a.id]=true
+   local parts={}
+   for index=0,K.maxTyreCompounds-1 do
+    local short=a.tyreNames[index]; if not short then break end
+    parts[#parts+1]=string.format('%s (%s) %s',short,a.tyreLongNames[index] or '',a.tyreClass[index] or '?')
+   end
+   U.log(e.log,now,'INFO',string.format('gommes du modele %s: %s',a.id,table.concat(parts,', ')),i)
+  end
+ end
 end
 -- Délai laissé à la direction de course avant l'évacuation d'une IA immobile en pleine piste (Beta 1.24), pour ne
 -- jamais court-circuiter les règles : incident majeur puis neutralisation choisie (VSC, FCY, voiture de sécurité),
@@ -106,7 +126,7 @@ function M.new(g,profiles)
   flash=Flash.new(),classes=Classes.new(),traffic=Traffic.new(),weather=Weather.new(),incidents=Incidents.new(),pits=Pits.new(),pitplan=Pitplan.new(),panel=Panel.new(),penalties=Penalties.new(),delta=Delta.new(),mistakes=Mistakes.new(),deltaBeep={beepId=0,volume=1,nextAt=0},drsRule={restart=false,started=false,seen=false,travel={},last={},leader=0,reason=''},drs={was=false,beepId=0,volume=1},run={},runtimeG={},zones={},frame=nil,time=0,startedAt=0,session=-1,sessionType=-1,
   configured='',seed=-1,revision=0,configuredRevision=-1,eventSalt=0,wasStarted=false,
   log=U.newLog(K.logLines,K.logRate,K.logDedup),errors=0,frames=0,activeCount=0,maxFrame=0,meanFrame=0,
-  guard='init',panic=false,returning=false,pitSpline=-1,zoneStart=-1,
+  guard='init',guardKind=nil,onlineLogKind=nil,onlineLogAt=-math.huge,onlineWas=false,panic=false,returning=false,pitSpline=-1,zoneStart=-1,
   flood={user='',system=nil,writable=false,loaded=false,minLength=K.floodMinLength,at=0},probeSeen=false}
  e.announce=function(kind,value,extra,text) Incidents.message(e.incidents,kind,value,extra,text) end
  -- Événements des modules purs vers le journal circulaire (et le journal de session sur disque).
@@ -116,7 +136,7 @@ function M.new(g,profiles)
  -- Informations de l'overlay (Beta 1.25), lues par le panneau.
  e.hud=HudInfo.new(); e.panel.info=e.hud
  -- Panneaux lumineux du circuit et signaux FIA du joueur (Beta 1.32) ; dernier véhicule lent annoncé au journal.
- e.lights=Lights.new(); e.slowLogged=0
+ e.lights=Lights.new(); e.slowLogged=0; e.tyreModels={}; e.tyreModelsAt=0
  -- Départ arrêté après un drapeau rouge (Beta 1.34) : places de grille, formation, feux ; capacités vues par le
  -- script principal (retenue, allure, décalage).
  e.grid=Grid.new(); e.gridCaps=false
@@ -155,6 +175,7 @@ function M.rebase(e,amount)
  if e.panel.warnUntil>-math.huge then e.panel.warnUntil=e.panel.warnUntil-amount end
  Lights.rebase(e.lights,amount); Grid.rebase(e.grid,amount); Merge.rebase(e.merge,amount)
  if e.slowLoggedAt then e.slowLoggedAt=e.slowLoggedAt-amount end
+ if e.tyreModelsAt>0 then e.tyreModelsAt=e.tyreModelsAt-amount end
  if e.panel.changedAt>-math.huge then e.panel.changedAt=e.panel.changedAt-amount end
  e.classes.nextAt=e.classes.nextAt-amount; e.classes.bopAt=e.classes.bopAt-amount
  e.traffic.nextAt=e.traffic.nextAt-amount
@@ -259,6 +280,11 @@ function M.message(e,title,description,kind,time)
  if not own and M.drawnByAC(title,description) then
   local h=e.hud
   if e.acDrawnSession~=e.session then e.acDrawnSession=e.session; U.log(e.log,e.time or 0,'INFO','messages d AC: penalites et coupes laissees a l affichage d AC (CSP ne permet pas de les masquer)',-1) end
+  -- Beta 1.56 : AC sanctionne encore vos coupes alors que l'app gère vos limites de piste : noté une fois par session.
+  if not e.acCutSeen and e.run and e.run.sanPlayerTrackLimits and (e.profile=='P' or e.profile=='Q' or e.profile=='C') then
+   e.acCutSeen=true; e.acPenaltyWarned=true
+   U.log(e.log,e.time or 0,'WARN',string.format('limites de piste joueur: AC sanctionne encore les coupes (%s)',tostring(title or description or '')),-1)
+  end
   local key=type(title)=='string' and title~='' and title or tostring(description or '')
   if not h.seen[key] then
    h.seen[key]=true
@@ -428,8 +454,11 @@ function M.step(e,frame,dt)
  if e.session~=frame.session or e.sessionType~=frame.type then
   e.session=frame.session; e.sessionType=frame.type
   M.reset(e,now,true); e.wasStarted=frame.started; e.startedAt=frame.started and now-frame.time or now; e.launchAt=nil; e.jumpDue=false
-  e.classes.nextAt=0; e.flash=Flash.new()
+  e.classes.nextAt=0; e.flash=Flash.new(); e.tyreModels={}; e.tyreModelsAt=0
   e.weather=Weather.new(); Incidents.reset(e.incidents); Pits.reset(e.pits,now); Pitplan.reset(e.pitplan); Penalties.reset(e.penalties); Delta.reset(e.delta); Mistakes.reset(e.mistakes); Lights.reset(e.lights); Grid.reset(e.grid); e.slowLogged=0; e.panel.warnPending=false; e.panel.warnUntil=-math.huge; e.drsRule={restart=false,started=false,seen=false,travel={},last={},leader=0,reason=''}
+  -- Beta 1.56 : course commencée sans rapport (option) : rapport partiel avant l'oubli des sanctions ; pénalités d'AC
+  -- relues pour la nouvelle session.
+  e.reportLines=Sanctions.flushReport(e.sanctions,e,frame) or e.reportLines; e.acPenaltyWarned=false; e.acCutSeen=false; e.acPenaltyChecked=false
   e.configuredRevision=-1; Merge.reset(e.merge); Strategy.reset(e.strategy,now); Sanctions.reset(e.sanctions,now); Quali.reset(e.quali)
   FirstLap.reset(e.fl); e.fl.restartSerial=e.incidents.restartSerial or 0
   for i=1,K.maxCars do local s=e.states[i]; s.flOn=false; s.flW=0; s.flCare=0; s.flApproach=false end
@@ -455,6 +484,7 @@ function M.step(e,frame,dt)
   U.log(e.log,now,'INFO','profil: '..e.profile..(e.g.autoProfile and ' (automatique)' or ' (manuel)'),-1)
   e.loggedSession=e.session; e.loggedProfile=e.profile
  end
+ tyreModels(e,frame,now)
  local selected=e.profiles[e.profile]
  -- Beta 1.51 (demande du pilote) : profil automatique, préréglage intégré de la session appliqué et allumé dès qu'une
  -- nouvelle session est détectée (circuit et indice de session), une seule fois par session : un rechargement de l'app
@@ -549,6 +579,29 @@ function M.step(e,frame,dt)
  local reason=not e.g.enabled and 'disabled' or frame.online and 'online' or frame.replay and 'replay' or frame.paused and 'paused'
   or frame.finished and 'finished' or frame.length<=0 and 'spline' or e.panic and 'panic' or not C.any(e.p) and 'nosections' or 'ready'
  e.guard=reason
+ -- Beta 1.57 (CSP 0.3.0-preview212 chez un joueur) : champs de CSP absents de cette version, lus comme absents (valeurs
+ -- neutres) ; une ligne à chaque nouvelle liste.
+ if frame.fieldsSerial and frame.fieldsSerial~=e.fieldsLogged then
+  e.fieldsLogged=frame.fieldsSerial
+  if (frame.missingSim or '')~='' or (frame.missingCar or '')~='' then
+   U.log(e.log,now,'INFO','champs de CSP absents (version plus ancienne, lus comme absents): session '..(frame.missingSim~='' and frame.missingSim or '-')..' | voitures '..(frame.missingCar~='' and frame.missingCar or '-'),-1)
+  end
+ end
+ -- Beta 1.57 (Ved, Overtake : « en ligne » hors connexion) : genre d'une garde « online » (vraie session en ligne, mode
+ -- alt-online d'un script New Modes de CSP, lecture impossible), pour la fenêtre et le journal ; la garde elle-même (et le
+ -- pont) ne change pas. Une ligne au début de la suspension ou à un changement de genre ; une suspension du même genre
+ -- qui revient, au plus toutes les K.onlineLogGap s.
+ if reason=='online' then
+  local kind=frame.onlineKind=='alt' and 'alt' or frame.onlineKind=='read' and 'read' or 'online'
+  e.guardKind=kind
+  if kind~=e.onlineLogKind or not e.onlineWas and now-e.onlineLogAt>=K.onlineLogGap then
+   e.onlineLogKind=kind; e.onlineLogAt=now
+   U.log(e.log,now,'INFO',kind=='alt' and 'suspension: mode alt-online de CSP (script New Modes, annonce meme hors connexion), aucune commande ; lancer une session hors ligne depuis Content Manager'
+    or kind=='read' and 'suspension: lecture de l etat du jeu impossible ('..(frame.readError~='' and frame.readError or 'erreur inconnue')..'), aucune commande'
+    or 'suspension: session en ligne, aucune commande',-1)
+  end
+  e.onlineWas=true
+ else e.guardKind=nil; e.onlineWas=false end
  if reason~='ready' then
   Merge.idle(e.merge,e.commands)
   for i=1,K.maxCars do local cmd=e.commands[i]; cmd.active=false; cmd.stopHold=false; cmd.rulePit=false; cmd.pitHold=false; cmd.penaltyPass=false; cmd.pitCompound=-1; cmd.fuelTarget=-1; cmd.fuelSet=-1; cmd.scPark=false; cmd.scSpeed=K.unlimitedSpeed; cmd.recover=false; cmd.drsBlock=false; cmd.startDelay=-1; cmd.slowCalled=false end
@@ -650,9 +703,12 @@ function M.step(e,frame,dt)
   local a=frame.cars[i]; local s=e.states[i]; local c=e.incidents.cars[i]
   if c.incident and c.since==now and not a.player and c.spin>=K.spinTime then
    local cmd=e.commands[i]
-   U.log(e.log,now,'INFO',string.format('tete-a-queue, contexte: %s | etat %s depuis %.1f s, derniere manoeuvre %s, decalage %+.2f, prudence %.2f (base %.2f), agressivite %.2f (base %.2f), niveau %.2f, aspiration %s, frein app %.2f',
+   U.log(e.log,now,'INFO',string.format('tete-a-queue, contexte: %s | etat %s depuis %.1f s, derniere manoeuvre %s, decalage %+.2f, prudence %.2f (base %.2f), agressivite %.2f (base %.2f), niveau %.2f, aspiration %s, frein app %.2f, limite %s, inattention %s, etat precedent %s (%s)',
     a.name,s.state,now-s.since,U.finite(s.maneuverAt) and string.format('il y a %.1f s',now-s.maneuverAt) or 'aucune',cmd.offset or 0,cmd.caution or 0,s.baseCaution or 0,cmd.aggression or 0,s.baseAggression or 0,cmd.level or 0,
-    (s.slipTime or 0)>K.slipTime and 'oui' or 'non',s.appBrake or 0),i)
+    (s.slipTime or 0)>K.slipTime and 'oui' or 'non',s.appBrake or 0,
+    -- Beta 1.54 : limite de vitesse de l'app (espacement, drapeau jaune), perte de concentration et état quitté juste avant.
+    math.min(cmd.speedLimit or K.unlimitedSpeed,cmd.yellowLimit or K.unlimitedSpeed)<K.unlimitedSpeed and string.format('%.0f km/h',math.min(cmd.speedLimit or K.unlimitedSpeed,cmd.yellowLimit or K.unlimitedSpeed)) or 'aucune',
+    (s.lapseUntil or 0)>now and 'oui' or 'non',s.prevState or 'aucun',s.prevReason or 'aucune'),i)
   end
   if a.valid and not a.player and not a.pit then
    local row=e.perception.rows[i]
@@ -1097,6 +1153,17 @@ function M.step(e,frame,dt)
  end
  -- Beta 1.42 : sanctions des IA (limites de piste, virage coupé, procédure, contresens, purge, place à rendre).
  Sanctions.update(e.sanctions,e,frame,now,dt)
+ -- Beta 1.56 : vos limites de piste gérées par l'app alors que les pénalités d'AC sont actives (lues une fois par
+ -- session) : prévenu une fois (journal, accueil, overlay), la règle de l'app continue (décision du pilote).
+ if not e.acPenaltyChecked and e.run.sanPlayerTrackLimits and C.on(e.p,'sanctions') and (e.profile=='P' or e.profile=='Q' or e.profile=='C') then
+  e.acPenaltyChecked=true
+  if frame.penaltiesEnabled==true then
+   e.acPenaltyWarned=true
+   U.log(e.log,now,'WARN',string.format('limites de piste joueur: penalites d AC actives (roues dehors autorisees %s), coupez-les dans Content Manager pour eviter une double sanction',
+    frame.allowedTyresOut~=nil and tostring(frame.allowedTyresOut) or '?'),-1)
+   Incidents.message(e.incidents,'playerSanction',0,0,L.acPenaltiesOnShort)
+  end
+ end
  -- Beta 1.49 : annonce de l'arrêt F1 écartée dans une image déjà prise : publiée ici, à l'image suivante libre.
  Incidents.flushHeld(e.incidents,now)
  return true

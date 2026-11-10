@@ -422,7 +422,7 @@ function M.update(t,e,frame,now,_dt)
    -- (jamais un arrêt à chaque tour).
    if c.serving then
     if a.inPitBox and inc.red then c.stopRed=true end
-    if a.inPitBox and p.pitTyres and (not inc.red or p.redFlagWork) and (cmd.pitCompound or -1)<0 and e.pits.cars[i].visit==c.servedVisit then cmd.pitCompound=Pits.compound(a,cmd,p) end
+    if a.inPitBox and p.pitTyres and (not inc.red or p.redFlagWork) and (cmd.pitCompound or -1)<0 and e.pits.cars[i].visit==c.servedVisit and (e.pits.cars[i].laneVisit==nil or e.pits.cars[i].laneVisit==c.servedVisit) then cmd.pitCompound=Pits.compound(a,cmd,p,e.pits.cars[i].usedDry,e.pits.cars[i].usedCount) end
     if not a.pit then c.serving=false; c.checkAfter=true; c.checkAt=now+K.strategyCheckDelay end
    end
    if c.checkAfter and now>=c.checkAt and not a.pit then

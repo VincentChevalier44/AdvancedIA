@@ -32,9 +32,33 @@ A safety assertion checks every move of the core in the bench: no movement towar
 at most six direction changes per minute. This does not prove the absence of collisions in the real physics engine,
 between two perceptions or with another app writing at the same time.
 
-The CSP calls in the integration tests are simulated. Native detection of a level above 100 %, the headlight
-calibration and the left/right signs must produce their observations in the game; the bench checks their branches,
-their restores and their safeguards.
+The CSP calls in the integration tests are simulated. The 1.05 read-back of a level above 100 % (logged since Beta 1.53
+as `niveau au-dessus de 100 %: sonde 1.05 relue …`), whether AC really drives faster above 100 % when the read-back is
+capped, the headlight calibration and the left/right signs must produce their observations in the game; the bench
+checks their branches, their restores and their safeguards.
+
+AI spins at fixed places of a track (Nordschleife, 9 November: 14 spins in 10 min, 8 of them between 21.0 and 21.3 km)
+cannot be reproduced on the bench, which has no tyre physics. Since Beta 1.54 each spin context line says the app's
+speed limit, whether a lapse in focus was running and the state the AI had just left; whether the app plays a part
+needs the same session with APP OFF (or the debug log) in the game.
+
+Beta 1.55 changes AI behaviour outside the race (futile overtake attempts cut, ordinary yields only to a really faster
+AI, flashes suspended after yields without a pass) and the flying-lap warning to the player; the bench reproduces the
+9 November patterns, but the effect on a real track day (fewer yields, shorter attempts, a warning only for cars that
+really arrive) must be checked in the game's session log (`abandons :`, `fins de cession :`, `cessions refusees`,
+`appels de phares suspendus`). Whether CSP's AI rain-tyre flag changes the tyres shown, or the grip, independently of
+the compound fitted is not documented by the SDK; the minute summary now counts that flag (`drapeau pluie de CSP`), and
+`pneus pluie de CSP revenus sur piste seche` tells whether it comes back in the dry.
+
+Beta 1.58 hands an AI the app was driving back to AC in the pit lane (offset ramped to zero, then the original level,
+aggression, caution, grip and speed); the bench reproduces a finished car with a leftover offset and speed cap, but the
+return to the boxes after a real race must be seen in game.
+
+Beta 1.56 adds three options, all off by default (your track limits handled by the app, escalating penalties, the race
+report). With the defaults the golden, race142, soak and unit-suite journals are identical to Beta 1.55. With the options
+on, the bench checks the warnings, the time penalty, the AC throttle-cut request and its fallback, the escalation and the
+CSV file; whether AC applies the throttle cut with Content Manager's penalties off, and what CSP reads for
+`penaltiesEnabled` and `allowedTyresOut`, can only be seen in the game.
 
 The benchmark times the **pure core**, without the SDK reads and writes or the interface. The counter of
 **DIAGNOSTICS › Performance** measures the AI loop with the SDK reads and writes, without the window drawing. The total
@@ -49,6 +73,30 @@ current status is in [MESURES.md](MESURES.md).
 The lists of Beta 1.46 and older were removed in Beta 1.52 to keep this page about the current behaviour: their points
 that still apply are under *Still open from earlier versions*, and the git history keeps the full lists. The points
 below have not been observed in game yet.
+
+### Beta 1.58
+
+- [ ] Race of a few laps: after the chequered flag the AI drive into the pit lane and to their boxes without hitting
+  the pit wall or each other. The log shows `voiture rendue a AC apres l arrivee: <name>` only for cars that had an
+  offset or a speed cap left, once each.
+- [ ] A race pit stop: the AI drives down the lane to its box normally, then leaves and is driven again on track.
+- [ ] F1 rules with a mandatory stop: an AI that stops on track during its requested stop and is moved to its box by AC is
+  serviced once (`arret aux stands: 1 (dont 1 dans la fenetre)`), then leaves; never `pneus poses` lines in a loop.
+
+### Beta 1.56
+
+- [ ] Content Manager penalties **off**, **Your track limits handled by the app** on, **AC throttle cut**: after the
+  warnings, a four-wheel off gives `limites de piste joueur: coupure des gaz 5 s demandee a AC`, then AC's own throttle
+  cut (overlay AC-penalty panel), and no `, coupure des gaz refusee par AC` line. If that line appears, AC does not apply
+  SlowDown with these settings.
+- [ ] Content Manager penalties **on**: the line `limites de piste joueur: penalites d AC actives (roues dehors autorisees N)`
+  appears once, with the HOME warning. Note N for each Content Manager setting (penalties on and off): it tells what
+  `allowedTyresOut` means (race.ini `ALLOWED_TYRES_OUT=-1` may mean AC's penalty is disabled, as for
+  `physics.setAllowedTyresOut`).
+- [ ] Practice with the option on: a four-wheel off logs `tour invalide joueur (app): secteur n` and shows a notice;
+  AC's own lap time is unchanged.
+- [ ] Race with **Race report (CSV file)** on: `Documents/Assetto Corsa/logs/AdvancedIA-race.csv` after the finish, one
+  row per car, opens in a spreadsheet.
 
 ### Beta 1.52
 

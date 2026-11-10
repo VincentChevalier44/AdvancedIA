@@ -138,7 +138,7 @@ No CSP getter exists for the current offset, the extra grip, the caution or a to
 | Function | Contract (SDK) and use |
 |---|---|
 | `physics.setAISplineOffset(i, offset, overrideAiAwareness?)` | **Normalised**: −1 is full left and +1 full right, limited by the track width. It is never in metres; `setAISplineAbsoluteOffset` takes metres and is not used. The sign is calibrated; see [Pitfalls](#pitfalls-observed-in-game). |
-| `physics.setAILevel(i, level)` | Setter range 0–2; the `aiLevel` field is documented 0–1. The app probes 1.05 (`K.probeLevel`) with a deferred read-back and restores the initial value if that fails. In native mode commands go up to `K.nativeLevelMax` (1.1); otherwise they stop at 1 and the optional grip bonus stands in. |
+| `physics.setAILevel(i, level)` | Setter range 0–2 (SDK `lib.lua`, « AI level from 0 to 2 »); the `aiLevel` read field is documented 0–1. Since Beta 1.53 the **Automatic** mode writes natively up to `K.nativeLevelMax` (1.1) as soon as the command exists. The app still probes 1.05 (`K.probeLevel`) once with a deferred read-back, restores the initial value and logs the result (`niveau au-dessus de 100 %: …`); a read-back below 1 + `K.probeTolerance` (`caps.clampProven`, also detected later on any car) switches Automatic to the grip bonus only if it is allowed. **Native if confirmed** needs the 1.05 read-back (`caps.native110`), otherwise commands stop at 1. |
 | `physics.setAIAggression(i, value)` | 0–1. 100% in the launcher is 0.95, so commands are capped at 0.95. |
 | `physics.setAICaution(i, value)` | 0–16, default 1, experimental. Commands stay between 0.5 and 16. |
 | `physics.setExtraAIGrip(i, value)` | **1 = normal grip**; "120% by default" means 1.2. Grip is written only when the grip bonus or the weather compensation is on. One setter combines both, and the weather factor is at most `K.weatherGripMax` (1.3). It never stacks with native wet tyres. |
@@ -208,7 +208,8 @@ No CSP getter exists for the current offset, the extra grip, the caution or a to
 
 - **`physics.setAIPitStopRequest(i, value)`.** Since 0.3.0-preview147, `false` also blocks the pits for a short time.
   - A request therefore stays true in the pit lane, until the stop.
-  - `false` is sent only outside the pit lane, and on unload.
+  - `false` is sent outside the pit lane, on unload, and (Beta 1.58) in the pit lane once the car has been serviced and
+    has left its box: the short block then keeps AC from bringing it back to its box again.
 - **`physics.setAIRainTyres(i, bool)`** overrides AC's choice. It is called only when the native `isAIUsingRainTyres` differs from the decision, or when the app already holds it.
 - **`physics.setAITyres(i, compoundIndex)`** sets the compound and **resets tyre damage**. It is called only:
   - in the pits, stopped or driving in the pit lane;
@@ -314,7 +315,7 @@ No CSP getter exists for the current offset, the extra grip, the caution or a to
 - **`ac.accessAppWindow(name)`** returns an `ac.AppWindowAccessor?`.
   - The app uses the names `IMGUI_LUA_AdvancedIA_main` (its own window, made compact once with `:size()` and `:resize()`) and `IMGUI_LUA_SpotterEnginer_main` (opened with `:setVisible(true)`).
   - This name pattern is the convention the code relies on; it is not documented in the SDK.
-- **Overlay.** `ui.transparentWindow(id, pos, size, noPadding, inputs, content)` draws the overlay, like SuperHUD.
+- **Overlay.** `ui.transparentWindow(id, pos, size, noPadding, inputs, content)` draws the app's own overlay.
   - `inputs` is on while the overlay is unlocked or not click-through.
   - The screen size comes from `ac.getUI().windowSize`.
 - **Custom drawing.** The interface is drawn by the app: `ui.drawRectFilled`, `ui.drawQuadFilled`, `ui.drawTriangleFilled`, `ui.drawCircleFilled`, `ui.drawImage`, `ui.invisibleButton`, `ui.itemHovered`/`itemActive`, mouse functions, `ui.pushClipRect`, `ui.inputText` and `ui.setNextItemWidth`.
