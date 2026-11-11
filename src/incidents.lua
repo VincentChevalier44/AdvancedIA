@@ -313,7 +313,9 @@ end
 local function passable(frame,list,count,lo,hi,sign)
  local iv={}
  for k=1,count do
-  local a=frame.cars[list[k]]; local lat=(a.splineLatValid and a.splineLat or 0)*sign; local half=a.width*0.5+K.redBlockMargin
+  -- Beta 1.59.1 : écart selon le sens de la piste (lu pour toute voiture lente, dans toutes les sessions) ; l'écart du
+  -- départ n'existait que pendant le départ d'une course : ailleurs, toutes les voitures étaient comptées sur la trajectoire.
+  local a=frame.cars[list[k]]; local lat=(a.lineLatValid and a.lineLat or a.splineLatValid and a.splineLat or 0)*sign; local half=a.width*0.5+K.redBlockMargin
   iv[#iv+1]={lat-half,lat+half}
  end
  table.sort(iv,function(x,y) return x[1]<y[1] end)
@@ -488,8 +490,10 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   -- Beta 1.59 : voiture arrêtée hors piste, loin de la trajectoire (plus de K.offClearLat m) depuis K.offClearTime s :
   -- dégagée comme par les commissaires (sinon au bout de K.incidentMaxAge s hors piste, comme avant).
   local edge=math.max(a.leftWidth or 0,a.rightWidth or 0)
-  local beyond=(a.wheelsOut or 0)>=4 or edge>0 and a.splineLatValid and math.abs(a.splineLat)>edge+K.offClearEdge
-  local clear=incident and not c.dismissed and a.offtrack and beyond and c.still>=K.offClearTime and a.splineLatValid and math.abs(a.splineLat)>K.offClearLat
+  -- Beta 1.59.1 : hors du départ d'une course, l'écart latéral n'est pas lu : distance à la trajectoire (instantané).
+  local lat=a.splineLatValid and math.abs(a.splineLat) or a.lineDistValid and a.lineDist or nil
+  local beyond=(a.wheelsOut or 0)>=4 or edge>0 and lat~=nil and lat>edge+K.offClearEdge
+  local clear=incident and not c.dismissed and a.offtrack and beyond and c.still>=K.offClearTime and lat~=nil and lat>K.offClearLat
   if incident and (c.dismissed or clear or a.offtrack and now-c.since>K.incidentMaxAge) then
    if not c.dismissed then note(t,'INFO',clear and 'incident ecarte: arretee hors piste, loin de la trajectoire depuis '..K.offClearTime..' s' or 'incident ecarte: hors piste depuis plus de '..K.incidentMaxAge..' s',i) end
    c.dismissed=true; incident=false
@@ -514,7 +518,7 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   if eligible and not a.player and c.still>=K.redIncidentStill and now-c.still>t.redEnd then
    t.redStopped=t.redStopped+1
    local damaged=(a.damageSuspension or 0)>=K.slowPitSuspension or (a.damageBody or 0)>=K.slowPitBody
-   local offLine=a.offtrack or a.splineLatValid and math.abs(a.splineLat)>K.redOffLine
+   local offLine=a.offtrack or a.lineLatValid and math.abs(a.lineLat)>K.redOffLine or not a.lineLatValid and a.splineLatValid and math.abs(a.splineLat)>K.redOffLine
    if queued(frame,i,p) and not damaged and not c.spunIncident and not offLine then t.redQueued=t.redQueued+1
    elseif incident or damaged or c.spunIncident or offLine then t.redCount=t.redCount+1; t.redCars[t.redCount]=i end
   end

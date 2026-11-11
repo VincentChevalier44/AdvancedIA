@@ -2,6 +2,32 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 1.59.1 — 11 November 2026
+
+Fixes after bedstyboi's report (practice at Donington: a yellow flag that never left the last sector, a penalty for
+passing crashed cars, a black flag in free practice).
+
+- **Cleared off track, really.** The 1.59 rule « a car stopped off track, far from the racing line, is cleared after
+  15 s » only worked during a race start: the distance to the racing line was not read at any other time. It is now read
+  for every slow or stopped car off the track, in every session. Before, such a car kept its yellow flag until it was
+  towed (30 s or more) or for up to 2 minutes.
+- **Car wedged on the track.** A car in an incident on the track that keeps twitching without leaving a 15 m circle
+  (against a wall, behind a barrier) was never « stopped » long enough to be towed, and kept a double yellow for ever. It
+  is now towed to its pit box after 45 s (`IA immobile depannee a son stand (bloquee, …)`).
+- **Passing a crashed car under yellow.** A car that has just crashed or just ended its incident can be passed for 30 s
+  (10 s before, the yellow hold): it often rejoins slowly while another car's zone is still active. Same rule for the AI.
+- **Red flag, « track really blocked ».** The decision of Beta 1.47 placed every stopped car on the racing line except
+  during a race start, for the same reason (lateral position not read). The lateral position of every slow or stopped
+  car is now read along the track direction (not the car's heading, wrong for a car sideways), in every session: cars
+  across the whole width give the red flag, cars parked on one side with room to pass do not.
+- **Throttle-cut penalty, explained.** The overlay's explanation line now reads « AC penalty: lift fully off the throttle
+  for N s; it then clears by itself » (the penalty is AC's own; the app only requests it and shows AC's countdown).
+- **No black flag outside the race.** In practice and qualifying, offences under flags beyond the allowed number keep
+  giving the throttle cut; AC's black flag (disqualification) is for the race only. The « next offence disqualifies »
+  warning follows the same rule.
+
+Verified by `tests/review159n.lua` (6 checks) and 14 mutations. Journals of the reference scenes unchanged.
+
 ## Beta 1.59 — 10 November 2026
 
 A review of Beta 1.58 after the driver's races of 10 November, the fixes asked for in the audit, and an « overlay off »

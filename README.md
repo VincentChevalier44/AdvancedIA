@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 1.59. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 1.59.1. See [CHANGELOG.md](CHANGELOG.md).
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
 
@@ -654,7 +654,7 @@ the careful first lap (a first-corner pile-up), and at most a quarter of the lap
 - **Mandatory stops**: a stop missing when the window closes is penalised.
 - **The sanction.**
   - AC adds no time to the classification, so the penalty is a native **throttle cut** (5 s, **Penalty: throttle cut (s)**). It is announced on screen and on the overlay, and logged. It needs race settings that allow AC's throttle-cut penalty.
-  - Beyond **Offences allowed before disqualification** (5), you are disqualified with AC's black flag. The overlay shows your count, and its black flag says *Disqualified: 6 offences*.
+  - Beyond **Offences allowed before disqualification** (5), you are disqualified with AC's black flag, in a race only: in practice and qualifying you keep getting the throttle cut. The overlay shows your count, and its black flag says *Disqualified: 6 offences*.
 
 **AI sanctions** (**AI sanctions under flags**; Practice, Qualifying and Race):
 - An AI that overtakes under yellow, a neutralisation or a red flag lifts off for a few seconds. There is at most one sanction every 20 s, and a car that went off track during the pass does not count.

@@ -1722,7 +1722,8 @@ return function(source)
  end)
  -- Beta 1.33 : mise à jour depuis GitHub, app complète sur une imitation de CSP (réseau, empreinte, zips, fichiers).
  local Fake=require('tests/updatefake')
- local function ver(d) local major,minor=C.release:match('(%d+)%.(%d+)'); return 'Beta '..major..'.'..(tonumber(minor)+d) end
+ -- Beta 1.59.1 : version installée telle quelle (numéro à trois parties) ; les autres : numéro mineur décalé.
+ local function ver(d) if d==0 then return C.release end; local major,minor=C.release:match('(%d+)%.(%d+)'); return 'Beta '..major..'.'..(tonumber(minor)+d) end
  local Update=require('src/update')
  local API='get https://api.github.com/repos/VincentChevalier44/AdvancedIA/releases/latest'
  local function logged(text) local e=HUMANAI.engine; for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find(text,1,true) then return true end end; return false end

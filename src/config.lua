@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 1.59',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 1.59.1',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -1306,4 +1306,11 @@ for key,value in pairs(k159hc) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- cornerGiveBackGap m derrière, pas de nouvelle attaque pendant cornerGiveHold s).
 local k159t={slowUnknownRatio=0.5,yieldRefuseKmh=3,yieldPassDeltaKmh=15,yieldCapGapOff=40,yieldCapDecelOff=6,nordschleifeMinLength=15000,radarClearMargin=0.3,radarOpenRate=0.5,radarLatTau=0.2,radarOpenHold=0.15,corridorLeadMargin=1.5,cornerPhaseGap=0.5,yieldQueueTime=3,slowQueueLinks=6,cornerNoseMargin=2.2,cornerGiveLift=0.8,cornerGiveHold=1.5,cornerEntryWindow=1,cornerGiveBackGap=20,cornerLiftRate=1,yieldCapReleaseKmh=8,yieldCapReleaseMargin=15}
 for key,value in pairs(k159t) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.59.1 (rapport de bedstyboi, Donington, 11 novembre) : distance à la trajectoire lue pour une voiture hors piste
+-- sous offLineKmh km/h (dégagement des voitures arrêtées hors piste, qui n'était jugé qu'au départ d'une course) ;
+-- voiture en incident en piste qui ne s'éloigne pas de K.stuckRadius m en trackWedgedTime s : dépannée ; voiture
+-- accidentée ou tout juste repartie : dépassable sous drapeau pendant passAfterIncident s ; écart latéral selon le sens
+-- de la piste (drapeau rouge, piste bloquée) : second point de la trajectoire lineAheadMeters m plus loin.
+local k159n={offLineKmh=25,trackWedgedTime=45,passAfterIncident=30,lineAheadMeters=5}
+for key,value in pairs(k159n) do assert(M.K[key]==nil,key); M.K[key]=value end
 return M

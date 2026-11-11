@@ -107,6 +107,8 @@ local function laneProbe()
  if laneVec==nil then local ok,v=pcall(function() return vec3() end); laneVec=ok and v or false end
  return laneVec
 end
+-- Beta 1.59.1 : longueur du circuit de la lecture en cours (sens de la piste d'une voiture lente).
+local trackLength=0
 local function readCar(a,index,dt,lane)
  a.valid=false; a.control=false; a.player=false; a.teleport=false
  local raw=carGet(index)
@@ -185,10 +187,25 @@ local function readCar(a,index,dt,lane)
  end
  -- Écart à la trajectoire IA (m, repère latéral interne : positif à droite), lu seulement pendant le départ.
  a.splineLat=0; a.splineLatValid=false
- if lane and a.control and a.splineValid then
+ -- Beta 1.59.1 : voiture lente ou arrêtée hors des stands, dans toutes les sessions (src/incidents.lua) : distance à la
+ -- trajectoire IA (m ; voiture arrêtée hors piste loin de la trajectoire, dégagée) et écart latéral selon le sens de la
+ -- PISTE (m ; drapeau rouge, piste vraiment bloquée : l'écart du départ suit le cap de la voiture, faux pour une voiture
+ -- en travers). Sens de la piste : second point K.lineAheadMeters m plus loin.
+ a.lineDist=0; a.lineDistValid=false; a.lineLat=0; a.lineLatValid=false
+ local slow=not a.pit and a.kmh<K.offLineKmh
+ if (lane and a.control or slow) and a.splineValid then
   local probe=laneProbe()
   if probe and pcall(ac.trackProgressToWorldCoordinateTo,a.spline,probe) and U.finite(probe.x) and U.finite(probe.z) then
-   a.splineLat=(x-probe.x)*lz-(z-probe.z)*lx; a.splineLatValid=true
+   if lane and a.control then a.splineLat=(x-probe.x)*lz-(z-probe.z)*lx; a.splineLatValid=true end
+   if slow then
+    local px,pz=probe.x,probe.z
+    a.lineDist=math.sqrt((x-px)^2+(z-pz)^2); a.lineDistValid=true
+    local step=trackLength and trackLength>0 and K.lineAheadMeters/trackLength or 0
+    if step>0 and pcall(ac.trackProgressToWorldCoordinateTo,(a.spline+step)%1,probe) and U.finite(probe.x) and U.finite(probe.z) then
+     local tx,tz=probe.x-px,probe.z-pz; local n=math.sqrt(tx*tx+tz*tz)
+     if n>K.lineAheadMeters*0.5 and n<K.lineAheadMeters*2 then a.lineLat=((x-px)*tz-(z-pz)*tx)/n; a.lineLatValid=true end
+    end
+   end
   end
  end
  return a.valid
@@ -317,6 +334,7 @@ function M.read(s,dt,now,light)
  if not light and s.lightLast then s.metaAt=-1; s.configSession=-1 end
  s.lightLast=light==true
  s.player=0
+ trackLength=s.length
  if not light then for i=1,s.count do
   local a=s.cars[i]; local good,result=pcall(readCar,a,i-1,dt,s.laneWanted)
   -- Beta 1.57 : premier échec d'une voiture : champs des voitures essayés un par un, puis relecture par la vue.

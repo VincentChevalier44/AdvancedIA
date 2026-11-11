@@ -961,7 +961,10 @@ function M.step(e,frame,dt)
    if e.run.yellowMessage then Incidents.message(e.incidents,penaltyMessages[penalty],seconds) end
    Panel.notice(e.panel,penalty,seconds,now)
    -- Beta 1.32 : dernière infraction tolérée, la suivante disqualifie : avertissement (drapeau noir et blanc).
+   -- Beta 1.59.1 : en course seulement (pas de drapeau noir en essais ni en qualifications).
+   if e.profile=='C' then
    if t.count>=e.run.penaltyDisqualify then Panel.warn(e.panel); U.log(e.log,now,'INFO','avertissement du joueur: prochaine infraction, disqualification',frame.player) end
+   end
   end
  end
  -- Sanctions des IA sous drapeau jaune : journal, message à l'écran pour une disqualification.
@@ -1158,10 +1161,14 @@ function M.step(e,frame,dt)
    local neutralStuck=c.incident and neutral and still>=math.max(K.neutralRecoverTime,wait)
    local trackStuck=c.incident and c.onTrack and not c.holding and e.run.section_accidents and still>=math.max(K.trackRecoverTime,wait)
    local stuck=c.incident and not c.holding and e.run.section_accidents and stalled>=math.max(K.stuckRecoverTime,wait)
+   -- Beta 1.59.1 : en piste, voiture en incident qui remue sans avancer (contre un mur, derrière un rail : jamais à
+   -- l'arrêt assez longtemps) : dépannée après K.trackWedgedTime s sans s'éloigner de K.stuckRadius m.
+   local wedged=c.incident and c.onTrack and not c.holding and e.run.section_accidents and (c.stuckFor or 0)>=math.max(K.trackWedgedTime,wait)
    local broken=c.incident and e.run.section_accidents and stalled>=math.max(K.brokenRecoverTime,wait) and ((a.damageSuspension or 0)>=K.brokenSuspension or (a.engineLife or K.engineLifeNew)<=K.brokenEngine or (a.damageGearbox or 0)>=K.brokenGearbox)
    cmd.recover=not a.pit and (red and still>=K.redRecoverTime or neutralStuck or trackStuck or broken or stuck)
+   if wedged and not a.pit then cmd.recover=true end
    cmd.recoverReason=red and 'drapeau rouge' or neutralStuck and 'neutralisation' or broken and 'cassee' or trackStuck and 'en piste' or 'bloquee'
-   cmd.recoverStill=(red or neutralStuck or trackStuck) and still or stalled
+   cmd.recoverStill=(red or neutralStuck or trackStuck) and still or wedged and not stuck and not broken and c.stuckFor or stalled
    -- Beta 1.41 : IA anormalement lente en tête de file depuis K.slowPitTime s et endommagée (suspension, carrosserie) :
    -- hors course, dépannée à son stand (puis réparée, plus bas) ; en course, arrêt demandé (réparée selon les règles),
    -- jamais stands fermés ni sous drapeau rouge.

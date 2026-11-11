@@ -6163,6 +6163,7 @@ for name,test in pairs(require('tests/review159hc')) do assert(tests[name]==nil,
 for name,test in pairs(require('tests/review159r')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture des tranches H fusionnées)
 for name,test in pairs(require('tests/review159t')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (trafic des journées circuit, préréglage Journée circuit)
 for name,test in pairs(require('tests/review159u')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture de la tranche trafic)
+for name,test in pairs(require('tests/review159n')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59.1 (rapport de bedstyboi)
 -- Beta 1.50 : pose en piste de la voiture de sécurité (Beta 1.48) gardée en repli ; ces scènes l'exercent avec une voiture
 -- de sécurité qui ne quitte jamais son emplacement, libérée dès la fin de l'appel, sans règle de vue du joueur (testées
 -- dans tests/start150.lua).

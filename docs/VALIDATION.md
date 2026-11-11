@@ -74,6 +74,15 @@ The lists of Beta 1.46 and older were removed in Beta 1.52 to keep this page abo
 that still apply are under *Still open from earlier versions*, and the git history keeps the full lists. The points
 below have not been observed in game yet.
 
+### Beta 1.59.1
+
+- [ ] Practice with frequent offs at one corner: a car parked well off the track is logged `incident ecarte: arretee hors
+  piste, loin de la trajectoire depuis 15 s` and its yellow flag goes; no yellow flag stays with nothing on the track.
+- [ ] A car wedged against a wall on the track is towed (`IA immobile depannee a son stand (bloquee, …)`) within a minute.
+- [ ] Practice or qualifying: more than 5 offences under flags give throttle cuts only, never AC's black flag.
+- [ ] Passing a car that has just crashed and rejoins slowly, under another car's yellow: no penalty.
+- [ ] AC's throttle-cut penalty: the overlay explains how to serve it; note how AC really counts it down (speed, pedal).
+
 ### Beta 1.59
 
 - [ ] Short race (8 to 10 laps): fewer yellow notices than in 1.57/1.58; a car stopped or crawling on the track still

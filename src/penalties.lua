@@ -39,7 +39,9 @@ function M.rebase(t,amount)
 end
 -- Voiture qu'il est permis de doubler sous drapeau jaune : accidentée (ou tout juste repartie, le temps du maintien
 -- de la zone), arrêtée ou très lente, aux stands, hors piste.
-local function passable(b,c,p,now) return not b.valid or b.pit or b.offtrack or c.incident or c.holding or now-c.clearedAt<p.yellowHold or b.kmh<p.obstacleSpeedKmh end
+-- Beta 1.59.1 (bedstyboi : pénalité pour avoir doublé des voitures accidentées) : aussi pendant K.passAfterIncident s
+-- après son accident ou la fin de son incident (elle repart au ralenti, souvent abîmée, la zone d'une autre encore active).
+local function passable(b,c,p,now) return not b.valid or b.pit or b.offtrack or c.incident or c.holding or now-c.clearedAt<math.max(p.yellowHold,K.passAfterIncident) or now-c.lastCrash<K.passAfterIncident or b.kmh<p.obstacleSpeedKmh end
 M.passable=passable
 -- Voiture qui purge une sanction (IA au pied levé, joueur aux gaz coupés ou disqualifié) : elle peut être doublée.
 local function serving(t,j,now,player)
@@ -54,6 +56,9 @@ end
 -- Escalade : coupure des gaz jusqu'au nombre d'infractions toléré, puis disqualification (drapeau noir).
 local function decide(t,reason,seconds,now,p)
  t.requestId=t.requestId%K.counterMax+1; t.reason=reason; t.count=t.count+1; t.lastAt=now; t.dirty=true
+ -- Beta 1.59.1 (bedstyboi : drapeau noir en essais libres) : disqualification en course seulement ; en essais et en
+ -- qualifications, la coupure des gaz continue au-delà du nombre toléré.
+ if t.race==false then t.kind='slow'; t.seconds=seconds; return reason end
  if t.count>p.penaltyDisqualify then t.kind='dq'; t.disqualified=true; t.seconds=0 else t.kind='slow'; t.seconds=seconds end
  return reason
 end
@@ -74,6 +79,7 @@ local function deadline(regimeAt,now) return max(regimeAt+K.passGiveBack,now+K.g
 -- d : temps delta du joueur (infraction au passage d'un mini-secteur ou à la sortie d'un double drapeau jaune).
 function M.update(t,frame,p,profile,inc,now,_,d)
  local i=frame.player
+ t.race=profile=='C'
  -- Dépassement interdit à 150 m d'une zone jaune et dedans (comme pour les IA), sous neutralisation et au rouge, et
  -- jusqu'à la ligne après une reprise derrière la voiture de sécurité. Un dépassement en attente survit à la fin du
  -- régime : il est pardonné si la place est rendue, sanctionné à l'échéance sinon.
