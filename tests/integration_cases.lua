@@ -3,6 +3,10 @@ local C=require('src/config')
 local E=require('src/engine')
 local L=require('src/lang')
 local ffi=require('ffi')
+-- Beta 1.62 (décision 7 du pilote) : « Realistic race » active les options de course pertinentes. Les cas écrits avant
+-- (comportement de la 1.61, chaque option allumée par son propre cas) partent du préréglage avec ces options coupées.
+local raceOptions162={'passAid','rearAwareness','sanContact','startRealism','dynamicPersona','fineInputs','wearPace','strategySmart'}
+local function course161(p) C.preset('Course','C',p); for _,k in ipairs(raceOptions162) do p[k]=false end; return p end
 return function(source)
  -- Beta 1.51 : les cas réglés à la main partent sans préréglage de la session (comme la fixture) ; le dernier cas joue
  -- la vraie première installation avec l'interrupteur allumé (défaut de l'app).
@@ -20,7 +24,7 @@ return function(source)
  -- Beta 1.17 : la section Règles a son propre onglet.
  -- Beta 1.19 : arrêts aux stands et voiture de sécurité sous leur titre dans l'onglet Règles de course.
  local stopsKeys={mandatoryStops=true,pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true}
- local safetyKeys={safetyCarSpeedKmh=true,safetyCarEscalation=true,restartOvertake=true}
+ local safetyKeys={safetyCarEscalation=true,restartOvertake=true}
  local function section(group,key)
   if group=='rules' then go('rules'); press('rules_view_'..(stopsKeys[key] and 'stops' or safetyKeys[key] and 'safety' or 'all'))
   else go('settings'); press('cat_'..group) end
@@ -207,9 +211,9 @@ return function(source)
      -- Beta 1.59 : réglage jamais montré (lightsYellow, figé à vrai) : aucune commande, valeur gardée.
      HUMANAI.engine.p['section_'..s.group]=true; section(s.group,s.key); redraw()
      assert(not drawn('set_'..s.key),profile..': '..s.key..' never shown')
-    elseif C.hidden(profile,s.key) then
+    elseif C.uiHidden(profile,s.key) then
      HUMANAI.engine.p['section_'..s.group]=true; section(s.group,s.key); redraw()
-     local note=(C.penaltyKeys[s.key] or C.sanctionKeys[s.key] and C.solo(profile)) and L.penaltiesTrackDay or (C.raceKeys[s.key] or C.sanctionRaceKeys[s.key]) and L.raceOnlySetting or C.spawnKeys[s.key] and (C.hidden(profile,'spawnMode') and L.spawnNotAvailable or L.floodNotAvailable) or (s.key=='qualiTraffic' or s.key=='qualiRuns') and L.qualiOnlySetting or C.sanctionPracticeKeys[s.key] and L.qualiOnlySetting or s.key=='qualiCoolLaps' and (C.hidden(profile,'qualiTraffic') and L.qualiOnlySetting or L.qualifyingOnlySetting) or s.key=='damagePit' and L.damagePitTrackDay or L.enduranceNotAvailable; local shown=false
+     local note=(C.penaltyKeys[s.key] or C.sanctionKeys[s.key] and C.solo(profile)) and L.penaltiesTrackDay or (C.raceKeys[s.key] or C.sanctionRaceKeys[s.key] or C.raceOnlyKeys[s.key] or C.startUiKeys[s.key]) and L.raceOnlySetting or C.spawnKeys[s.key] and (C.hidden(profile,'spawnMode') and L.spawnNotAvailable or L.floodNotAvailable) or (s.key=='qualiTraffic' or s.key=='qualiRuns') and L.qualiOnlySetting or C.sanctionPracticeKeys[s.key] and L.qualiOnlySetting or s.key=='qualiCoolLaps' and (C.hidden(profile,'qualiTraffic') and L.qualiOnlySetting or L.qualifyingOnlySetting) or s.key=='damagePit' and L.damagePitTrackDay or C.trackDayOnlyKeys[s.key] and L.trackDayOnlySetting or C.notRaceKeys[s.key] and L.notInRaceSetting or L.enduranceNotAvailable; local shown=false
      for _,t in ipairs(HOST.drawnTexts) do if #t>15 and note:find(t,1,true)==1 then shown=true end end
      assert(shown and not drawn('set_'..s.key),profile..': '..s.key..' hidden')
      assert(C.validate(profile,HUMANAI.engine.p)[s.key]==s.defaults[profile],profile..': '..s.key..' back to its default')
@@ -321,7 +325,7 @@ return function(source)
    for i=1,3 do HOST.tyreCatalog[i]={{short='H',name='Hard'},{short='I',name='Intermediate'},{short='W',name='Full Wet'},{short='M',name='Medium'},{short='S',name='Soft'},{short='SS',name='Super Soft'}} end
    HOST.sim.rainWetness=case.wet; HOST.sim.rainIntensity=case.wet; HOST.sim.isSessionStarted=false; HOST.sim.timeToSessionStart=20000
    for i=1,3 do HOST.cars[i].speedKmh=0; HOST.cars[i].velocity={x=0,z=0}; HOST.cars[i].compoundIndex=case.start; HOST.cars[i].isAIUsingRainTyres=case.start==1 or case.start==2 end
-   assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'; E.changed(e)
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'; E.changed(e)
    H.tick(HOST,3)
    for i=1,3 do
     local index=HOST.cars[i].compoundIndex
@@ -342,7 +346,9 @@ return function(source)
   HOST.tyreCatalog[1]={{short='H',name='Hard'},{short='I',name='Intermediate'},{short='W',name='Wet'}}
   HOST.sim.rainWetness=0.4; HOST.sim.rainIntensity=0.2
   HOST.cars[1].isInPitlane=true; HOST.cars[1].speedKmh=60; HOST.cars[1].compoundIndex=2; HOST.cars[1].isAIUsingRainTyres=true
-  assert(loadstring(source))(); local er=HUMANAI.engine; C.preset('Nordschleife','J',er.profiles.J); E.changed(er)
+  assert(loadstring(source))(); local er=HUMANAI.engine; C.preset('Nordschleife','J',er.profiles.J)
+  -- Beta 1.62 : les préréglages activent la météo en direct, qui choisit sur l'eau projetée ; ce cas garde la règle 1.7.2 du chemin d'origine.
+  er.profiles.J.weatherLive=false; E.changed(er)
   H.tick(HOST,8)
   assert(HOST.cars[1].compoundIndex==2,'full wets kept in the rain')
   -- Journée circuit ou essais : session déjà lancée, voitures apparues à l'arrêt en pneus pluie au sec.
@@ -364,7 +370,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true)
   HOST.tyreCatalog[1]={{short='H',name='Hard'},{short='M',name='Medium'},{short='W',name='Wet'}}
   HOST.sim.isSessionStarted=false; HOST.sim.timeToSessionStart=20000; HOST.cars[1].speedKmh=0; HOST.cars[1].velocity={x=0,z=0}; HOST.cars[1].compoundIndex=1
-  assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'; E.changed(e)
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'; E.changed(e)
   H.tick(HOST,3); assert(HOST.cars[1].compoundIndex==1,'native dry choice kept')
   local W=require('src/weather'); local seen={}
   for index=1,40 do seen[W.dryChoice({index=index,dryList={0,3,4,5}},19731019)]=true end
@@ -553,7 +559,7 @@ return function(source)
  check('course avec arrêt obligatoire : demandes écrites, pneus à l’emplacement, levée à la sortie, mémorisé, rendu',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.session={laps=20,durationMinutes=0,isTimedRace=false}
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.mandatoryStops=1; E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.mandatoryStops=1; E.changed(e)
   HOST.sim.leaderLapCount=4; H.tick(HOST,3); assert(e.profile=='C' and e.pits.state=='pending' and not HOST.pitRequests[1])
   HOST.sim.leaderLapCount=14; H.tick(HOST,3)
   assert(HOST.pitRequests[1]==true and HOST.pitRequests[2]==true and HOST.pitRequests[3]==true,'stops requested in the window')
@@ -571,7 +577,7 @@ return function(source)
  local function scHeld(i) return HOST.parked[i]==true or (HOST.startDelays[i] or 0)>=C.K.scHoldTime end
  check('voiture de sécurité : garée aux stands au départ, panneau de choix, rendue au déchargement',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='model_3'; E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='model_3'; E.changed(e)
   H.tick(HOST,2)
   assert(e.incidents.safety==4 and HOST.teleports==1 and scHeld(3) and not HOST.parked[3],'safety car held in its box, never parked without a driver')
   pause(true); section('rules'); main(); assert(not HUMANAI.engine.panic); pause(false)
@@ -664,7 +670,7 @@ return function(source)
  check('1.5.0 : drapeau rouge en course, panneau de drapeaux, IA aux stands, dépannage, reprise, tout rendu',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.sim.carsCount=4
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; E.changed(e)
   H.tick(HOST,8)
   -- Beta 1.47 : drapeau rouge seulement sur une piste vraiment bloquée : piste étroite (3 m de chaque côté), deux
   -- voitures arrêtées côte à côte, immobilisées K.redIncidentStill s.
@@ -715,7 +721,7 @@ return function(source)
   assert(HOST.flag==0,'native flag untouched')
  end)
  check('1.6.0 : arrêts obligatoires mémorisés appliqués après un rechargement, oubliés au redémarrage de la session',function()
-  local function rules() local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.mandatoryStops=1; E.changed(e) end
+  local function rules() local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.mandatoryStops=1; E.changed(e) end
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   assert(loadstring(source))(); rules(); H.tick(HOST,2)
   local id=HUMANAI.engine.pits.cars[2].identity; assert(id and id:match('^[%w_%-]+$'),'serializable identity: '..tostring(id))
@@ -746,19 +752,19 @@ return function(source)
  end)
  check('Beta 1.3 : voiture de sécurité habillée de sa livrée quand le tirage au sort ne la lui a pas donnée',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.skins={[2]='1white'}; HOST.skinFolders={model_2={'1white','2black','Safety_Car'}}
-  assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.safetyCarModel='model_2'; E.changed(e); H.tick(HOST,2)
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.safetyCarModel='model_2'; E.changed(e); H.tick(HOST,2)
   assert(e.incidents.safety==3 and HOST.appliedSkins and HOST.appliedSkins['carRoot:2']=='cars/model_2/skins/Safety_Car','safety car dressed in the Safety_Car livery')
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
   -- Livrée déjà portée : rien n'est appliqué.
   HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.skins={[2]='Safety_Car'}; HOST.skinFolders={model_2={'Safety_Car'}}
-  assert(loadstring(source))(); e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.safetyCarModel='model_2'; E.changed(e); H.tick(HOST,2)
+  assert(loadstring(source))(); e=HUMANAI.engine; course161(e.profiles.C); e.g.safetyCarModel='model_2'; E.changed(e); H.tick(HOST,2)
   assert(e.incidents.safety==3 and not HOST.appliedSkins,'already in its livery: nothing applied')
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
  check('Beta 1.2 : erreurs de pilotage des IA écrites une fois par les fonctions natives',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
   -- Décisions injectées (le tirage est testé à part) : IA commandée, après l'attente et la détente du départ.
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.mistakesEnabled=false; E.changed(e); H.tick(HOST,30)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.mistakesEnabled=false; E.changed(e); H.tick(HOST,30)
   local cmd=e.commands[2]; assert(cmd.active,'AI managed by the app') cmd.mistakeId=cmd.mistakeId+1; cmd.mistakeKind='brake'; cmd.mistakeTime=0.6; H.tick(HOST,1)
   assert(#HOST.mistakes==1 and HOST.mistakes[1].kind=='brake' and HOST.mistakes[1].index==1 and HOST.mistakes[1].time==0.6,'brake lock written once')
   cmd.mistakeId=cmd.mistakeId+1; cmd.mistakeKind='traction'; cmd.mistakeTime=0.4; cmd.mistakeSeverity=1.4; H.tick(HOST,1)
@@ -768,7 +774,7 @@ return function(source)
  check('Beta 1.2 : DRS coupé par les règles pour toutes les voitures, rendu, bip delta joué par un seul événement',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   for i=0,3 do HOST.cars[i].drsPresent=true end
-  assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e)
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); E.changed(e)
   -- Départ réel : session pas encore lancée au premier passage de l'app.
   HOST.sim.isSessionStarted=false; H.tick(HOST,0.5); HOST.sim.isSessionStarted=true; HOST.sim.leaderLapCount=1; H.tick(HOST,1)
   assert(HOST.drsBlocks[0]==true and HOST.drsBlocks[1]==true and HOST.drsBlocks[3]==true,'start: DRS off for the player and the AI, even if the game counter shows a lap')
@@ -786,7 +792,7 @@ return function(source)
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
   assert(HOST.drsBlocks[0]==false and HOST.drsBlocks[1]==false,'unload: DRS handed back to every car')
   -- Bips du temps delta : fichier de l'app, un seul événement sonore relancé.
-  HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e); H.tick(HOST,0.5)
+  HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); e=HUMANAI.engine; course161(e.profiles.C); E.changed(e); H.tick(HOST,0.5)
   local played=HOST.played
   for _=1,3 do e.deltaBeep.beepId=e.deltaBeep.beepId+1; HUMANAI.host.deltaServed=nil; require('src/applier').deltaBeep(HUMANAI.host,e.frame,e.deltaBeep) end
   local count=0; for _,s in ipairs(HOST.sounds) do if s=='apps/lua/AdvancedIA/sounds/delta-beep.wav' then count=count+1 end end
@@ -798,8 +804,8 @@ return function(source)
   HOST.carFolders={'aston_vantage2018','zz_last'}; for k=1,120 do HOST.carFolders[#HOST.carFolders+1]=string.format('car_%03d',k) end
   HOST.files['cars/aston_vantage2018/ui/ui_car.json']='{\r\n  "name": "Aston Martin Vantage safety car 2021",\r\n  "brand": "Aston Martin"\r\n}'
   HOST.carFolders[#HOST.carFolders+1]='quoted_car'; HOST.files['cars/quoted_car/ui/ui_car.json']='{"name": "F355 \\"Persephone\\" \\u00e9t\\u00e9", "tags": ["a"]}'
-  assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; E.changed(e); H.tick(HOST,0.5)
-  HOST.space={x=1000,y=3000}; pause(true); go('home'); press('profile_C'); section('rules','safetyCarSpeedKmh'); main()
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.neutralization='sc'; E.changed(e); H.tick(HOST,0.5)
+  HOST.space={x=1000,y=3000}; pause(true); go('home'); press('profile_C'); section('rules','safetyCarEscalation'); main()
   -- Beta 1.39 : base lue par étapes, quelques images.
   for _=1,20 do main() end
   -- Beta 1.38 (maquette) : base en lignes (nom, dossier), huit au plus, les autres comptées.
@@ -864,7 +870,7 @@ return function(source)
  check('1.6.0 : pénalité du joueur en zone jaune, écrite une seule fois, annoncée',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); E.changed(e)
   HOST.cars[0].splinePosition=0.99; HOST.cars[3].speedKmh=0; HOST.cars[3].velocity={x=0,z=0}
   H.tick(HOST,3)
   -- Traversée du double jaune à 108 km/h sans ralentir (l'hôte ne déplace pas les voitures) : delta de zone négatif.
@@ -879,7 +885,7 @@ return function(source)
  check('1.6.0 : DRS du joueur : bip du fichier de l app et panneau',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.rulesDrsLaps=0; E.changed(e); H.tick(HOST,1)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.rulesDrsLaps=0; E.changed(e); H.tick(HOST,1)
   HOST.cars[0].drsPresent=true; HOST.cars[0].drsAvailable=true; H.tick(HOST,0.5)
   assert(HOST.played==1 and HOST.sounds[1]=='apps/lua/AdvancedIA/sounds/drs-available-beep.wav','beep played from the app folder')
   assert(HOST.beepInterior==1 and HOST.beepVolume==2 and HOST.beepChannel=='main','full level in the cockpit view (CSP default 25 %), main channel')
@@ -903,7 +909,7 @@ return function(source)
  check('1.7.0 : disqualification du joueur : drapeau noir natif écrit une fois',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.penaltyDisqualify=1; E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.penaltyDisqualify=1; E.changed(e)
   -- IA au pas (6 km/h) : incident en piste qui dure (double jaune), jamais dépannée comme une voiture immobile.
   HOST.cars[0].splinePosition=0.99; HOST.cars[3].speedKmh=6; HOST.cars[3].velocity={x=0,z=0}
   H.tick(HOST,3)
@@ -976,7 +982,7 @@ return function(source)
   -- Seul le préréglage chargé pour le profil affiché s'allume (capture du pilote : Nordschleife allumé en essais).
   main(); assert(lit('builtin_Essais') and not lit('builtin_Nordschleife') and not lit('builtin_Course'),'only the displayed profile preset lights up')
   go('home'); press('profile_J'); main(); assert(lit('builtin_Nordschleife') and not lit('builtin_Essais'),'track day view: its own preset')
-  press('restore'); main(); assert(not lit('builtin_Nordschleife'),'restored: no preset highlighted')
+  press('restore'); main(); assert(not lit('builtin_Nordschleife'),'restored: no preset highlighted'); assert(not (e.g.builtinMarks or ''):find('J=',1,true),'restored: the track day preset mark is cleared')
   e.profiles.J.multiClass=true; E.changed(e); main(); assert(not lit('builtin_Nordschleife'),'same values set by hand after a restore: not a click')
   -- Préréglage personnel de qualifications : ses règles pour tout le week-end.
   go('home'); press('profile_Q'); section('rules'); press('rules_GT'); main()
@@ -1046,7 +1052,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=2
   ac.getCarID=function(index) return (index==2 or index==3) and 'sc_model' or 'model_'..index end
   assert(loadstring(source))(); local e=HUMANAI.engine
-  C.preset('Qualifications','Q',e.profiles.Q); C.preset('Course','C',e.profiles.C)
+  C.preset('Qualifications','Q',e.profiles.Q); course161(e.profiles.C)
   e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,2)
   assert(e.incidents.safety==3 and HOST.teleports==2 and scHeld(2) and HOST.parked[3],'qualifying: safety car held, spare parked')
   -- Fin de session : tour de décélération, les voitures garées le restent.
@@ -1095,7 +1101,7 @@ return function(source)
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
   -- Livrée de voiture de sécurité appliquée puis modèle effacé : livrée d'origine rendue.
   HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.skins={[2]='1white'}; HOST.skinFolders={model_2={'1white','Safety_Car'}}
-  assert(loadstring(source))(); e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.safetyCarModel='model_2'; E.changed(e); H.tick(HOST,2)
+  assert(loadstring(source))(); e=HUMANAI.engine; course161(e.profiles.C); e.g.safetyCarModel='model_2'; E.changed(e); H.tick(HOST,2)
   assert(HOST.appliedSkins['carRoot:2']=='cars/model_2/skins/Safety_Car')
   e.g.safetyCarModel=''; E.changed(e); H.tick(HOST,1)
   assert(HOST.appliedSkins['carRoot:2']=='cars/model_2/skins/1white','original livery back')
@@ -1103,7 +1109,7 @@ return function(source)
  end)
  check('Beta 1.4 : pénalité du joueur retentée quand son écriture native échoue',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e); H.tick(HOST,1)
+  local e=HUMANAI.engine; course161(e.profiles.C); E.changed(e); H.tick(HOST,1)
   local real=physics.setCarPenalty; local fails=1
   physics.setCarPenalty=function(...) if fails>0 then fails=fails-1; error('busy') end; return real(...) end
   local t=e.penalties; t.requestId=t.requestId+1; t.kind='slow'; t.seconds=5; H.tick(HOST,0.2)
@@ -1113,7 +1119,7 @@ return function(source)
  end)
  check('Beta 1.4 : stands fermés sous FCY (règles Endurance) : pastille sur le panneau',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); C.applyRules('Endurance',e.profiles); E.changed(e); H.tick(HOST,1)
+  local e=HUMANAI.engine; course161(e.profiles.C); C.applyRules('Endurance',e.profiles); E.changed(e); H.tick(HOST,1)
   local t=e.incidents; t.neutral=true; t.neutralMode='fcy'; t.neutralSince=e.time; t.neutralUntil=e.time+1e6; H.tick(HOST,0.5)
   assert(t.pitsClosed and e.panel.kind=='fcy','FCY, pits closed')
   HOST.panelTexts={}; HUMANAI.drawFlags()
@@ -1128,7 +1134,7 @@ return function(source)
   physics.setAINoInput=function(index,value) if index==3 and value==false then unparks=unparks+1 end; return park(index,value) end
   physics.setAITopSpeed=function(index,value) if index==3 then speeds=speeds+1 end; return speed(index,value) end
   assert(loadstring(source))(); local e=HUMANAI.engine
-  C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
+  course161(e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
   assert(e.incidents.safety==4 and scHeld(3),'safety car held')
   -- Pause (menu), puis reprise.
   HOST.sim.isPaused=true; H.tick(HOST,0.5); HOST.sim.isPaused=false; unparks=0; H.tick(HOST,10)
@@ -1155,7 +1161,7 @@ return function(source)
    for i=1,3 do HOST.cars[i].speedKmh=0; HOST.cars[i].velocity={x=0,z=0} end
    HOST.cars[1].position.x=3; HOST.cars[2].position.x=-1.5
    HOST.cars[2].position.z=HOST.cars[1].position.z; HOST.cars[2].splinePosition=HOST.cars[1].splinePosition
-   assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
    -- Beta 1.27 : coupé par défaut (départ du pilote) ; essayé ici activé.
    e.profiles.C.startLaneHold=true
    local sign=rightHanded and -1 or 1; e.g.offsetSign=sign; e.g.sideSign=sign; E.changed(e)
@@ -1355,13 +1361,13 @@ return function(source)
   local e=HUMANAI.engine; local P=e.profiles
   go('home'); press('profile_C'); go('rules'); redraw()
   assert(lit('rules_view_all') and drawn('set_neutralization') and drawn('set_redFlagEnabled') and not drawn('set_mandatoryStops') and not drawn('set_pitFuel')
-   and not drawn('set_safetyCarEscalation') and not drawn('set_safetyCarSpeedKmh') and not drawnText(W.upper(L.safetySwitch)),'main view without pit stops and safety car')
+   and not drawn('set_safetyCarEscalation') and not drawn('set_restartOvertake') and not drawnText(W.upper(L.safetySwitch)),'main view without pit stops and safety car')
   local stops,safety,rules=P.C.mandatoryStops,P.C.safetyCarEscalation,P.C.section_rules
   press('rules_view_stops'); redraw()
   assert(P.C.mandatoryStops==stops and lit('rules_view_stops') and not lit('rules_view_all') and not drawn('set_mandatoryStops') and drawn('set_pitWindowOpenPct')
    and drawn('set_pitFuel') and drawn('set_pitRepair') and not drawn('set_neutralization') and not drawn('set_safetyCarEscalation'),'pit stop title: its settings only, switch unchanged')
   press('rules_view_safety'); redraw()
-  assert(P.C.safetyCarEscalation==safety and lit('rules_view_safety') and drawn('set_safetyCarEscalation') and drawn('set_safetyCarSpeedKmh') and drawnText(W.upper(L.safetySwitch))
+  assert(P.C.safetyCarEscalation==safety and lit('rules_view_safety') and drawn('set_safetyCarEscalation') and drawn('set_restartOvertake') and drawnText(W.upper(L.safetySwitch))
    and not drawn('set_mandatoryStops') and not drawn('set_neutralization'),'safety car title: its settings and the picker, switch unchanged')
   press('rules_view_all'); redraw(); assert(P.C.section_rules==rules and lit('rules_view_all'),'rules title: nothing switched')
   press('mandatory_stop'); press('safety_switch'); redraw()
@@ -1508,7 +1514,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   ac.getCarID=function(index) return index==3 and 'sc_model' or 'model_'..index end
   assert(loadstring(source))(); local e=HUMANAI.engine
-  C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
+  course161(e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
   local car=HOST.cars[3]; car.isInPit=true; car.isInPitlane=true; car.speedKmh=0; car.velocity={x=0,z=0}; H.tick(HOST,2)
   assert(e.incidents.safety==4 and scHeld(3) and (HOST.awakes[3] or 0)==0,'held: never woken')
   local t=e.incidents
@@ -1531,7 +1537,7 @@ return function(source)
  -- déchargement.
  check('Beta 1.25 : overlay en jeu, position, verrou, taille, case de session et messages d AC',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
-  local e=HUMANAI.engine; local g=e.g; C.preset('Course','C',e.profiles.C); E.changed(e); H.tick(HOST,1)
+  local e=HUMANAI.engine; local g=e.g; course161(e.profiles.C); E.changed(e); H.tick(HOST,1)
   g.panelShow='always'
   HOST.transparent={}; script.HUMANAI__HUD()
   local w=HOST.transparent.AdvancedIA_overlay
@@ -1654,7 +1660,7 @@ return function(source)
   HOST.files[path('cfgsys','tracks','common','conditions.ini')]='[CONDITION_85]\nNAME=RACING_FLAG\nINPUT=FLAG_TYPE\n'
   HOST.nativeFlag=C.K.flagStart; HOST.sim.raceFlagType=C.K.flagStart
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); E.changed(e)
   local function logged(text) for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find(text,1,true) then return true end end return false end
   H.tick(HOST,2); assert(e.profile=='C' and logged('drapeau d AC: 1 (depart)'),'AC start flag logged')
   HOST.cars[0].splinePosition=0.995; HOST.cars[3].speedKmh=0; HOST.cars[3].velocity={x=0,z=0}
@@ -1668,7 +1674,7 @@ return function(source)
   HOST.files[path('tracks','test','extension','ext_config-flags.ini')]='[MATERIAL_ADJUSTMENT_0]\nACTIVE=1\nCONDITION=RACING_FLAG\n'
   HOST.files[path('cfgsys','tracks','common','conditions.ini')]='[CONDITION_85]\nNAME=RACING_FLAG\nINPUT=FLAG_TYPE\n'
   HOST.nativeFlag=C.K.flagFasterCar; HOST.sim.raceFlagType=C.K.flagFasterCar
-  assert(loadstring(source))(); e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e)
+  assert(loadstring(source))(); e=HUMANAI.engine; course161(e.profiles.C); E.changed(e)
   HOST.cars[0].splinePosition=0.995; HOST.cars[3].speedKmh=0; HOST.cars[3].velocity={x=0,z=0}
   H.tick(HOST,8)
   assert(HOST.sim.raceFlagType==C.K.flagFasterCar and HOST.flagOverrides==0 and e.incidents.playerYellow,'AC blue kept')
@@ -1722,8 +1728,7 @@ return function(source)
  end)
  -- Beta 1.33 : mise à jour depuis GitHub, app complète sur une imitation de CSP (réseau, empreinte, zips, fichiers).
  local Fake=require('tests/updatefake')
- -- Beta 1.59.1 : version installée telle quelle (numéro à trois parties) ; les autres : numéro mineur décalé.
- local function ver(d) if d==0 then return C.release end; local major,minor=C.release:match('(%d+)%.(%d+)'); return 'Beta '..major..'.'..(tonumber(minor)+d) end
+ local function ver(d) local major,minor=C.release:match('(%d+)%.(%d+)'); return 'Beta '..major..'.'..(tonumber(minor)+d) end
  local Update=require('src/update')
  local API='get https://api.github.com/repos/VincentChevalier44/AdvancedIA/releases/latest'
  local function logged(text) local e=HUMANAI.engine; for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find(text,1,true) then return true end end; return false end
@@ -2279,11 +2284,11 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true)
   HOST.sim.raceSessionType=3
   for i=1,3 do HOST.cars[i].isAIControlled=false end
-  assert(loadstring(source))(); H.tick(HOST,0.5); local x=HUMANAI.engine; C.preset('Course','C',x.profiles.C); require('src/engine').changed(x); H.tick(HOST,0.3); HOST.sim.isInMainMenu=true; script.HUMANAI__MENU(); redraw()
+  assert(loadstring(source))(); H.tick(HOST,0.5); local x=HUMANAI.engine; course161(x.profiles.C); require('src/engine').changed(x); H.tick(HOST,0.3); HOST.sim.isInMainMenu=true; script.HUMANAI__MENU(); redraw()
   local noai=W.upper(L.pillStates.noai); local found=false
   for _,t in ipairs(HOST.drawnTexts) do if t:sub(1,#noai)==noai then found=true end end
   assert(found,'NO AI chip, never ACTIVE')
-  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,0.5); local x=HUMANAI.engine; C.preset('Course','C',x.profiles.C); require('src/engine').changed(x); H.tick(HOST,0.3); HOST.sim.isInMainMenu=true; script.HUMANAI__MENU(); redraw()
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,0.5); local x=HUMANAI.engine; course161(x.profiles.C); require('src/engine').changed(x); H.tick(HOST,0.3); HOST.sim.isInMainMenu=true; script.HUMANAI__MENU(); redraw()
   local ready=W.upper(L.pillStates.ready); found=false
   for _,t in ipairs(HOST.drawnTexts) do if t:sub(1,#ready)==ready then found=true end end
   assert(found,'ACTIVE chip with AI')
@@ -2396,7 +2401,7 @@ return function(source)
  check('Beta 1.39 : base de 347 voitures lue par étapes, aucune image figée',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   HOST.carFolders={}; for k=1,347 do local id=string.format('car_%03d',k); HOST.carFolders[k]=id; HOST.files['cars/'..id..'/ui/ui_car.json']='{"name": "Voiture '..k..'"}' end
-  assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; E.changed(e); H.tick(HOST,0.5)
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.neutralization='sc'; E.changed(e); H.tick(HOST,0.5)
   HOST.space={x=1000,y=3000}; pause(true); go('home'); press('profile_C'); go('rules')
   -- Disque lent (3 ms par fichier) : lectures comptées image par image.
   local load=io.load; local reads=0
@@ -2427,12 +2432,17 @@ return function(source)
   -- Six voitures lentes à lire : plusieurs images lentes au même lieu quel que soit le découpage de la lecture (Beta 1.42 :
   -- avec deux seulement, la mutation « journalisée à chaque image » n'était pas toujours vue).
   HOST.carFolders={}; for k=1,6 do local f='slow_car'..k; HOST.carFolders[k]=f; HOST.files['cars/'..f..'/ui/ui_car.json']='{"name": "Slow '..k..'"}' end
-  assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; E.changed(e); H.tick(HOST,0.5)
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.neutralization='sc'; E.changed(e); H.tick(HOST,0.5)
   HOST.space={x=1000,y=3000}; pause(true); go('home'); press('profile_C'); go('rules')
   local load=io.load
   io.load=function(path) if path:find('/ui/ui_car.json',1,true) then local t=os.clock(); while os.clock()-t<0.08 do end end; return load(path) end
+  -- Beta 1.61 : jeu en pause, temps du moteur figé : les lignes du lancement (zones, mémoire, météo) épuisaient le débit du
+  -- journal pour cette seconde, et la mutation « journalisée à chaque image » ne pouvait plus se voir.
+  local rate=e.log.rate; e.log.rate=1000
+  local rect=ui.drawRectFilled
+  ui.drawRectFilled=function(...) local t=os.clock(); while os.clock()-t<0.004 do end; return rect(...) end
   local ok,err=pcall(function() press('rules_view_safety'); for _=1,8 do redraw() end end)
-  io.load=load; assert(ok,err)
+  io.load=load; ui.drawRectFilled=rect; e.log.rate=rate; assert(ok,err)
   local function count(text) local n=0; for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find(text,1,true) then n=n+1 end end; return n end
   assert(count('interface lente: regles/safety')==1,'slow frame logged with its place')
   assert(count('interface lente:')==1,'logged once')
@@ -2833,7 +2843,7 @@ return function(source)
   HOST.files[path('tracks','test','extension','ext_config-flags.ini')]='[MATERIAL_ADJUSTMENT_0]\nACTIVE=1\nCONDITION=RACING_FLAG\n'
   HOST.files[path('cfgsys','tracks','common','conditions.ini')]='[CONDITION_85]\nNAME=RACING_FLAG\nINPUT=FLAG_TYPE\n'
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; E.changed(e)
   local function logged(text) for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find(text,1,true) then return true end end return false end
   H.tick(HOST,8)
   -- Piste étroite, deux voitures arrêtées côte à côte : piste bloquée (drapeau rouge de la Beta 1.47).
@@ -2871,7 +2881,7 @@ return function(source)
   HOST.files[path('cfgsys','tracks','common','conditions.ini')]='[CONDITION_85]\nNAME=RACING_FLAG\nINPUT=FLAG_TYPE\n'
   HOST.nativeFlag=C.K.flagStop; HOST.sim.raceFlagType=C.K.flagStop
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); E.changed(e)
   local function logged(text) for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find(text,1,true) then return true end end return false end
   HOST.cars[0].splinePosition=0.995; HOST.cars[3].speedKmh=0; HOST.cars[3].velocity={x=0,z=0}
   H.tick(HOST,8)
@@ -2887,7 +2897,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   ac.getCarID=function(index) return index==3 and 'sc_model' or 'model_'..index end
   assert(loadstring(source))(); local e=HUMANAI.engine
-  C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
+  course161(e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
   assert(e.incidents.safety==4 and scHeld(3) and not HOST.parked[3] and HOST.cars[3].isInPit,'held in its box by AC own wait')
   local writes=HOST.positionWrites or 0
   local t=e.incidents; t.neutral=true; t.neutralMode='sc'; t.neutralSince=e.time; t.neutralUntil=e.time+1e6; t.safetyPhase='call'; t.safetySince=e.time-C.K.scCallTime-1
@@ -2917,7 +2927,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   ac.getCarID=function(index) return index==3 and 'sc_model' or 'model_'..index end
   assert(loadstring(source))(); local e=HUMANAI.engine
-  C.preset('Course','C',e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
+  course161(e.profiles.C); e.profiles.C.neutralization='sc'; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e); H.tick(HOST,3)
   assert(e.incidents.safety==4 and scHeld(3) and HOST.cars[3].isInPit,'held in its box')
   local teleports=HOST.teleports; local writes=HOST.positionWrites or 0
   H.tick(HOST,5); assert((HOST.positionWrites or 0)==writes and HOST.cars[3].isInPit,'parked: never moved')
@@ -2936,7 +2946,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
   ac.getCarID=function(index) return index==3 and 'sc_model' or 'model_'..index end
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; e.g.safetyCarModel='sc_model'; e.g.safetyCarPicked=true; E.changed(e)
   H.tick(HOST,8)
   assert(e.incidents.safety==4 and scHeld(3),'safety car held in its box')
   local sides=ac.getTrackAISplineSides; ac.getTrackAISplineSides=function() return {x=3,y=3} end
@@ -2955,7 +2965,7 @@ return function(source)
   c.splinePosition=0.5+(C.K.scPlaceOnTrack+5)/10000; c.position={x=0,y=0,z=5000+C.K.scPlaceOnTrack+5}; H.tick(HOST,1)
   assert((HOST.positionWrites or 0)>writes and HOST.positions[3] and not HOST.cars[3].isInPit and t.safetyPhase=='out','placed on track by setCarPosition')
   assert(math.abs(HOST.positions[3].pos.z-(5000+C.K.scPlaceOnTrack+5+C.K.scPlaceFirstOut))<1,'ahead of the first car out')
-  H.tick(HOST,C.K.scMinOut+e.run.neutralizationHold+5)
+  H.tick(HOST,C.K.scMinOut+C.K.scBunchLaps*10000/(C.K.scNominalKmh/3.6)+e.run.neutralizationHold+5)
   assert(t.safetyPhase=='in' and t.neutral,'in this lap')
   HOST.cars[3].isInPitlane=true; H.tick(HOST,0.5)
   assert(not t.neutral and not t.relaunch,'green when it enters the pit lane')
@@ -2979,6 +2989,19 @@ return function(source)
   assert(not begins(string.format(L.companionAvailable,'1.3.0','1.2.0')),'up to date: nothing')
   host.companionUpdate=require('src/applier').parseCompanionUpdate('v=1;installed=1.1.0;latest=1.3.0;state=incompatible;needs=Beta 1.53'); redraw()
   assert(begins(string.format(L.companionNeeds,'Beta 1.53')),'incompatible: AdvancedIA to update first')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ check('Beta 1.60 : SpotterEnginer plus ancien que la 1.3.4 et départ autre que le départ arrêté : avertissement à l accueil',function()
+  if HUMANAI then HOST.releasing=true; HUMANAI.release(); HOST.releasing=false end
+  HOST=H.create(true); assert(loadstring(source))(); H.tick(HOST,0.5)
+  local host=HUMANAI.host; local e=HUMANAI.engine
+  local text=string.format(L.companionRaceStart,'1.3.3',C.K.seStartMinMajor,C.K.seStartMinMinor,C.K.seStartMinPatch)
+  host.companionOldStart=true; host.companionVersionText='1.3.3'; e.profiles.C.section_start=true; e.profiles.C.raceStart='formation'
+  pause(true); redraw()
+  assert(begins(text),'old SpotterEnginer and a formation lap: warned on HOME')
+  e.profiles.C.raceStart='standing'; redraw(); assert(not begins(text),'standing start: no warning')
+  e.profiles.C.raceStart='rolling'; host.companionOldStart=false; redraw(); assert(not begins(text),'SpotterEnginer 1.3.4 or later: no warning')
+  pause(false)
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
  check('Beta 1.51 : première installation, préréglage intégré de la session appliqué et allumé (journée circuit : Nordschleife), interrupteur à l accueil',function()
@@ -3031,7 +3054,10 @@ return function(source)
   HUMANAI.release(); HOST=H.create(false); HOST.space={x=1000,y=3000}; HOST.sim.trackLengthM=40000; assert(loadstring(source))(); H.tick(HOST,0.5)
   local e=HUMANAI.engine; local p=e.profiles.J
   p.section_general=true; p.section_overtake=true; p.section_flash=true; p.section_yield=true; p.section_lateral=true
-  p.aiFlashEnabled=true; p.pressureEnabled=false; p.section_traffic=false; E.changed(e)
+  p.aiFlashEnabled=true; p.pressureEnabled=false; p.section_traffic=false
+  -- Relecture 1.62 : conditions du 9 novembre fixées (une seule classe, cession ordinaire à droite) : elles ne dépendent plus
+  -- des réglages laissés par un cas précédent (préréglage « Journée circuit » : multi-classes, « garder sa ligne »).
+  p.multiClass=false; p.yieldSide='right'; E.changed(e)
   local L=HOST.sim.trackLengthM
   -- Allures apprises aux tours précédents (en jeu : plusieurs tours de la Nordschleife) : l'IA 2 plus rapide partout.
   local function learnedPace() for i,v in pairs({[3]=210,[4]=180}) do local s=e.states[i]; s.paceCount=e.delta.bins; for b=1,e.delta.bins do s.pace[b]=v/3.6 end end end
@@ -3056,6 +3082,48 @@ return function(source)
   end
   local function lines(text) local n=0; for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find(text,1,true) then n=n+1 end end return n end
   assert(lines('cible plus rapide apres')>=2,'the loop is reproduced: repeated « target faster » failures')
+  assert(flashesIgnored==0,'no flash toward the ignored target')
+  assert(lines('depassement suspendu:')>=1,'strict wait logged')
+  assert(attempts<=3,'at most three attempts in 6 min: '..attempts)
+ end)
+ check('1.62 : boucle 1.54 en journée circuit multi-classes (« garder sa ligne ») : une cession de classe ne rouvre pas la paire en attente',function()
+  -- Nordschleife, 9 novembre : une IA a relancé six fois la même cible, qui repartait plus vite à chaque attaque, avec
+  -- 33 appels de phares en 6 min. Ici : l'IA 2 (210 km/h) rattrape l'IA 3 (180 km/h), qui accélère à 230 km/h dès
+  -- qu'elle est attaquée ; 6 min en ligne droite.
+  HUMANAI.release(); HOST=H.create(false); HOST.space={x=1000,y=3000}; HOST.sim.trackLengthM=40000; assert(loadstring(source))(); H.tick(HOST,0.5)
+  local e=HUMANAI.engine; local p=e.profiles.J
+  p.section_general=true; p.section_overtake=true; p.section_flash=true; p.section_yield=true; p.section_lateral=true
+  p.aiFlashEnabled=true; p.pressureEnabled=false; p.section_traffic=false
+  -- Relecture 1.62 : conditions du 9 novembre fixées (une seule classe, cession ordinaire à droite) : elles ne dépendent plus
+  -- des réglages laissés par un cas précédent (préréglage « Journée circuit » : multi-classes, « garder sa ligne »).
+  -- Relecture 1.62 : préréglage « Journée circuit » réellement appliqué (multi-classes, classes déduites de l allure ;
+  -- « garder sa ligne »), sections du cas gardées.
+  require('src/config').preset('Circuit','J',p)
+  p.section_general=true; p.section_overtake=true; p.section_flash=true; p.section_yield=true; p.section_lateral=true
+  p.aiFlashEnabled=true; p.pressureEnabled=false; p.section_traffic=false; E.changed(e)
+  local L=HOST.sim.trackLengthM
+  -- Allures apprises aux tours précédents (en jeu : plusieurs tours de la Nordschleife) : l'IA 2 plus rapide partout.
+  local function learnedPace() for i,v in pairs({[3]=210,[4]=180}) do local s=e.states[i]; s.paceCount=e.delta.bins; for b=1,e.delta.bins do s.pace[b]=v/3.6 end end end
+  local z={[1]=5000,[2]=0,[3]=600}
+  local function set(i,v) local c=HOST.cars[i]; z[i]=z[i]+v/3.6/60; c.position={x=0,y=0,z=z[i]%L}; c.splinePosition=(z[i]%L)/L; c.velocity={x=0,z=v/3.6}; c.speedKmh=v; c.lapCount=1+math.floor(z[i]/L) end
+  local attacking=false
+  local attempts,flashes,flashesIgnored=0,0,0
+  local passStates={OVT_ARM=true,OVT_IN=true,OVT_HOLD=true}
+  for _=1,6*60*60 do
+   if _%60==1 then learnedPace() end
+   local s=e.states[3]
+   local nowPass=passStates[s.state]==true
+   if nowPass and not attacking then attempts=attempts+1 end
+   attacking=nowPass
+   local vT=attacking and 230 or 180
+   local gap=z[3]-z[2]-4.4
+   local vA=gap>30 and 210 or math.min(210,vT+math.max(-5,math.min(5,gap-12)))
+   set(1,150); set(3,vT); set(2,vA)
+   local before=e.commands[3].flashEvent or 0
+   H.tick(HOST,1/60)
+   if (e.commands[3].flashEvent or 0)~=before then flashes=flashes+1; if s.passIgnore==4 and e.time<s.passIgnoreUntil then flashesIgnored=flashesIgnored+1 end end
+  end
+  local function lines(text) local n=0; for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find(text,1,true) then n=n+1 end end return n end
   assert(flashesIgnored==0,'no flash toward the ignored target')
   assert(lines('depassement suspendu:')>=1,'strict wait logged')
   assert(attempts<=3,'at most three attempts in 6 min: '..attempts)
@@ -3186,7 +3254,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.session={laps=10,durationMinutes=0,isTimedRace=false}
   assert(loadstring(source))(); H.tick(HOST,0.5)
   local e=HUMANAI.engine; local p=e.profiles.C
-  C.preset('Course','C',p)
+  course161(p)
   for k,v in pairs(settings or {}) do p[k]=v end
   E.changed(e); H.tick(HOST,0.5)
   assert(e.profile=='C' and C.on(e.p,'sanctions'),'race with sanctions')
@@ -3234,7 +3302,7 @@ return function(source)
  check('1.56 : pénalités d AC actives alors que l app gère vos limites de piste : prévenu une fois (journal, accueil)',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.sim.penaltiesEnabled=true; HOST.sim.allowedTyresOut=-1
   assert(loadstring(source))(); H.tick(HOST,0.5)
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.profiles.C.sanPlayerTrackLimits=true; E.changed(e); H.tick(HOST,1)
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.sanPlayerTrackLimits=true; E.changed(e); H.tick(HOST,1)
   assert(lines156(e,'limites de piste joueur: penalites d AC actives (roues dehors autorisees -1)')==1 and e.acPenaltyWarned,'warned once')
   H.tick(HOST,2); assert(lines156(e,'penalites d AC actives')==1,'once per session')
  end)
@@ -3308,7 +3376,7 @@ return function(source)
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.session={laps=20,durationMinutes=0,isTimedRace=false}
   for i=0,3 do HOST.tyreCatalog[i]={{short='SS',name='Slick SuperSoft'},{short='S',name='Slick Soft'},{short='M',name='Slick Medium'}} end
   assert(loadstring(source))()
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C)
+  local e=HUMANAI.engine; course161(e.profiles.C)
   e.profiles.C.mandatoryStops=1; e.profiles.C.pitCompoundChange=true; e.profiles.C.pitTyres=true; e.profiles.C.minPitTime=0; E.changed(e)
   HOST.sim.leaderLapCount=4; H.tick(HOST,3); assert(e.profile=='C' and e.pits.state=='pending')
   return e
@@ -3445,7 +3513,7 @@ return function(source)
  -- arrivée publiée au pont fausse entre la relance et la nouvelle arrivée.
  check('1.59 : course relancée dans la même session : récapitulatif de la nouvelle course, arrivée remise à zéro',function()
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,0.5)
-  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e); H.tick(HOST,1)
+  local e=HUMANAI.engine; course161(e.profiles.C); E.changed(e); H.tick(HOST,1)
   local function count(text) local n=0; for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find(text,1,true) then n=n+1 end end return n end
   for i=0,3 do HOST.cars[i].racePosition=i+1 end; H.tick(HOST,1)
   assert(e.hud.started and e.hud.grid==1,'first race: starts P1')
@@ -3476,9 +3544,11 @@ return function(source)
    local e=HUMANAI.engine; local p=e.profiles[kind==2 and 'Q' or 'P']
    for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end
    p.qualiRuns=on; E.changed(e)
+   -- Beta 1.62 : le préréglage des qualifications active déjà les vrais passages ; coupé, seules les lignes écrites après le réglage comptent.
+   e.testSince=not on and e.log.serial or 0
    return e
   end
-  local function runLines(e) local n=0; for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find('passage en piste: ',1,true) and r.index==2 then n=n+1 end end return n end
+  local function runLines(e) local n=0; for k=1,e.log.limit do local r=e.log[k]; if r and r.message and r.message:find('passage en piste: ',1,true) and r.index==2 and (r.serial or 0)>(e.testSince or 0) then n=n+1 end end return n end
   -- Coupé (défaut) : aucune ligne, aucune demande.
   local e=session(2,false); local car=HOST.cars[1]; toBox(car); H.tick(HOST,2)
   assert(runLines(e)==0 and HOST.pitRequests[1]~=true and e.commands[2].runFuelSet==-1,'off: nothing commanded')
@@ -3512,7 +3582,7 @@ return function(source)
    for i=1,3 do HOST.tyreCatalog[i]={{short='SS',name='Slick SuperSoft'},{short='S',name='Slick Soft'},{short='M',name='Slick Medium'}} end
    HOST.sim.isSessionStarted=false; HOST.sim.timeToSessionStart=20000
    for i=1,3 do HOST.cars[i].speedKmh=0; HOST.cars[i].velocity={x=0,z=0}; HOST.cars[i].compoundIndex=1 end
-   assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
    e.profiles.C.strategyStartVariety=on; E.changed(e)
    K.startVarietyShare=1
    local ok,err=pcall(H.tick,HOST,3); K.startVarietyShare=share; assert(ok,err)
@@ -3534,7 +3604,7 @@ return function(source)
  check('1.59 : arrêt aux stands pour dégâts (course) : IA endommagée à pleine allure appelée, rien réglage coupé',function()
   for _,on in ipairs({false,true}) do
    HUMANAI.release(); HOST=H.create(true)
-   assert(loadstring(source))(); local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
    e.profiles.C.damagePit=on; E.changed(e)
    H.tick(HOST,1)
    HOST.cars[1].damage={[0]=120,[1]=0,[2]=0,[3]=0,[4]=0}; HOST.cars[1].suspensionDamage={[0]=0.1,[1]=0,[2]=0,[3]=0}
@@ -3546,6 +3616,397 @@ return function(source)
     for i=1,e.frame.count do assert(not e.frame.cars[i].damageScan,'switch off: no damage read while driving') end
    else assert(n==1 and HOST.pitRequests[1]==true,'called once, pit stop requested') end
   end
+ end)
+ -- Beta 1.60 B : responsabilité des collisions (sanContact, sanPlayerContact) et contresens jugé sur l'orientation.
+ check('INT160B : une IA vous percute par l arrière (sanContact) : jugée en tort, sanction IA annoncée, temps au classement corrigé',function()
+  local e=race156({sanContact=true}); H.tick(HOST,2)
+  local K=C.K; local ai=HOST.cars[2]; local me=HOST.cars[0]
+  me.position={x=0,y=0,z=ai.position.z+5}; me.splinePosition=ai.splinePosition+5/HOST.sim.trackLengthM; me.speedKmh=80; me.velocity={x=0,z=80/3.6}
+  H.tick(HOST,1.5)
+  local requests=#HOST.penalties
+  -- CSP : numéro de la voiture touchée plus 1 (vous : voiture 0).
+  ai.collidedWith=1; H.tick(HOST,1/60); ai.collidedWith=-1
+  me.wheelsOutside=4; H.tick(HOST,1); me.wheelsOutside=0
+  H.tick(HOST,K.blameOutcome+0.5)
+  local c=e.sanctions.cars[3]
+  print(string.format('1.60b AI hits the player: blame lines %d, AI time %.0f s, notice %s',lines156(e,'responsabilite: contact'),c.time,e.sanctions.aiCode))
+  assert(lines156(e,'ligne droite choc par l arriere : '..e.frame.cars[3].name..' en tort (grave)')==1,'AI behind at fault, serious (you went off)')
+  assert(lines156(e,'penalite de temps +5 s (contact)')==1 and c.time==5 and c.contacts==1,'AI time penalty')
+  assert(e.sanctions.aiSerial>0 and e.sanctions.aiTitle==e.frame.cars[3].name and e.sanctions.aiCode~='','AI sanction notice')
+  assert(e.sanctions.cars[1].time==0 and e.sanctions.cars[1].contacts==0 and #HOST.penalties==requests and lines156(e,'contact joueur')==0,'nothing for you')
+  for i=0,3 do HOST.cars[i].isRaceFinished=true end; H.tick(HOST,2)
+  assert(lines156(e,'classement corrige')==1 and c.corrected>0,'corrected classification with the AI time')
+ end)
+ check('INT160B : vous en tort, réglage allumé (sanPlayerContact) : avertissements puis temps, jamais de drapeau noir ; coupé : rien',function()
+  for _,on in ipairs({false,true}) do
+   -- Beta 1.62 : « Realistic race » active sanContact ; ce cas juge le joueur seul.
+   local e=race156({sanPlayerContact=on,sanContact=false}); H.tick(HOST,2)
+   local K=C.K; local ai=HOST.cars[2]; local me=HOST.cars[0]
+   me.position={x=0,y=0,z=ai.position.z-5}; me.splinePosition=ai.splinePosition-5/HOST.sim.trackLengthM; me.speedKmh=130; me.velocity={x=0,z=130/3.6}
+   H.tick(HOST,1.5)
+   local requests=#HOST.penalties
+   for _=1,K.blameWarnings+1 do me.collidedWith=3; H.tick(HOST,1/60); me.collidedWith=-1; H.tick(HOST,K.blameOutcome+K.blamePairGap+0.5) end
+   local c=e.sanctions.cars[1]
+   print(string.format('1.60b player at fault, switch %s: warnings %d, time %.0f s',on and 'on' or 'off',lines156(e,'contact joueur: avertissement'),c.time))
+   if on then
+    assert(lines156(e,'contact joueur: avertissement')==K.blameWarnings and lines156(e,'contact joueur: penalite de temps +5 s, total +5 s')==1 and c.time==5,'warnings then time')
+   else
+    assert(lines156(e,'contact joueur')==0 and lines156(e,'responsabilite')==0 and lines156(e,'incident de course')==0 and c.time==0 and e.blame.open==0,'off: nothing at all')
+   end
+   assert(#HOST.penalties==requests and not e.penalties.disqualified and not c.dq and lines156(e,'drapeau noir')==0,'nothing written to your car, never a black flag')
+  end
+ end)
+ check('INT160B : IA qui recule pour quitter un mur : jamais à contresens (pont wrong), aucun drapeau noir ; retournée : contresens',function()
+  local e=race156(); H.tick(HOST,1)
+  local K=C.K; local car=HOST.cars[3]
+  local function back(seconds)
+   for _=1,math.floor(seconds*60+0.5) do
+    car.position={x=0,y=0,z=car.position.z-40/3.6/60}; car.splinePosition=(car.position.z/HOST.sim.trackLengthM)%1; car.speedKmh=40; car.velocity={x=0,z=-40/3.6}
+    H.tick(HOST,1/60)
+   end
+  end
+  back(e.run.sanWrongWaySeconds+2)
+  assert(e.incidents.cars[4].wrong==0 and not e.sanctions.cars[4].dq and lines156(e,'contresens')==0,'reversing nose forward: not the wrong way')
+  car.look={x=0,z=-1}; back(K.wrongWayTime+0.5)
+  print(string.format('1.60b wrong way nose first: %.2f s (threshold %.1f s)',e.incidents.cars[4].wrong,K.wrongWayTime))
+  assert(e.incidents.cars[4].wrong>=K.wrongWayTime,'turned round and driving back: wrong way')
+ end)
+ -- Beta 1.60 C : remise des gaz progressive (fineInputs) et humeur (dynamicPersona), jusqu'à l'applicateur.
+ local function race160c(key,on)
+  HUMANAI.release(); HOST=H.create(true)
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+  if key then e.profiles.C[key]=on end
+  E.changed(e); H.tick(HOST,6); e.startedAt=e.time-1000; e.fl.on=false; H.tick(HOST,1)
+  return e
+ end
+ check('INT160C fine inputs and mood off = no ceiling, no mood field, same commands',function()
+  local e=race160c()
+  local writes=HOST.throttleWrites
+  for i=2,e.frame.count do local c=e.mood.cars[i]; c.low=C.K.exitMinCorner; c.wasLow=true; c.stress=1 end
+  H.tick(HOST,3)
+  assert(HOST.throttleWrites==writes and e.stats.exitRamp==nil and e.stats.moodStress==nil,'switches off: nothing written, nothing counted')
+  for i=1,e.frame.count do local s=e.states[i]; assert(s.moodAggr==nil and s.moodCaution==nil and s.moodRisk==nil and s.moodFatigue==nil and e.commands[i].levelScale==1,'no mood field') end
+ end)
+ check('INT160C exit ramp reaches the applier once per change',function()
+  local e=race160c('fineInputs',true)
+  local i=2; local index=e.frame.cars[i].index
+  e.states[i].persona.style=1
+  local writes=HOST.throttleWrites
+  local c=e.mood.cars[i]; c.low=C.K.exitMinCorner; c.wasLow=true
+  H.tick(HOST,1/60)
+  local first=HOST.throttleLimits[index]
+  assert(first and first<1 and math.abs(first-C.K.exitFromAm)<C.K.exitStep+1e-9,'ceiling written at the exit: '..tostring(first))
+  H.tick(HOST,C.K.exitTimeAm+0.5)
+  local steps=math.floor((1-C.K.exitFromAm)/C.K.exitStep+0.5)+1
+  print(string.format('1.60 C exit ramp: first ceiling %.2f, %d write(s) for one ramp',first,HOST.throttleWrites-writes))
+  assert(HOST.throttleLimits[index]==1,'ceiling given back at the end of the ramp')
+  assert(HOST.throttleWrites-writes>=2 and HOST.throttleWrites-writes<=steps+1,'one write per step, not one per frame: '..(HOST.throttleWrites-writes))
+  assert(e.stats.exitRamp==1,'one exit counted')
+ end)
+ check('INT160C mood changes aggression in the applier',function()
+  local got={}
+  for _,on in ipairs({false,true}) do
+   local e=race160c('dynamicPersona',on)
+   local i=2; local index=e.frame.cars[i].index
+   e.states[i].persona.assertiveness=1; e.states[i].persona.style=1
+   if on then e.mood.cars[i].stress=1 end
+   H.tick(HOST,1.2)
+   if on then e.mood.cars[i].stress=1 end
+   H.tick(HOST,1.2)
+   got[on]=HOST.cars[index].aiAggression
+   if on then assert(e.states[i].moodAggr and e.states[i].moodAggr>1.05,'stressed assertive driver') else assert(e.states[i].moodAggr==nil,'off') end
+  end
+  print(string.format('1.60 C mood: aggression written %.4f off, %.4f on',got[false],got[true]))
+  assert(got[true]>got[false]+1e-4,'a stressed assertive driver is written more aggressive')
+ end)
+ -- Beta 1.60 D : rythme selon l'usure (réglage wearPace) et conseil de stratégie de SpotterEnginer, par l'hôte.
+ check('INT160D : voiture aux pneus usés plus lente et journalisée (wearPace), rien réglage coupé',function()
+  for _,on in ipairs({false,true}) do
+   HUMANAI.release(); HOST=H.create(true)
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.profiles.C.wearPace=on; E.changed(e)
+   H.tick(HOST,1)
+   local function wheels(w) local t={}; for k=0,3 do t[k]={tyreWear=w,tyreVirtualKM=10,tyreCoreTemperature=90,tyreOptimumTemperature=90} end return t end
+   HOST.cars[1].wheels=wheels(0.95); HOST.cars[2].wheels=wheels(0.05)
+   e.strategy.wearTrust='trusted'
+   H.tick(HOST,4)
+   local n=lines156(e,'rythme: ')
+   print(string.format('1.60 wear pace %s: level scale worn %.4f, fresh %.4f, %d line(s)',on and 'on' or 'off',e.commands[2].levelScale,e.commands[3].levelScale,n))
+   if not on then assert(n==0 and e.commands[2].levelScale==1 and e.states[2].wearBrake==nil,'switch off: no effect, no line')
+   else
+    assert(e.frame.cars[2].wearKnown and e.commands[2].levelScale<e.commands[3].levelScale and e.commands[2].levelScale<1,'worn car slower than the fresh one')
+    assert(e.states[2].wearBrake>1 and n>=1,'more braking margin, logged')
+   end
+  end
+ end)
+ check('INT160D : conseil de stratégie de SpotterEnginer lu (affichage et journal), temps perdu publié seulement réglage allumé',function()
+  HUMANAI.release(); HOST=H.create(true)
+  ac.FolderID.ACAppsLua=1029; local getFolder=ac.getFolder
+  ac.getFolder=function(id) if id==1029 then return 'appslua' end return getFolder(id) end
+  local sep=string.char(92); HOST.files['appslua'..sep..'SpotterEnginer'..sep..'manifest.ini']='[ABOUT]'
+  HOST.values['SpotterEnginer.strategy']='v=1;mode=undercut;rival=2;gain=1.2;lap=3;stamp=5'
+  assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+  E.changed(e); H.tick(HOST,3)
+  print(string.format('1.60 SpotterEnginer strategy: mode %s, target %s, %d line(s), published %s',tostring(e.incidents.seStrategyMode),tostring(e.incidents.seStrategyTarget),lines156(e,'SpotterEnginer strategie: undercut'),tostring(HOST.values['AdvancedIA.strategy'])))
+  assert(e.incidents.seStrategyMode=='undercut' and e.incidents.seStrategyTarget~='','advice read by the host and shown')
+  assert(lines156(e,'SpotterEnginer strategie: undercut')==1,'one journal line')
+  assert(HOST.values['AdvancedIA.strategy']==nil,'strategySmart off: our key is never written')
+  for i=2,4 do assert(not e.commands[i].rulePit,'no AI reacts to the advice') end
+  e.profiles.C.strategyEnabled=true; e.profiles.C.strategySmart=true; E.changed(e); H.tick(HOST,3)
+  local text=HOST.values['AdvancedIA.strategy']
+  assert(type(text)=='string' and text:find('^v=1;pitLoss=%-1%.0;pitLossNeutral=%-1%.0;laneTime=%-1%.0;samples=0;stamp=[%d%.]+$'),'strategySmart on: side key published: '..tostring(text))
+  local writes=HOST.storeWrites; H.tick(HOST,3)
+  assert(HOST.values['AdvancedIA.strategy']==text,'same numbers: not rewritten')
+  assert(writes>=0)
+ end)
+ -- Beta 1.60 E
+ check('INT160E depart: raceStart standing = rien ne change ; tour de formation annonce, puis depart lance',function()
+  local L=require('src/lang')
+  for _,want in ipairs({'standing','rolling'}) do
+   HUMANAI.release(); HOST=H.create(true)
+   HOST.sim.trackLengthM=5000; HOST.sim.isSessionStarted=false; HOST.sim.timeToSessionStart=20000
+   for i=1,3 do HOST.cars[i].speedKmh=0; HOST.cars[i].velocity={x=0,z=0} end
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.profiles.C.raceStart=want; E.changed(e)
+   H.tick(HOST,1)
+   HOST.sim.isSessionStarted=true; HOST.sim.timeToSessionStart=0; H.tick(HOST,1)
+   local t=e.incidents; local n=lines156(e,'depart: tour de formation')
+   print(string.format('1.60 race start %s: %d formation line(s), neutral %s, first lap %s',want,n,tostring(t.neutral),tostring(e.fl.kind)))
+   if want=='standing' then
+    assert(n==0 and not t.neutral and not t.formation and e.formation.phase=='none','standing: AC start, nothing from the formation')
+    for _,m in ipairs(HOST.messages) do assert(not m:find(L.messages.formation[1],1,true),'no formation message') end
+   else
+    assert(n==1 and t.neutral and t.formation and t.formationKind=='rolling' and not e.fl.on,'formation lap begun at AC green, first lap not armed')
+    local found=false; for _,m in ipairs(HOST.messages) do if m:find(L.messages.formation[2],1,true) then found=true end end
+    assert(found,'player told: formation lap, keep your place')
+    assert(e.panel.short==string.format(L.flagShort.formationRoll,100) and e.delta.kind=='','panel says formation lap; no delta')
+    -- Tête à 50 m de la ligne, tour parcouru : drapeau vert, départ lancé.
+    H.tick(HOST,0.2); t.relaunchTravel=1
+    for i=0,3 do HOST.cars[i].splinePosition=0.99-i*0.002; HOST.cars[i].position.z=HOST.cars[i].splinePosition*5000 end
+    H.tick(HOST,0.5)
+    assert(not t.neutral and not t.formation and t.restart and e.fl.kind=='depart lance' and e.formation.phase=='none','green: rolling start, careful first corner')
+    found=false; for _,m in ipairs(HOST.messages) do if m:find(L.messages.rollGreen[2],1,true) then found=true end end
+    assert(found and lines156(e,'depart lance: drapeau vert')==1,'player told: no overtaking until the line')
+   end
+  end
+ end)
+ -- Beta 1.60 A (tests/review160a.lua pour le détail) : régulateur sans coup de frein à travers l'applicateur.
+ check('INT160A : frein du radar avant adouci devant une voiture collee (regulateur, pour tous) ; reglages de la tranche coupes : aucune ligne',function()
+  local function run(followGap)
+   HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))(); local e=HUMANAI.engine
+   local function put(i,z,kmh) local c=HOST.cars[i]; c.position.z=z; c.splinePosition=(z/10000)%1; c.speedKmh=kmh; c.velocity={x=0,z=kmh/3.6} end
+   -- Seconde relecture : approche de 50 km/h à 12 m (contact dans 0,86 s : entre K.rearLastTtc et K.radarTTC) ; à 60 km/h
+   -- et plus, ou à moins de K.rearLastTtc s, c'est un vrai obstacle, jamais adouci.
+   put(0,-3000,100); put(3,500,90); put(1,500-4.4-12,140); put(2,500-4.4-12-4.4-followGap,140)
+   H.tick(HOST,0.5)
+   local peak,lift=0,1
+   for _=1,90 do
+    put(3,500,90); put(1,500-4.4-12,140); put(2,500-4.4-12-4.4-followGap,140); H.tick(HOST,1/60)
+    peak=math.max(peak,HOST.controls[1].brake or 0); lift=math.min(lift,HOST.throttleLimits[1] or 1)
+   end
+   return peak,lift,e
+  end
+  local far=run(200); local close,lift,e=run(5)
+  print(string.format('1.60 A radar brake: %.2f with nobody behind, %.2f with a car 5 m behind (lift to %.2f), softened episodes %d',far,close,lift,e.stats.rearGoverned or 0))
+  assert(far>C.K.rearBrakeMax+0.05,'nobody behind: radar brake as in 1.59')
+  assert(close<=C.K.rearBrakeMax+1e-6,'car close behind: radar brake capped')
+  assert(lift<1 and lift>=C.K.rearThrottleFloor-1e-6,'the lift comes first, never below the floor')
+  assert((e.stats.rearGoverned or 0)>=1,'episode counted')
+  assert(lines156(e,'conscience arriere')==0 and lines156(e,'aide au depassement')==0 and lines156(e,'cession anticipee')==0 and lines156(e,'defense non lancee')==0,'slice switches off: no line')
+ end)
+ -- Finition 1.61 (relecture, contrat SpotterEnginer) : clé météo publiée réglage allumé, puis un dernier enregistrement
+ -- « trend=off » quand le réglage est coupé, écrit une fois.
+ check('INT161G weatherLive : cle AdvancedIA.weather publiee, puis enregistrement final trend=off au reglage coupe',function()
+  local getFolder=ac.getFolder
+  HUMANAI.release(); HOST=H.create(true)
+  ac.FolderID.ACAppsLua=1029
+  ac.getFolder=function(id) if id==1029 then return 'appslua' end return getFolder(id) end
+  local sep=string.char(92); HOST.files['appslua'..sep..'SpotterEnginer'..sep..'manifest.ini']='[ABOUT]'
+  local ok,err=pcall(function()
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.profiles.C.weatherLive=true; E.changed(e)
+   for _=1,6*60 do H.tick(HOST,1/60) end
+   local key=HOST.values['AdvancedIA.weather']
+   assert(type(key)=='string' and key:find('^v=1;wet=') and key:find(';stamp=%d+$'),'switch on: weather key published: '..tostring(key))
+   e.profiles.C.weatherLive=false; E.changed(e); H.tick(HOST,2)
+   local final=HOST.values['AdvancedIA.weather']
+   assert(type(final)=='string' and final:find('^v=1;wet=0%.00;rain=0%.00;water=0%.00;trend=off;eta=%-1;next=none;forecast=unknown;forecastIn=%-1;aiDry=0;aiRain=0;stamp=%d+$'),'switched off: final off record: '..tostring(final))
+   H.tick(HOST,2); assert(HOST.values['AdvancedIA.weather']==final,'written once')
+  end)
+  ac.getFolder=getFolder
+  if not ok then error(err,0) end
+ end)
+ -- Beta 1.61 C (tests/review161c.lua pour le détail) : drapeau bleu du joueur nuancé et clé annexe à travers l'hôte.
+ check('INT161C classNuance : drapeau bleu du joueur (ordre) et cle annexe AdvancedIA.traffic ; reglage coupe : aucune cle, drapeau comme avant',function()
+  local getFolder=ac.getFolder
+  local function run(on)
+   HUMANAI.release(); HOST=H.create(true)
+   ac.FolderID.ACAppsLua=1029
+   ac.getFolder=function(id) if id==1029 then return 'appslua' end return getFolder(id) end
+   local sep=string.char(92); HOST.files['appslua'..sep..'SpotterEnginer'..sep..'manifest.ini']='[ABOUT]'
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.profiles.C.classNuance=on; E.changed(e)
+   local function put(i,z,kmh,lap) local c=HOST.cars[i]; c.position.z=z; c.splinePosition=(z/10000)%1; c.speedKmh=kmh; c.velocity={x=0,z=kmh/3.6}; c.lapCount=lap end
+   H.tick(HOST,0.5); e.startedAt=-1000; e.launchAt=nil
+   for _=1,240 do put(0,1000,100,1); put(1,4000,100,1); put(2,1000-4.4-15,130,3); put(3,7000,100,1); H.tick(HOST,1/60) end
+   return e,HOST.values['AdvancedIA.traffic']
+  end
+  local e,key=run(true)
+  assert(e.run.classNuance==true and e.panel.kind=='blue' and e.nuance.stage=='order' and e.nuance.kind=='lap','switch on: blue flag, order stage')
+  assert(type(key)=='string' and key:find('^v=1;blue=lap;stage=order;car=2;gap=%d+;closing=%d+;count=1;stamp=%d+$') and #key<=C.K.trafficKeyBytes,'side key published: '..tostring(key))
+  assert(lines156(e,'drapeau bleu joueur: ordre (')==1,'one journal line')
+  -- Finition 1.61 (relecture, contrat SpotterEnginer) : réglage coupé en cours de session : un dernier enregistrement
+  -- « rien », horodaté, au lieu de la dernière valeur laissée figée.
+  e.profiles.C.classNuance=false; E.changed(e); H.tick(HOST,2)
+  local final=HOST.values['AdvancedIA.traffic']
+  assert(type(final)=='string' and final:find('^v=1;blue=none;stage=none;car=%-1;gap=0;closing=0;count=0;stamp=%d+$'),'switched off: final none record: '..tostring(final))
+  local writes=HOST.storeWrites; H.tick(HOST,2); assert(HOST.values['AdvancedIA.traffic']==final,'written once')
+  local o,none=run(false)
+  ac.getFolder=getFolder
+  print(string.format('1.61 C player blue flag: key %s ; switch off: panel %s, key %s',tostring(key),o.panel.kind,tostring(none)))
+  assert(o.run.classNuance==false and o.panel.kind=='blue' and none==nil and lines156(o,'drapeau bleu joueur')==0,'switch off: blue flag as before, no key, no line')
+ end)
+ -- Beta 1.61 B (tests/review161b.lua pour le détail) : mémoire du circuit à travers l'hôte et l'applicateur.
+ check('INT161B memoire du circuit: coupee = aucun fichier ni ligne ; allumee = fichier ecrit au changement de session, relu a la session suivante ; fichier abime ignore puis remplace',function()
+  local function run(on,files)
+   HUMANAI.release(); HOST=H.create(true)
+   for path,data in pairs(files or {}) do HOST.files[path]=data end
+   assert(loadstring(source))(); local e=HUMANAI.engine
+   -- Profil réglé à la main et prêt (une Journée circuit sans section cochée n'envoie rien et n'apprend rien).
+   course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.g.trackMemory=on; E.changed(e)
+   H.tick(HOST,3)
+   local early=e.states[2].priorMap~=nil
+   -- La session apprend le tour entier (le banc ne fait pas rouler les voitures assez longtemps pour cela).
+   local bins=e.delta.bins
+   for i=1,HOST.sim.carsCount do local s=e.states[i]; for b=1,bins do s.pace[b]=50 end; s.paceCount=bins; s.paceMean=50 end
+   H.tick(HOST,3)
+   HOST.sim.currentSessionIndex=1; HOST.sim.raceSessionType=2
+   H.tick(HOST,2)
+   local file,path
+   for p,data in pairs(HOST.files) do if p:find('\\pace\\test.ini',1,true) and not p:find('.bak',1,true) then file=data; path=p end end
+   return e,file,path,early
+  end
+  local e,file=run(false)
+  assert(file==nil and (HOST.trackWrites or 0)==0 and lines156(e,'memoire du circuit')==0,'switch off: no file, no line')
+  for i=1,HOST.sim.carsCount do assert(e.states[i].prior==nil and e.states[i].priorMap==nil,'switch off: no prior') end
+  local path,early
+  e,file,path,early=run(true)
+  assert(file and HOST.trackWrites==1 and not early,'one file written at the session change; nothing known in the first session')
+  assert(path:find('\\AdvancedIA\\pace\\test.ini',1,true),'under Documents, in the pace folder: '..path)
+  assert(file:find('kind=pace',1,true) and file:find('[model.',1,true) and file:find('serial=1',1,true),'a pace file with models')
+  assert(lines156(e,'memoire du circuit: rien de connu pour test')==1 and lines156(e,'memoire du circuit: enregistree')==1,'journal')
+  print('1.61 B track memory: '..#file..' bytes written to '..path)
+  local kept=file
+  e,file,path,early=run(true,{[path]=kept})
+  assert(early,'second launch: the kept pace is attached from the first seconds')
+  assert(lines156(e,'memoire du circuit: test, allure de')==1,'load line')
+  assert(file and file:find('serial=2',1,true),'merged and written again with the next serial')
+  e,file=run(true,{[path]='[AdvancedIA]\nformat=1\nkind=pace\ntrack=other\n'})
+  assert(lines156(e,'memoire du circuit: fichier ignore (circuit)')==1,'file of another track ignored, session normal')
+  assert(file and file:find('track=test',1,true) and file:find('serial=1',1,true),'replaced at the save')
+  -- Finition 1.61 (relecture) : le fichier refusé est mis de côté, jamais perdu.
+  assert(HOST.files[path:sub(1,-5)..'.refused.ini']=='[AdvancedIA]\nformat=1\nkind=pace\ntrack=other\n' and lines156(e,'memoire du circuit: fichier refuse mis de cote (test.refused.ini)')==1,'refused pace file set aside')
+ end)
+ -- Beta 1.61 D
+ check('INT161D depart: startRealism coupe = journal du depart inchange ; active = tirage du depart, une ligne',function()
+  for _,on in ipairs({false,true}) do
+   HUMANAI.release(); HOST=H.create(true)
+   HOST.sim.trackLengthM=5000; HOST.sim.isSessionStarted=false; HOST.sim.timeToSessionStart=20000
+   for i=1,3 do HOST.cars[i].speedKmh=0; HOST.cars[i].velocity={x=0,z=0} end
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.profiles.C.startRealism=on; E.changed(e)
+   H.tick(HOST,1)
+   HOST.sim.isSessionStarted=true; HOST.sim.timeToSessionStart=0; H.tick(HOST,0.1)
+   local n=lines156(e,'depart: reactions'); local t=e.antics
+   print(string.format('1.61 start realism %s: %d reaction line(s), draw %d, kind %s',tostring(on),n,t.serial,t.kind))
+   if on then
+    assert(n==1 and t.serial==1 and t.kind=='ac' and e.grid.realism==true,'switch on: one draw at AC green')
+    assert(not e.incidents.formation and e.formation.phase=='none','never a formation lap by itself')
+    for i=1,3 do
+     local a=e.frame.cars[i]
+     if a.control and not a.player then assert(t.react[i]>=C.K.anticReactMin and t.react[i]<=C.K.anticReactMax,'reaction drawn for AI '..i) else assert(t.react[i]==0,'never the player') end
+    end
+   else
+    assert(n==0 and t.serial==0 and t.kind=='' and e.grid.realism==false,'switch off: nothing')
+   end
+   assert(lines156(e,'tour de formation: depart par rangees')==0 and lines156(e,'faux depart')==0,'no formation line, no jump line')
+   H.tick(HOST,3)
+   assert(e.errors==0,'no engine error')
+   for i=1,3 do assert(e.states[i].formOffset==nil,'no lateral offset outside a formation lap') end
+  end
+ end)
+ check('INT161E : météo en direct (weatherLive), humidité par voiture et prévision ; rien réglage coupé',function()
+  for _,on in ipairs({false,true}) do
+   HUMANAI.release(); HOST=H.create(true)
+   HOST.tyreCatalog[1]={{short='S',name='Slick Soft'},{short='I',name='Intermediate'},{short='W',name='Full Wet'}}
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   e.profiles.C.section_weather=true; e.profiles.C.weatherAdaptation=true; e.profiles.C.weatherTyresEnabled=true; e.profiles.C.weatherLive=on; E.changed(e)
+   H.tick(HOST,2)
+   HOST.sim.rainWetness=0.4; HOST.sim.rainIntensity=0.2
+   H.tick(HOST,25)
+   local wet=e.states[2].wxWet
+   print(string.format('1.61 live weather %s: per-car wetness %s (track 0.40), trend %s, pit request %s, lines %d',on and 'on' or 'off',wet and string.format('%.2f',wet) or 'none',
+    e.wx.trend,tostring(HOST.pitRequests[1]),lines156(e,'meteo: tendance')+lines156(e,'meteo: prevision')))
+   assert(e.weather.wet and HOST.pitRequests[1]==true,'rain: the car is called for rain tyres either way')
+   if not on then
+    assert(wet==nil and e.weather.live==nil and e.sideText['AdvancedIA.weather']==nil,'switch off: nothing written')
+    assert(lines156(e,'meteo: tendance')==0 and lines156(e,'meteo: prevision')==0 and lines156(e,'anticipe')==0,'switch off: no line')
+   else
+    assert(wet and wet>0.4,'dry tyres on a wet track: effective wetness above the track value')
+    assert(lines156(e,'meteo: prevision indisponible')==1,'forecast fields absent in this host: said once')
+    assert(e.sideText['AdvancedIA.weather'] and e.sideText['AdvancedIA.weather']:find('v=1;wet=0.40',1,true),'side key prepared')
+   end
+  end
+ end)
+ -- Beta 1.61 A (tests/review161a.lua pour le détail) : fichier des zones du circuit à travers l'hôte.
+ check('INT161A : ni fichier ni memoire = aucune ligne ni ecriture ; fichier des zones lu au chargement du circuit, zone d attaque en service ; SAVE ecrit le fichier dans Documents ; oubli a la demande ; fichier faux refuse',function()
+  local TF=require('src/trackfile'); local Zn=require('src/zones')
+  local path='docs\\'..C.K.presetFolder..'\\'..C.K.zoneFolder..'\\test.ini'
+  -- App en service (sections cochées) : le fichier est lu au premier pas où l'app pilote.
+  local function boot(text)
+   HUMANAI.release(); HOST=H.create(true); if text then HOST.files[path]=text end
+   assert(loadstring(source))(); H.tick(HOST,0.2)
+   local engine=HUMANAI.engine; local p=engine.p
+   for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end
+   E.changed(engine); H.tick(HOST,1)
+   assert(engine.guard=='ready','app driving: '..tostring(engine.guard))
+   return engine
+  end
+  local e=boot(nil)
+  assert(lines156(e,'zones:')==0 and lines156(e,'zone apprise')==0 and (HOST.trackWrites or 0)==0 and HOST.files[path]==nil and not e.zones.extra and e.zones.learnt==nil,'no file, memory off: nothing read, written or prepared')
+  -- Fichier présent : lu au chargement du circuit, jamais cru.
+  e=boot(TF.build('t',{kind='zones',track='test',layout='',length=10000,serial=3},{
+   {name='zone.1',kind='attack',from=0.3,to=0.34,source='user'},
+   {name='zone.2',kind='brake',from=0.5,source='learnt',hits=9,sessions=2,last=3},
+   {name='zone.3',kind='warp',from=0.5,source='user'}}))
+  assert(lines156(e,'zones: 0 du fichier, 1 du pilote, 1 apprises (test)')==1 and lines156(e,'zones: 1 zone(s) ignoree(s) (test)')==1,'file read at the track load')
+  assert(e.zones.attackN==1 and #e.zones.brakes==1 and e.zones.serial==3 and e.fl.known==e.zones.brakes,'zones in service')
+  -- SAVE : zones du pilote et zones apprises écrites dans Documents, sans reste.
+  e.zones[#e.zones+1]={kind='caution',source='user',from=0.7,to=0.72,noYield=false,noOvertake=false,maxOffset=1,note=''}; Zn.index(e.zones)
+  local writes=HOST.trackWrites or 0
+  e.zoneSaveAsk='user'; H.tick(HOST,0.1)
+  assert((HOST.trackWrites or 0)==writes+1 and e.zoneSaveAsk==nil and lines156(e,'zones: fichier enregistre (3 zones, test)')==1,'SAVE writes the Documents file')
+  local d=assert(Zn.decode(HOST.files[path],'test','',10000)); assert(#d.user==2 and #d.learnt==1 and HOST.files[path..'.bak']==nil,'file read back, no leftover')
+  -- L'apprentissage n'écrit jamais mémoire coupée.
+  e.zoneSaveAsk='learn'; H.tick(HOST,0.1); assert((HOST.trackWrites or 0)==writes+1 and e.zoneSaveAsk==nil,'learning never writes with track memory off')
+  -- Écriture refusée : notée.
+  HOST.trackReadonly=true; e.zoneSaveAsk='user'; H.tick(HOST,0.1); assert(lines156(e,'zones: enregistrement impossible')==1,'refused write noted')
+  HOST.trackReadonly=false
+  -- Oubli à la demande : zones apprises retirées, zones du pilote gardées.
+  e.zoneSaveAsk='forget'; H.tick(HOST,0.1)
+  d=assert(Zn.decode(HOST.files[path],'test','',10000)); assert(#d.learnt==0 and #d.user==2 and #e.zones.brakes==0 and e.zones.attackN==1,'learnt zones forgotten on request')
+  -- Fichier faux ou d'un autre circuit : refusé, rien n'est appliqué.
+  e=boot('garbage')
+  assert(lines156(e,'zones: fichier refuse (syntaxe)')==1 and not e.zones.extra,'bad file rejected, nothing applied')
+  -- Finition 1.61 (relecture) : fichier refusé mis de côté, jamais écrasé ni effacé par l'enregistrement suivant.
+  local aside=path:sub(1,-5)..'.refused.ini'
+  assert(HOST.files[aside]=='garbage' and HOST.files[path]==nil and lines156(e,'zones: fichier refuse mis de cote (test.refused.ini)')==1,'refused file set aside')
+  e.zones[#e.zones+1]={kind='caution',source='user',from=0.7,to=0.72,noYield=false,noOvertake=false,maxOffset=1,note=''}; Zn.index(e.zones)
+  e.zoneSaveAsk='user'; H.tick(HOST,0.1)
+  assert(HOST.files[aside]=='garbage' and HOST.files[path]~=nil,'the next save writes a new file, the refused one is kept')
+  e=boot(TF.build('t',{kind='zones',track='imola',layout='',length=10000,serial=3},{{name='zone.1',kind='attack',from=0.3,to=0.34,source='user'}}))
+  assert(lines156(e,'zones: fichier refuse (circuit)')==1 and not e.zones.extra,'file of another track rejected')
  end)
  C.globalDefaults.presetBySession=presetDefault
  return results

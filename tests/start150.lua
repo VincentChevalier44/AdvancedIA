@@ -203,7 +203,7 @@ tests.SC_EXIT_150=function()
  assert(t.safetyPhase=='out' and t.safetyLeft and count(e,'voiture de securite: sortie en piste devant')==1,'on track ahead of the first car')
  assert(t.messageKind=='scOut' and t.messageValue==2 and math.abs(t.messageExtra-600)<1,'bridge: scOut, car right behind (0-based index 2), gap')
  -- File formée : première voiture à moins de K.scLeadGap m, une seule annonce.
- F.place(f,5,1000,120); F.place(f,3,1000-K.scLeadGap+20,120); F.tick(e,f,0.1)
+ F.place(f,5,1000,120); F.place(f,3,1000-K.scFreeGap+20,120); F.tick(e,f,0.1)
  assert(t.messageKind=='scLeading' and t.messageValue==2 and count(e,'en tete de la file')==1,'queue formed: announced')
  local id=t.messageId; F.tick(e,f,1); assert(t.messageId==id or t.messageKind~='scLeading','announced once')
 end
@@ -224,11 +224,12 @@ tests.NEUTRAL_QUEUE_150=function()
  t.cars[1].incident=true; F.tick(e,f,1/60); assert(e.states[2].neutralQueue~=1,'a crashed car can be passed')
 end
 tests.SC_EXIT_FALLBACK_150=function()
- -- Jamais sortie de son emplacement en K.scLeaveMax s : posée en piste, jamais en vue du joueur.
+ -- Immobile à son emplacement K.scLeaveStill s après sa libération (Beta 1.60 ; avant : K.scLeaveMax s) : posée en piste,
+ -- jamais en vue du joueur.
  local e,f=scScene(); local t=e.incidents
  F.place(f,1,2000,150); F.place(f,2,2500,150); f.cars[2].position=1; f.cars[1].position=2; f.cars[3].position=3
  F.tick(e,f,K.scCallTime+0.1); assert(t.safetyPhase=='exit')
- F.tick(e,f,K.scLeaveMax+0.1)
+ F.tick(e,f,K.scLeaveStill+0.1)
  assert(t.safetyPhase=='place' and count(e,'ne quitte pas son emplacement, posee en piste hors de la vue du joueur')==1,'fallback: placed on track')
  F.tick(e,f,0.1)
  local at=e.commands[5].place
@@ -275,7 +276,7 @@ tests.SC_RELAUNCH_EXIT_150=function()
  f.cars[1].pit=true; F.place(f,1,100,0); f.cars[1].pit=true; f.cars[1].inPitBox=true
  for _=1,200 do if not t.red then break end; F.tick(e,f,0.5) end
  assert(t.relaunch and t.safetyPhase=='exit' and e.commands[6].scRelease,'relaunch: it leaves first')
- F.tick(e,f,K.scLeaveMax-2); assert(e.commands[2].pitHold and t.restartState=='wait','field and player wait while it is still in its box')
+ F.tick(e,f,K.scLeaveStill-2); assert(e.commands[2].pitHold and t.restartState=='wait','field and player wait while it is still in its box')
  f.cars[6].inPitBox=false; F.tick(e,f,K.scExitGap-1); assert(e.commands[2].pitHold and t.restartState=='wait','just left: still held')
  F.tick(e,f,1.5); assert(t.safetyPhase=='exit' and t.restartState=='go','then the player (P1) goes')
  f.cars[1].inPitBox=false; F.place(f,1,300,60); f.cars[1].pit=true
@@ -418,5 +419,11 @@ tests.REPLAY_1457_150=function()
  assert(green,'green flag at the Safety Car pit-in')
  for i=2,5 do assert(z[i]<z[1],'still behind the player at the green flag') end
  assert(count(e,'a double Driver_1')==0,'no illegal pass of the player at all')
+ -- Relecture finale 1.61 : depuis la 1.60 le joueur lent n'est plus sanctionné dans cette scène ; la règle elle-même :
+ -- sous neutralisation, une voiture qui purge une sanction reste dans la file (jamais doublée), hors neutralisation si.
+ local Pen=require('src/penalties'); local e2=F.scene('C',3); local pt=e2.penalties; Pen.reset(pt)
+ pt.kind='slow'; pt.lastAt=e2.time; pt.seconds=10; pt.disqualified=false
+ assert(not Pen.mayPass(pt,2,1,e2.time,1,true),'player serving under neutralisation: not passable')
+ assert(Pen.mayPass(pt,2,1,e2.time,1,false),'player serving, no neutralisation: passable')
 end
 return tests

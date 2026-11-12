@@ -81,7 +81,11 @@ local function role(r) return r or 'body' end
 -- Majuscules (text-transform: uppercase de la maquette), accents compris ; mémorisées.
 local upperMap={['à']='À',['â']='Â',['ä']='Ä',['é']='É',['è']='È',['ê']='Ê',['ë']='Ë',['î']='Î',['ï']='Ï',['ô']='Ô',['ö']='Ö',['ù']='Ù',['û']='Û',['ü']='Ü',['ç']='Ç',['œ']='Œ',['æ']='Æ',['ÿ']='Ÿ'}
 local uppers={}; local upperCount=0
+-- Correctif 1.61 (Spa, 11 novembre : « widgets.lua:87: attempt to index local 'str' (a nil value) ») : texte absent
+-- dessiné vide, noté une fois (W.missing, journalisé par l'hôte). Cause trouvée : lien « acpenalties » de l'accueil
+-- sans libellé (avertissement des pénalités d'AC actives).
 function W.upper(str)
+ if type(str)~='string' then W.missing=W.missing or 'majuscules'; return '' end
  local hit=uppers[str]
  if hit then return hit end
  local out=str:upper():gsub('[\195\197][\128-\191]',upperMap)

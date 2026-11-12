@@ -41,7 +41,8 @@ end
 -- de la zone), arrêtée ou très lente, aux stands, hors piste.
 -- Beta 1.59.1 (bedstyboi : pénalité pour avoir doublé des voitures accidentées) : aussi pendant K.passAfterIncident s
 -- après son accident ou la fin de son incident (elle repart au ralenti, souvent abîmée, la zone d'une autre encore active).
-local function passable(b,c,p,now) return not b.valid or b.pit or b.offtrack or c.incident or c.holding or now-c.clearedAt<math.max(p.yellowHold,K.passAfterIncident) or now-c.lastCrash<K.passAfterIncident or b.kmh<p.obstacleSpeedKmh end
+-- Beta 1.60 : aussi une voiture nettement en difficulté sous drapeau (c.trouble, posé par src/director.lua).
+local function passable(b,c,p,now) return not b.valid or b.pit or b.offtrack or c.incident or c.holding or c.trouble==true or now-c.clearedAt<math.max(p.yellowHold,K.passAfterIncident) or now-c.lastCrash<K.passAfterIncident or b.kmh<p.obstacleSpeedKmh end
 M.passable=passable
 -- Voiture qui purge une sanction (IA au pied levé, joueur aux gaz coupés ou disqualifié) : elle peut être doublée.
 local function serving(t,j,now,player)
@@ -71,6 +72,13 @@ function M.requestTrackLimits(t,seconds,now)
  t.requestId=t.requestId%K.counterMax+1; t.reason='limits'; t.kind='slow'; t.seconds=seconds; t.lastAt=now; t.dirty=true
  return t.requestId
 end
+-- Beta 1.60 (src/blame.lua, sanPlayerContact) : coupure des gaz pour un contact où vous êtes en tort : même canal et
+-- mêmes refus que requestTrackLimits, raison 'contact' sur le pont ; ne compte pas vers la disqualification.
+function M.requestContact(t,seconds,now)
+ if now-t.lastAt<K.sanPlayerQueueGap or t.disqualified then return nil end
+ t.requestId=t.requestId%K.counterMax+1; t.reason='contact'; t.kind='slow'; t.seconds=seconds; t.lastAt=now; t.dirty=true
+ return t.requestId
+end
 -- Dépassement pendant la transition (freinage au déclenchement d'un drapeau) : en attente jusqu'à l'échéance, annulé
 -- si la place est rendue.
 local function deadline(regimeAt,now) return max(regimeAt+K.passGiveBack,now+K.giveBackMin) end
@@ -84,6 +92,9 @@ function M.update(t,frame,p,profile,inc,now,_,d)
  -- jusqu'à la ligne après une reprise derrière la voiture de sécurité. Un dépassement en attente survit à la fin du
  -- régime : il est pardonné si la place est rendue, sanctionné à l'échéance sinon.
  local regime=inc.playerNoPass or inc.neutral or inc.red or inc.playerRestart==true
+ -- Beta 1.60 (fusion, doute de la tranche E) : tour de formation, les K.formationGrace premières secondes après le feu
+ -- vert d'AC : un meilleur envol que la voiture voisine n'est pas un dépassement à rendre (rien de jugé, rien à rendre).
+ if regime and inc.formation and not inc.red and not inc.playerNoPass and now-(inc.neutralSince or now)<K.formationGrace then regime=false end
  if not regime then t.passMade=false; if t.retake[i] then clear(t.retake[i]) end end
  -- Fin d'un drapeau rouge : le joueur devait attendre la reprise dans la voie des stands (pas s'il a été annulé).
  local redEnded=t.redBefore and not inc.red and not inc.redCancelled; t.redBefore=inc.red
@@ -93,12 +104,14 @@ function M.update(t,frame,p,profile,inc,now,_,d)
  if redEnded and a.valid and not a.pit and not a.finished and profile=='C' then t.redPending=true end
  -- Voie des stands : rien n'est jugé ; des places gagnées par un arrêt ne sont pas des dépassements.
  if not a.valid or a.pit or not a.splineValid then clear(t.ahead); clear(t.waiting); t.passedUnder=t.passMade; return nil end
- if not p.playerPenalties or C.solo(profile) then t.redPending=false; t.stopPending=false; t.jumpPending=false end
+ if not p.playerPenalties or C.solo(profile) then t.redPending=false; t.stopPending=false; t.jumpPending=false; t.jumpMult=nil end
  local ready=p.playerPenalties and not C.solo(profile) and not t.disqualified and now-t.lastAt>=K.penaltyCooldown
  -- Infractions en attente (reprise hors des stands, arrêt obligatoire manqué) : appliquées dès que possible.
  if ready and t.redPending then t.redPending=false; return decide(t,'red',p.penaltySeconds,now,p) end
  if ready and t.stopPending then t.stopPending=false; return decide(t,'stop',p.penaltySeconds,now,p) end
  -- Faux départ d'un départ arrêté (Beta 1.34).
+ -- Beta 1.61 (tranche D) : faux départ flagrant, pénalité multipliée (t.jumpMult, posé par le moteur, lu une fois).
+ if ready and t.jumpPending and t.jumpMult then local mult=t.jumpMult; t.jumpPending=false; t.jumpMult=nil; return decide(t,'jump',p.penaltySeconds*mult,now,p) end
  if ready and t.jumpPending then t.jumpPending=false; return decide(t,'jump',p.penaltySeconds,now,p) end
  -- Delta négatif au passage d'un mini-secteur ou à la sortie d'un double drapeau jaune : nouveau départ du delta.
  if ready and d and d.infraction then
@@ -177,6 +190,17 @@ local function sanction(t,s,i,j,a,p,now,events,neutral)
  end
  events=events or {}; events[#events+1]=i; t.dirty=true
  return events
+end
+-- Beta 1.60 (Bakou, 11 novembre) : voiture de sécurité doublée, vue sur la position le long de la piste
+-- (src/incidents.lua) : même sanction qu'un dépassement sous neutralisation (infraction, pied levé), une par délai
+-- (K.penaltyCooldown : jamais deux fois pour le même dépassement vu aussi par M.ai) ; la place se rend sous la limite
+-- posée par Incidents.cap. Vrai si la sanction est décidée.
+function M.scPassed(t,i,j,a,p,profile,now)
+ if not p.aiPenalties or C.solo(profile) then return false end
+ local s=t.ai
+ if s.dq[i] or now-(s.lastAt[i] or -math.huge)<K.penaltyCooldown then return false end
+ sanction(t,s,i,j,a,p,now,nil,false)
+ return true
 end
 -- Sanctions des IA : un dépassement sous drapeau jaune (zone jaune, neutralisation, drapeau rouge : son propre régime)
 -- la fait lever le pied quelques secondes ; au-delà du nombre toléré, disqualification. Au déclenchement d'une

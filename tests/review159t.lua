@@ -30,11 +30,12 @@ tests.TRACKDAY_PRESET_CHOICE_159T=function()
  assert(C.sessionPreset(g,'P','imola',4909)=='Essais','other profiles unchanged')
  -- Contenu : comme la Nordschleife, côtés libres, appels de phares plus rares.
  local n,c=C.preset('Nordschleife','J',{}),C.preset('Circuit','J',{})
- assert(n.yieldSide=='right' and c.yieldSide=='auto' and c.overtakeSide=='auto','free sides')
+ -- Beta 1.62 (décision 1 du pilote) : le plus lent garde sa ligne (yieldSide='line').
+ assert(n.yieldSide=='right' and c.yieldSide=='line' and c.overtakeSide=='auto','free sides')
  assert(c.flashRange<n.flashRange and c.flashMinAdvantage>n.flashMinAdvantage,'fewer flashes')
  for _,group in ipairs(C.sections) do assert(n['section_'..group]==c['section_'..group],'same sections: '..group) end
  for key,value in pairs(n) do
-  if key~='yieldSide' and key~='overtakeSide' and key~='flashRange' and key~='flashMinAdvantage' then assert(c[key]==value,'same value: '..key) end
+  if key~='yieldSide' and key~='laneBiasEnabled' and key~='overtakeSide' and key~='flashRange' and key~='flashMinAdvantage' then assert(c[key]==value,'same value: '..key) end
  end
  assert(J.english('preset_session: Circuit (profil J)')=='preset_session: Track day (profile J)',J.english('preset_session: Circuit (profil J)'))
 end
@@ -133,7 +134,7 @@ end
 
 -- Cession à un suiveur plus rapide sur une journée circuit : l'IA qui cède lève vraiment le pied (vitesse de pointe sous
 -- celle du suiveur) et le suiveur passe en quelques secondes.
-tests.TRACKDAY_YIELD_PASS_159T=function()
+local function trackdayYield()
  local e,f=F.scene('J',3); local p=e.p; p.personalLineJitter=0; p.aiFlashEnabled=false; E.changed(e); F.tick(e,f,0.2)
  local z={[2]=200,[3]=150}; local v={[2]=170,[3]=176}
  local yieldAt,passAt,minCap=nil,nil,math.huge
@@ -157,6 +158,18 @@ tests.TRACKDAY_YIELD_PASS_159T=function()
  assert(yieldAt,'slower AI yields')
  assert(minCap<=176-K.yieldPassDeltaKmh+0.5,'the yielding AI really lifts: top speed under the follower ('..minCap..')')
  assert(passAt and passAt-yieldAt<15,'pass completes within 15 s of the yield')
+end
+-- Beta 1.61 (mutations masquées depuis le lever de pied franc du lot 3) : la même cession, passage franc neutralisé
+-- (décalage exigé hors d'atteinte) : la limite de la 1.59 (15 km/h sous le suiveur) suffit seule à lever le pied.
+local function withK(values,fn)
+ local saved={}; for k,v in pairs(values) do saved[k]=K[k]; K[k]=v end
+ local ok,err=pcall(fn)
+ for k,v in pairs(saved) do K[k]=v end
+ if not ok then error(err,0) end
+end
+tests.TRACKDAY_YIELD_PASS_159T=function()
+ trackdayYield()
+ withK({frankOffM=1e9},trackdayYield)
 end
 -- Cession avec deux suiveurs en file derrière (pas à sa hauteur) : limite de vitesse levée au bout de K.yieldQueueTime s
 -- (une voiture tenue sous sa vitesse ferait un bouchon), comptée une fois ; un seul suiveur : limite tenue.
@@ -252,6 +265,8 @@ tests.YIELD_CAP_NO_SPIRAL_159T=function()
   s.state='YIELD_HOLD'; s.target=3; s.targetSide=1; s.followers[3]=true; s.yieldStart=start; s.holdUntil=e.time+60; s.yieldDetection=100; s.yieldMargin=5
   local cap=e.commands[2].speedLimit or K.unlimitedSpeed
   local v2=math.min(170,cap); F.place(f,2,0,v2); F.place(f,3,-14.4,v2)
+  -- Beta 1.60 (lot 3) : suiveur tenu hors dépassement (sinon lever de pied franc : tests/review160w.lua)
+  e.states[3].restUntil=e.time+10
   F.tick(e,f,1/60); lowest=math.min(lowest,e.commands[2].speedLimit or K.unlimitedSpeed)
  end
  assert(lowest>=170-K.yieldPassDeltaKmh-0.5,'cap held from the follower speed first seen, no spiral: '..lowest)
@@ -310,7 +325,7 @@ end
 -- Règle du pilote : jamais de coup de frein devant une voiture collée. Suiveur à 5 m, 10 km/h plus vite : la limite de
 -- cession part de la vitesse du moment et descend d'au plus K.yieldCapDecelOff km/h par seconde ; le radar du suiveur
 -- n'a pas à freiner fort ; levée progressive ensuite (jamais sous la vitesse du moment).
-tests.YIELD_CAP_GENTLE_159T=function()
+local function yieldCapGentle()
  assert(K.yieldCapDecelOff==6 and K.yieldCapReleaseKmh==8)
  -- Suiveur 5 m derrière (pare-chocs), 10 km/h plus vite, qui se cale en douceur (15 km/h/s) comme l'IA d'AC.
  local function run(yield)
@@ -347,6 +362,12 @@ tests.YIELD_CAP_GENTLE_159T=function()
   prev=cap<K.unlimitedSpeed and cap or prev
  end
  assert(e.commands[2].speedLimit>=K.unlimitedSpeed and steps>0,'released in the end, not at once')
+end
+-- Beta 1.61 : suiveur collé = régulateur arrière de la 1.60, qui étale lui aussi chaque limite ; la descente douce
+-- propre à la cession est vérifiée seule, suiveur hors de la portée du régulateur.
+tests.YIELD_CAP_GENTLE_159T=function()
+ yieldCapGentle()
+ withK({rearCloseMin=0,rearCloseTime=0},yieldCapGentle)
 end
 
 return tests

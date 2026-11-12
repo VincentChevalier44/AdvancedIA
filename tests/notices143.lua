@@ -70,7 +70,7 @@ tests.NOTICE_ENGINE_143=function()
  assert(e.sanctions.cars[3].pending=='drive','second drive-through issued')
  assert(e.sanctions.aiSerial==serial and h.aiTitle=='Driver_2','rate limited: at most one notice every K.sanNoticeGap s')
  -- Drapeau noir : toujours annoncé, style du drapeau noir, sans sigle.
- local c=f.cars[4]; speed(f,4,40)
+ local c=f.cars[4]; speed(f,4,40); c.lz=-1 -- Beta 1.60 : contresens = nez en premier contre le sens de la piste (voiture retournée)
  for _=1,math.floor((e.run.sanWrongWaySeconds+0.5)*60) do c.z=c.z-c.speed/60; c.spline=(c.z/f.length)%1; F.tick(e,f,1/60) end
  assert(e.sanctions.cars[4].dq,'black flag')
  assert(h.aiTitle=='Driver_4' and h.aiBlack and h.aiCode=='' and h.aiShort=='Drapeau noir (contresens)' and h.aiLabel=='Drapeau noir','black flag notice')
@@ -82,7 +82,7 @@ end
 tests.NOTICE_OVERLAY_OFF_143=function()
  local e,f=race(3)
  e.g.overlayMessages=false
- local c=f.cars[3]; speed(f,3,40)
+ local c=f.cars[3]; speed(f,3,40); c.lz=-1
  for _=1,math.floor((e.run.sanWrongWaySeconds+0.5)*60) do c.z=c.z-c.speed/60; c.spline=(c.z/f.length)%1; F.tick(e,f,1/60) end
  assert(e.sanctions.cars[3].dq and e.incidents.messageKind=='aiBlackFlag','black flag message for AC')
  assert(e.hud.aiUntil<e.time and e.hud.aiTitle=='','no dedicated notice')

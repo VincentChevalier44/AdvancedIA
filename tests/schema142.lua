@@ -81,7 +81,8 @@ tests.SCHEMA_142_GATING=function()
   for _,key in ipairs(C.sanctionSwitches) do assert(run[key]==false,profile..': '..key) end
  end
  local j=C.effective('J',C.preset('Nordschleife','J',{}))
- assert(not (j.towBreakEnabled or j.dirtyAirEnabled or j.finalLapsEnabled or j.outLapEnabled or j.lockWearEnabled or j.strategyEnabled or j.sanTrackLimits),'track day: nothing new')
+ -- Beta 1.62 (règles de la journée circuit) : tour de chauffe progressif dans les préréglages de journée circuit.
+ assert(not (j.towBreakEnabled or j.dirtyAirEnabled or j.finalLapsEnabled or j.lockWearEnabled or j.strategyEnabled or j.sanTrackLimits) and j.outLapEnabled,'track day: nothing new but the warm-up lap')
 end
 tests.SCHEMA_142_MIGRATION=function()
  local function profiles() local t={}; for _,profile in ipairs(C.profiles) do t[profile]=C.defaults(profile); t[profile].configured=true end; return t end

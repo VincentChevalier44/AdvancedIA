@@ -17,7 +17,7 @@ local function resetSafe(self,frame,g)
 end
 local function safe(frame,i,active)
  local a=frame.cars[i]
- if not a or not a.valid or not a.control or a.player or a.pit or a.offtrack or a.calibrationBlocked or not a.splineValid or a.kmh<K.calibrationSpeed or a.corner<(active and K.calibrationActiveCorner or K.calibrationCorner) then return false end
+ if not a or not a.valid or not a.control or a.player or a.pit or a.offtrack or a.calibrationBlocked or not a.splineValid or a.kmh<K.calibrationSpeed or (a.cornerYaw or a.corner)<(active and K.calibrationActiveCorner or K.calibrationCorner) then return false end
  if not a.sideDot or math.abs(a.sideDot)<K.sameDirection then return false end
  if a.leftWidth<K.calibrationMinWidth or a.rightWidth<K.calibrationMinWidth then return false end
  for j=1,frame.count do
@@ -35,7 +35,7 @@ function M.step(self,frame,caps,g,now)
  if self.index>0 then
   local a,b=frame.cars[self.index],frame.cars[self.reference]
   if a and a.valid and self.indexID~=(a.identity or a.id) then self.index=0; self.phase='aborted'; self.retryAt=now+K.calibrationRetry; return false end
-  local valid=safe(frame,self.index,true) and b and b.valid and self.referenceID==(b.identity or b.id) and not b.pit and not b.offtrack and b.corner>=K.calibrationCorner
+  local valid=safe(frame,self.index,true) and b and b.valid and self.referenceID==(b.identity or b.id) and not b.pit and not b.offtrack and (b.cornerYaw or b.corner)>=K.calibrationCorner
   if not valid or now-self.startAt>=K.calibrationTime then
    if a and a.valid and a.control and not a.pit and not a.offtrack then
     if valid then
@@ -64,7 +64,7 @@ function M.step(self,frame,caps,g,now)
    for j=1,frame.count do
     local b=frame.cars[j]
     local dx,dz=b.x-a.x,b.z-a.z; local long=dx*a.lx+dz*a.lz; local lat=-dx*a.lz+dz*a.lx
-    if i~=j and b.valid and b.control and not b.player and not b.pit and not b.offtrack and b.corner>=K.calibrationCorner and a.lx*b.lx+a.lz*b.lz>K.calibrationAlignment
+    if i~=j and b.valid and b.control and not b.player and not b.pit and not b.offtrack and (b.cornerYaw or b.corner)>=K.calibrationCorner and a.lx*b.lx+a.lz*b.lz>K.calibrationAlignment
      and long>=K.calibrationPairGap and long<=K.calibrationPairMax and math.abs(lat)<K.latYield then
      if Caps.call(caps,'offset',a.index,K.calibrationOffset,false) then
       self.index=i; self.reference=j; self.indexID=a.identity or a.id; self.referenceID=b.identity or b.id

@@ -26,9 +26,9 @@ tests.LINE_DISTANCE_READ_159N=function()
  assert(not s.cars[2].lineDistValid and not s.cars[2].lineLatValid,'car at pace: not read')
  -- En travers ou à contresens : même écart (le cap de la voiture ne compte pas) ; de l'autre côté : signe opposé.
  local before=a.lineLat
- car.look={x=1,z=0}; Snapshot.read(s,1/60,10.1); assert(math.abs(s.cars[3].lineLat-before)<1e-6,'car sideways: same lateral')
- car.look={x=0,z=-1}; Snapshot.read(s,1/60,10.2); assert(math.abs(s.cars[3].lineLat-before)<1e-6,'car facing backwards: same lateral')
- car.look={x=0,z=1}; car.position.x=-20; Snapshot.read(s,1/60,10.3); assert(math.abs(s.cars[3].lineLat+before)<1e-6,'other side: opposite sign')
+ car.look={x=1,z=0}; s.cars[3].lineX=nil; Snapshot.read(s,1/60,10.1); assert(math.abs(s.cars[3].lineLat-before)<1e-6,'car sideways: same lateral')
+ car.look={x=0,z=-1}; s.cars[3].lineX=nil; Snapshot.read(s,1/60,10.2); assert(math.abs(s.cars[3].lineLat-before)<1e-6,'car facing backwards: same lateral')
+ car.look={x=0,z=1}; car.position.x=-20; s.cars[3].lineX=nil; Snapshot.read(s,1/60,10.3); assert(math.abs(s.cars[3].lineLat+before)<1e-6,'other side: opposite sign')
  car.position.x=20
  car.speedKmh=60; Snapshot.read(s,1/60,10.4); assert(not s.cars[3].lineDistValid and not s.cars[3].lineLatValid,'off track but rolling: not read')
  car.speedKmh=0; car.wheelsOutside=0; Snapshot.read(s,1/60,10.5); assert(s.cars[3].lineDistValid and s.cars[3].lineLatValid,'stopped on the track: read (track blocked or not)')
@@ -41,7 +41,7 @@ tests.RED_BLOCKED_ANY_SESSION_159N=function()
  local function run(place,measured)
   local e,f=F.scene('C',6); C.preset('Course','C',e.profiles.C); e.profiles.C.redFlagHold=20; E.changed(e)
   for i=2,6 do F.place(f,i,(i-1)*300,120) end; F.place(f,1,-3000,100)
-  F.tick(e,f,1/60); place(f)
+  F.tick(e,f,1/60); place(f); f.senseOff=true -- mesures fixées par le test (lecture manquée comprise)
   for i=1,6 do local a=f.cars[i]; a.splineLatValid=false; a.splineLat=0; a.lineLatValid=measured; a.lineLat=measured and a.x or 0 end
   F.tick(e,f,K.redIncidentStill+2); return e
  end
@@ -58,7 +58,7 @@ end
 -- (essais : l'écart latéral n'est jamais lu) ; sans aucune mesure : gardée, comme avant.
 tests.OFF_CLEAR_ANY_SESSION_159N=function()
  local function run(valid,dist)
-  local e,f=F.scene('P',3); F.place(f,2,-4000,120)
+  local e,f=F.scene('P',3); F.place(f,2,-4000,120); f.senseOff=true -- mesures fixées par le test
   local car=F.place(f,3,1000,0); car.offtrack=true; car.wheelsOut=2; car.splineLatValid=false; car.splineLat=0
   car.lineDistValid=valid; car.lineDist=dist
   F.tick(e,f,K.offClearTime+2)

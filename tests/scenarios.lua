@@ -223,7 +223,8 @@ tests.L01=function() local e,f=setup('C'); F.rear(e,f,100,20); f.cars[3].lap=2; 
 tests.L02=function() local e,f=setup('C'); F.rear(e,f,210,20); f.cars[3].lap=3; F.tick(e,f,3); yielding(e) end
 tests.L03=function()
  local e,f=setup('C'); F.rear(e,f,60,20); f.cars[3].lap=2; f.cars[2].yawRate=0.4; F.tick(e,f,3); assert(e.states[2].bluePending); assert(e.states[2].offset==0)
- local level=e.commands[2].level; f.cars[3].lap=0; F.tick(e,f,2); assert(e.commands[2].level>level*1.04)
+ -- Beta 1.62 (« sans freiner sur la trajectoire ») : en attente dans le virage, plus de lever de pied sur la ligne.
+ local level=e.commands[2].level; f.cars[3].lap=0; F.tick(e,f,2); assert(e.commands[2].level<=level*1.04)
 end
 tests.L04=function() local e,f=setup('C'); F.rear(e,f,8,10); f.cars[3].lap=2; F.tick(e,f,2); assert(e.states[2].state~='DEFEND') end
 tests.L05=function()

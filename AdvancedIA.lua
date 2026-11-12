@@ -69,6 +69,7 @@ end
 local Snapshot=require('src/snapshot')
 local Applier=require('src/applier')
 local Engine=require('src/engine')
+local Pacemap=require('src/pacemap')
 local Panel=require('src/panel')
 local Director=require('src/director')
 local Caps=require('src/caps')
@@ -93,6 +94,12 @@ local K=Config.K
 -- effet sur les décisions ; ignoré si la bibliothèque jit n'est pas exposée.
 local jitlib=rawget(_G,'jit')
 local jitTuned=type(jitlib)=='table' and type(jitlib.opt)=='table' and type(jitlib.opt.start)=='function' and pcall(jitlib.opt.start,'maxtrace=8000','maxmcode=16384')==true
+-- Beta 1.60 (lot 5, coût par image) : le pas du directeur est une très longue fonction ; avec les limites par défaut
+-- (100 traces latérales par trace, 15 déroulages de boucle, 4 000 instructions enregistrées), le compilateur abandonne
+-- la plupart de ses traces et met en liste noire jusqu'aux petites fonctions utilitaires (U.clamp : 1 163 abandons sur
+-- 2 500 images au banc), le code restant interprété. Limites relevées, dans un appel à part : s'il échoue, le cache
+-- agrandi ci-dessus reste acquis. Sans effet sur les décisions (journaux de référence identiques).
+local jitWide=jitTuned and pcall(jitlib.opt.start,'maxside=400','loopunroll=30','maxrecord=20000','maxirconst=2000','maxsnap=2000')==true
 local previous=rawget(_G,'HUMANAI')
 if previous and type(previous.release)=='function' then pcall(previous.release) end
 local host=Applier.new()
@@ -108,6 +115,11 @@ local calibration=Calibration.new()
 local initialized=false
 local released=false
 local loadedTrack=''
+-- Finition 1.61 (relecture) : fichier par circuit refusé à la lecture : mis de côté (jamais écrasé), une ligne.
+local function refusedAside(folder,key,what)
+ local name=Applier.trackFileSetAside(folder,key)
+ U.log(engine.log,engine.time,'WARN',name and string.format('%s: fichier refuse mis de cote (%s)',what,name) or string.format('%s: fichier refuse non deplace',what),-1)
+end
 -- Drapeau natif d'AC vu en dernier (Beta 1.34) : chaque changement est noté au journal (panneaux lumineux en jeu).
 local nativeFlag=nil
 local nativeFlagNames={[0]='aucun',[1]='depart',[2]='jaune',[3]='glissant',[5]='noir',[8]='penalite',[12]='bleu',[13]='damier',[14]='dernier tour'}
@@ -117,7 +129,7 @@ local shownMessage=0
 -- Beta 1.50 : annonces de la voiture de sécurité (en piste, file formée) et de la reprise du joueur (place, place à
 -- reprendre) : seulement pour le pont des apps compagnes (texte prêt, nom du pilote), jamais en message en haut de
 -- l'écran : l'overlay les montre déjà.
-local silentKinds={scOut=true,scLeading=true,restartPlace=true,restartRetake=true}
+local silentKinds={scOut=true,scLeading=true,restartPlace=true,restartRetake=true,rollStart=true}
 local function carName(value)
  local k=math.floor(tonumber(value) or -1)+1
  return frame and k>=1 and k<=frame.count and frame.cars[k].name or ''
@@ -131,6 +143,7 @@ local function announce()
   local kind=t.messageKind; local text
   if kind=='scOut' then local who=carName(t.messageValue); text=who~='' and string.format(m[2],who) or Lang.messages.scOutAlone[2]
   elseif kind=='scLeading' or kind=='restartRetake' then text=string.format(m[2],carName(t.messageValue))
+  elseif kind=='rollStart' then local who=carName(t.messageExtra); text=who~='' and string.format(m[2],t.messageValue,who) or string.format(Lang.messages.rollStartLead[2],t.messageValue)
   else local who=carName(t.messageExtra); text=who~='' and string.format(m[2],t.messageValue,who) or string.format(Lang.messages.restartPlaceSc[2],t.messageValue) end
   engine.ownTitle=m[1]; engine.ownText=text; engine.ownAi=false; return
  end
@@ -198,12 +211,36 @@ host.oldSettings=Applier.oldSettings()
 if host.oldSettings then U.log(engine.log,0,'WARN','reglages d ACAdvancedIA non repris (state/lua/app/ACAdvancedIA.ini present, AdvancedIA.ini absent) : voir A verifier',-1) end
 if host.storageErrors>0 then U.log(engine.log,0,'WARN','invalid_storage:'..host.storageErrors,-1) end
 U.log(engine.log,0,'INFO',jitTuned and 'compilateur JIT: cache agrandi (8000 traces, 16 Mo), voitures pilotees en un seul appel protege' or 'compilateur JIT: options indisponibles, voitures pilotees une par une',-1)
+if jitTuned then U.log(engine.log,0,'INFO',jitWide and 'compilateur JIT: limites de trace relevees' or 'compilateur JIT: limites de trace par defaut (options refusees)',-1) end
 if host.upgraded and #host.upgraded>0 then U.log(engine.log,0,'INFO','profils mis a jour vers les prereglages '..Config.release..': '..table.concat(host.upgraded,', '),-1) end
 if host.signsRestored then U.log(engine.log,0,'INFO','sens lateral retabli: -1 / -1 (convention AC, mesure sur cette installation jusqu a la Beta 1.8 ; la mesure le confirmera)',-1) end
 if host.firstInstall then U.log(engine.log,0,'INFO','premiere installation: prereglages recommandes et regles de base (essais, qualifications, course)',-1) end
 local journal=Journal.new()
 -- Journal de session sur disque : lignes nouvelles toutes les deux secondes, résumé chaque minute. Les capacités de CSP
 -- perdues sont dites par l'applicateur (Applier.reportCaps), une seule fois.
+-- Affinage 1.61 (coût en jeu, Spa 40 IA : 2,5 à 3 ms en moyenne, pointe de 202 ms) : coût de chaque poste de l'image
+-- (secondes), cumulé sur la minute du résumé, et celui de l'image en cours (ligne « image lente »). Postes : 1 lecture
+-- (Snapshot.read), 2 moteur (Engine.step), 3 fichiers (mémoire, rapport, journal), 4 commandes (le reste de update),
+-- 5 mise à jour, 6 options CSP, 7 pont, 8 interface (fenêtres, hors du coût par image). Aucune table créée par image.
+local prof={sum={0,0,0,0,0,0,0,0,0},cur={0,0,0,0,0,0,0,0},frames=0,at=nil,slowLogs=0,slowAt=-math.huge}
+-- Affinage 1.62 (mesure fine) : sous-postes de la lecture mesurés par Snapshot avec la même horloge ; interface séparée
+-- en fenêtre (8) et overlay (9).
+Snapshot.clock=function() return Applier.clock(host) end
+local function mark(i)
+ local at=prof.at; if not at then return end
+ local now=Applier.clock(host); if not now then prof.at=nil; return end
+ prof.cur[i]=prof.cur[i]+(now-at); prof.at=now
+end
+local function profLine()
+ local s,n=prof.sum,math.max(1,prof.frames)
+ local line=string.format('cout par poste (moyenne ms par image): lecture %.3f, moteur %.3f, fichiers %.3f, commandes %.3f, mise a jour %.3f, options CSP %.3f, pont %.3f, interface %.3f',
+  s[1]*1000/n,s[2]*1000/n,s[3]*1000/n,s[4]*1000/n,s[5]*1000/n,s[6]*1000/n,s[7]*1000/n,(s[8]+s[9])*1000/n)
+ local r=Snapshot.cost
+ local detail=string.format('cout detaille (moyenne ms par image): lecture session %.3f, voitures %.3f, metadonnees %.3f, gommes %.3f, interface fenetre %.3f, overlay %.3f',
+  r[1]*1000/n,r[2]*1000/n,r[3]*1000/n,r[4]*1000/n,s[8]*1000/n,s[9]*1000/n)
+ for i=1,9 do s[i]=0 end; for i=1,4 do r[i]=0 end; prof.frames=0
+ return line,detail
+end
 local function writeJournal(force)
  if not globals.journal then return end
  if not host.journalTried then
@@ -213,7 +250,7 @@ local function writeJournal(force)
  if not host.journalPath or not force and engine.time<journal.flushAt then return end
  journal.flushAt=engine.time+K.journalPeriod
  -- Beta 1.47 : à la fermeture, résumé de la minute entamée (avant : perdu, le dernier contact d'une session n'y était pas).
- if engine.time>=journal.summaryAt or force and released and engine.time>journal.summaryAt-K.journalSummary+1 then journal.summaryAt=engine.time+K.journalSummary; U.log(engine.log,engine.time,'INFO',Journal.summary(engine),-1) end
+ if engine.time>=journal.summaryAt or force and released and engine.time>journal.summaryAt-K.journalSummary+1 then journal.summaryAt=engine.time+K.journalSummary; U.log(engine.log,engine.time,'INFO',Journal.summary(engine),-1); if prof.frames>0 then local line,detail=profLine(); U.log(engine.log,engine.time,'INFO',line,-1); U.log(engine.log,engine.time,'INFO',detail,-1) end end
  Journal.collect(journal,engine.log,Applier.clockText())
  Applier.journalWrite(host,Journal.take(journal))
 end
@@ -270,6 +307,8 @@ local companionKey,companionWindow=companion..'.update','IMGUI_LUA_'..companion.
 local companionPresent,companionAt=false,-math.huge
 -- Beta 1.59 : plan d'arrêt du joueur publié par SpotterEnginer (lecture seule), relu toutes les K.sePlanPeriod s.
 local sePlanAt=-math.huge
+local strategyPublished=''
+local sidePublished={} -- Beta 1.61 : dernier texte écrit de chaque clé annexe (engine.sideText)
 host.openCompanion=function() return Applier.openCompanion(companionWindow) end
 local function release()
  if released then return end
@@ -382,7 +421,10 @@ local function update(dt)
   if calibration.index>0 or host.caps.probeIndex>0 or host.flagOverride or host.drsAny or host.drsRelease or host.blackFlag or host.flagLeftover then quiet=false end
   if quiet and anyOwned() then quiet=false end
  end
+ -- Affinage 1.62 (coût) : sens latéral des voitures lu seulement pendant sa recherche ou sa mesure (src/calibration.lua).
+ Snapshot.sideWanted=(globals.offsetSign or 0)==0 or (globals.sideSign or 0)==0 or calibration.index>0
  local read=Snapshot.read(frame,valid and dt or K.dtMax,engine.time,quiet)
+ mark(1)
  -- Drapeau du joueur imposé par l'app elle-même : le panneau ne le prend pas pour un drapeau natif.
  -- Beta 1.47 : aussi sa dernière valeur restée affichée après une restitution (Applier.flagMine).
  frame.flagOwned=Applier.flagMine(host,frame)
@@ -399,6 +441,25 @@ local function update(dt)
   sePlanAt=menuClock+K.sePlanPeriod
   local plan=engine.sePlan; if not plan then plan={}; engine.sePlan=plan end
   plan.raw=Applier.loadText(K.sePlanKey)
+  -- Beta 1.60 (tranche D) : conseil de stratégie de SpotterEnginer (lecture seule, affichage et journal) ; temps perdu
+  -- aux stands appris publié pour lui (réglage strategySmart ; écrit seulement quand le texte change).
+  local advice=engine.seStrategy; if not advice then advice={}; engine.seStrategy=advice end
+  advice.raw=Applier.loadText(K.seStrategyKey)
+  local text=engine.pitloss.text
+  if text~='' and text~=strategyPublished then strategyPublished=text; Applier.storeText(K.strategyPubKey,text) end
+  -- Beta 1.61 : autres clés annexes pour SpotterEnginer (trafic, météo), mêmes règles : écrites quand le texte change.
+  -- Finition 1.61 (relecture, contrat SpotterEnginer) : réglage coupé (ou plus de texte) après une publication : un
+  -- dernier enregistrement « rien » est écrit une fois, horodaté, au lieu de laisser la dernière valeur figée.
+  if not (engine.run and engine.run.classNuance) then engine.sideText['AdvancedIA.traffic']=nil end
+  for key,side in pairs(engine.sideText) do if side~='' and side~=sidePublished[key] then sidePublished[key]=side; Applier.storeText(key,side) end end
+  for key,was in pairs(sidePublished) do
+   if was and (engine.sideText[key]==nil or engine.sideText[key]=='') then
+    local stamp=math.floor(math.max(0,engine.time))
+    local final=key=='AdvancedIA.traffic' and 'v=1;blue=none;stage=none;car=-1;gap=0;closing=0;count=0;stamp='..stamp
+     or 'v=1;wet=0.00;rain=0.00;water=0.00;trend=off;eta=-1;next=none;forecast=unknown;forecastIn=-1;aiDry=0;aiRain=0;stamp='..stamp
+    sidePublished[key]=false; Applier.storeText(key,final)
+   end
+  end
  end
  if not initialized then
   -- Session courante connue avant la récupération : un rechargement n'est pas un changement de session.
@@ -421,18 +482,38 @@ local function update(dt)
  -- Beta 1.56 : pénalité native du joueur écrite (limites de piste, option coupure des gaz), capacité disponible.
  engine.penaltyWritten=host.penaltyWritten or 0; engine.penaltyCap=host.caps.penalty.available==true
  local ready=Engine.step(engine,frame,dt)
+ mark(2)
+ -- Beta 1.61 : la prévision météo de CSP n'est lue que météo en direct en service (relecture).
+ Snapshot.wxWanted=engine.run~=nil and engine.run.weatherLive==true
+ -- Beta 1.61 (tranche B, réglage trackMemory) : fichier d'allure du circuit lu et écrit ici pour src/pacemap.lua (le
+ -- moteur ne touche à aucun fichier) ; rien n'est demandé tant que le réglage est coupé. Durée de l'écriture notée.
+ local memory=engine.pacemap
+ -- Fusion 1.61 : le bouton « Oublier ce circuit » (zones, tranche A) oublie aussi l'allure gardée (tranche B).
+ if engine.trackForgetAsk then engine.trackForgetAsk=nil; memory.forgetWanted=engine.runtimeG.trackMemory==true end
+ if memory.ioRead then
+  local key=memory.ioRead; memory.ioRead=nil; local text,place=Applier.trackFileRead(K.paceFolder,key,K.paceMapMaxBytes)
+  -- Finition 1.61 (relecture) : fichier présent mais refusé : mis de côté avant toute écriture.
+  if Pacemap.loaded(memory,engine,text,place)==false and (text~=nil or place=='big') then refusedAside(K.paceFolder,key,'memoire du circuit') end
+ end
+ if memory.ioWrite then
+  local text,key=memory.ioWrite,memory.ioKey; memory.ioWrite=nil; memory.ioKey=nil
+  local place,ms=Applier.trackFileWrite(K.paceFolder,key,text)
+  Pacemap.written(memory,engine,place,ms,#text)
+ end
  if engine.reportLines then local lines=engine.reportLines; engine.reportLines=nil; writeReport(lines) end
  if engine.presetSessionDirty then engine.presetSessionDirty=false; Applier.storeText('humanai:presetsession',engine.presetSession) end
  -- Beta 1.52 : seulement après un nouvel échec d'une capacité (compteur de Caps.call) ; avant : à chaque image.
  if host.caps.failureCount~=capsReported then capsReported=host.caps.failureCount; Applier.reportCaps(host) end
  if engine.settingsChanged then engine.settingsChanged=false; dirty() end
  writeJournal(false)
+ mark(3)
  if engine.rebaseDelta>0 then
   Applier.rebase(host,engine.rebaseDelta); calibration.startAt=calibration.startAt-engine.rebaseDelta
   -- Beta 1.52 : nouvel essai de la mesure du sens latéral et information de mise à jour de l'overlay recalés aussi.
   if U.finite(calibration.retryAt) then calibration.retryAt=calibration.retryAt-engine.rebaseDelta end
   if U.finite(engine.panel.updateUntil) then engine.panel.updateUntil=engine.panel.updateUntil-engine.rebaseDelta end
   frame.metaAt=frame.metaAt-engine.rebaseDelta; frame.playerDamageAt=frame.playerDamageAt-engine.rebaseDelta
+  if frame.conflictAt then frame.conflictAt=frame.conflictAt-engine.rebaseDelta end
   lastCheckpoint=lastCheckpoint-engine.rebaseDelta; lastRaceSave=lastRaceSave-engine.rebaseDelta
   journal.flushAt=journal.flushAt-engine.rebaseDelta; journal.summaryAt=journal.summaryAt-engine.rebaseDelta
  end
@@ -470,6 +551,46 @@ local function update(dt)
    if zones then engine.zones=zones; U.log(engine.log,engine.time,'INFO','zones_loaded',-1)
    else U.log(engine.log,engine.time,'WARN','zones_rejected:'..err,-1) end
   end
+  -- Beta 1.61 (tranche A) : fichier des zones du circuit et de son tracé (Documents\Assetto Corsa\AdvancedIA\tracks),
+  -- lu après le fichier d'origine ; jamais cru (src/zones.lua, M.decode). Aucun fichier : rien ne change.
+  local key=frame.trackKey or ''
+  if key~='' then
+   local text,why=Applier.trackFileRead(K.zoneFolder,key,K.maxZoneBytes)
+   if text then
+    local decoded,reason=Zones.decode(text,frame.track,frame.layout,frame.length)
+    if decoded then
+     local fromFile=#engine.zones
+     engine.zones=Zones.merge(engine.zones,decoded)
+     U.log(engine.log,engine.time,'INFO',string.format('zones: %d du fichier, %d du pilote, %d apprises (%s)',fromFile,#decoded.user,#decoded.learnt,key),-1)
+     if decoded.ignored>0 then U.log(engine.log,engine.time,'WARN',string.format('zones: %d zone(s) ignoree(s) (%s)',decoded.ignored,key),-1) end
+     if not decoded.lengthOK then U.log(engine.log,engine.time,'WARN',string.format('zones: longueur du circuit changee, zones apprises ecartees (%s)',key),-1) end
+    else U.log(engine.log,engine.time,'WARN',string.format('zones: fichier refuse (%s)',reason),-1); refusedAside(K.zoneFolder,key,'zones') end
+   elseif why=='big' then U.log(engine.log,engine.time,'WARN','zones: fichier refuse (taille)',-1); refusedAside(K.zoneFolder,key,'zones') end
+  end
+ end
+ -- Beta 1.61 (tranche A) : enregistrement des zones demandé par le pilote (SAVE, « Forget this track ») ou par
+ -- l'apprentissage (seulement avec « Mémoire des circuits »). Jamais à chaque image : sur demande.
+ if engine.zoneSaveAsk then
+  local ask=engine.zoneSaveAsk; engine.zoneSaveAsk=nil
+  local key=frame.trackKey or ''
+  -- Finition 1.61 (relecture) : rien n'est écrit sans rien à écrire (SAVE sans zone du pilote, mémoire coupée ; oubli
+  -- sans zone apprise).
+  local zones=engine.zones
+  local userCount=0; for _,z in ipairs(zones) do if z.source=='user' then userCount=userCount+1 end end
+  local nothing=ask=='forget' and #(zones.learnt or {})==0 or ask=='user' and userCount==0 and not engine.runtimeG.trackMemory
+  if nothing then U.log(engine.log,engine.time,'INFO','zones: rien a enregistrer',-1) end
+  if not nothing and key~='' and frame.length>0 and (ask~='learn' or engine.runtimeG.trackMemory) then
+   if ask=='forget' then
+    local n=#(zones.learnt or {})
+    zones.learnt={}; Zones.index(zones)
+    U.log(engine.log,engine.time,'INFO',string.format('zones: %d zone(s) apprise(s) oubliee(s) a la demande (%s)',n,key),-1)
+   end
+   local text,count=Zones.encode(zones,{track=frame.track,layout=frame.layout,length=frame.length,serial=zones.serial or 0})
+   if #text<=K.maxZoneBytes and Applier.trackFileWrite(K.zoneFolder,key,text) then
+    zones.dirty=nil
+    U.log(engine.log,engine.time,'INFO',string.format('zones: fichier enregistre (%d zones, %s)',count,key),-1)
+   else U.log(engine.log,engine.time,'WARN','zones: enregistrement impossible',-1) end
+  end
  end
  Applier.restore(host,frame,true,engine.time)
  syncRestored()
@@ -488,7 +609,7 @@ local function update(dt)
   if s.owned and s.level~=nil then s.level=host.caps.probeOriginal; s.levelAt=engine.time end
  end
  local signBefore=globals.offsetSign
- if Config.needsOffset(engine.run) then
+ if Config.needsOffset(engine.run,engine.profile) then -- Beta 1.62 : la défense ne compte qu'en course
   -- Beta 1.52 : voitures exclues de la mesure calculées seulement quand elle cherche ou mesure (avant : à chaque image).
   if calibration.index>0 or globals.offsetSign==0 or globals.sideSign==0 then
    for i=1,frame.count do
@@ -580,6 +701,15 @@ HUMANAI={engine=engine,host=host,release=release,updater=updater,port=port,panel
 companionPresent=Applier.companionInstalled(companion)
 if companionPresent then
  local why
+ -- Beta 1.60 : version de SpotterEnginer lue une fois (son manifest.ini) : plus ancienne que K.seStartMin*, le tour de
+ -- formation et le départ lancé lui sont inconnus (avertissement à l'accueil quand « Départ de la course » n'est pas
+ -- le départ arrêté). Illisible : aucun avertissement, une ligne au journal.
+ local version=Applier.companionVersion(companion)
+ if version then
+  host.companionVersionText=string.format('%d.%d.%d',version[1],version[2],version[3])
+  host.companionOldStart=Applier.versionBelow(version,{K.seStartMinMajor,K.seStartMinMinor,K.seStartMinPatch})
+  U.log(engine.log,0,'INFO',string.format('pont des apps compagnes: %s version %s%s',companion,host.companionVersionText,host.companionOldStart and ' (tour de formation et depart lance inconnus avant la '..string.format('%d.%d.%d',K.seStartMinMajor,K.seStartMinMinor,K.seStartMinPatch)..')' or ''),-1)
+ else U.log(engine.log,0,'INFO','pont des apps compagnes: version de '..companion..' illisible',-1) end
  bridge=Bridge.new(Config.release)
  bridgePort,why=Applier.bridgeOpen(Bridge.layout)
  U.log(engine.log,0,'INFO',bridgePort and string.format('pont des apps compagnes: ouvert (version %d)',Bridge.layout.version) or 'pont des apps compagnes: indisponible ('..tostring(why)..')',-1)
@@ -601,7 +731,9 @@ HUMANAI.bridgePort=function() return bridgePort end
 local costFrames=0
 function script.HUMANAI__UPDATE(dt)
  local before=Applier.clock(host)
+ prof.at=before; local cur=prof.cur; for i=1,7 do cur[i]=0 end
  local ran=protect(update,dt)
+ mark(4)
  if ran and not booted then
   bootEngine=bootEngine+1
   -- Démarrage confirmé : surveillance levée, puis restes de la mise à jour effacés (Beta 1.37).
@@ -609,16 +741,29 @@ function script.HUMANAI__UPDATE(dt)
  end
  local ok,err=pcall(updateTick,dt)
  if not ok then host.errors=host.errors+1; U.log(engine.log,engine.time,'ERROR','mise a jour: '..tostring(err):sub(1,200),-1) end
+ mark(5)
  -- Options de CSP (Beta 1.40) : une erreur les fige jusqu'au prochain lancement (jamais une erreur à chaque image).
  if not released and csp.writable and not bootWatched then
   local okCsp,errCsp=pcall(cspStep,dt)
   if not okCsp then csp.writable=false; host.errors=host.errors+1; U.log(engine.log,engine.time,'ERROR','options CSP: '..tostring(errCsp):sub(1,200),-1) end
  end
+ mark(6)
  bridgeStep()
+ mark(7)
  local after=before and Applier.clock(host)
+ prof.at=nil
  if after then
   local cost=math.max(0,after-before)*1000
-  engine.maxFrame=math.max(engine.maxFrame,cost)
+  for i=1,7 do prof.sum[i]=prof.sum[i]+cur[i] end; prof.frames=prof.frames+1
+  -- Affinage 1.61 : image plus lente que K.slowFrameMs : coût de chaque poste (pointe de 202 ms à Spa, jamais située).
+  if cost>K.slowFrameMs and prof.slowLogs<K.slowFrameLogs and menuClock-prof.slowAt>=K.slowFrameGap then
+   prof.slowLogs=prof.slowLogs+1; prof.slowAt=menuClock
+   U.log(engine.log,engine.time,'WARN',string.format('image lente: %.0f ms (lecture %.1f, moteur %.1f, fichiers %.1f, commandes %.1f, mise a jour %.1f, options CSP %.1f, pont %.1f)',
+    cost,cur[1]*1000,cur[2]*1000,cur[3]*1000,cur[4]*1000,cur[5]*1000,cur[6]*1000,cur[7]*1000),-1)
+  end
+  -- Affinage 1.62 (AUDIT_FPS cause 9) : première image mesurée (chargement des places de grille, des panneaux, des
+  -- zones) hors du maximum : avant, le « max » de chaque résumé restait cette saccade de chargement.
+  if costFrames>0 then engine.maxFrame=math.max(engine.maxFrame,cost) end
   -- Beta 1.52 : compteur d'images mesurées propre (engine.frames n'avance que moteur en marche : la moyenne valait
   -- alors le coût de la dernière image).
   costFrames=math.min(costFrames+1,K.performanceWindow)
@@ -644,11 +789,14 @@ end
 -- plus K.uiSlowLogs, pour situer un gel dans le journal de la séance suivante. Première image de chaque fenêtre (polices
 -- chargées) : seuil K.uiSlowFirst.
 local slowSeen,slowCount,slowWarm={},0,{}
+local Widgets=require('src/widgets'); local missingNoted=false
 local function timedUI(fn,place)
  local started=Applier.clock(host)
  protectUI(fn,panel)
  local ended=started and Applier.clock(host)
  local spent=ended and ended-started or 0
+ local slot=place=='overlay' and 9 or 8
+ prof.sum[slot]=prof.sum[slot]+spent
  local window=place or 'main'
  local limit=slowWarm[window] and K.uiSlowFrame or K.uiSlowFirst; slowWarm[window]=true
  if spent>limit and slowCount<K.uiSlowLogs then
@@ -658,6 +806,8 @@ local function timedUI(fn,place)
    U.log(engine.log,engine.time,'WARN',string.format('interface lente: %s, %.0f ms',where,spent*1000),-1)
   end
  end
+ -- Correctif 1.61 : texte absent dessiné vide (src/widgets.lua), appelant noté une fois.
+ if Widgets.missing and not missingNoted then missingNoted=true; U.log(engine.log,engine.time,'WARN','interface: texte absent ('..Widgets.missing..')',-1) end
 end
 function script.HUMANAI__MAIN()
  script.HUMANAI__MENU()

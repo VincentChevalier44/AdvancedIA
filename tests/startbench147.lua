@@ -92,6 +92,9 @@ return function(trackName,setName,opts)
  local incidentZ=nil
  local lapDone={}; local lapSum,lapN=0,0
  local seconds=opts.seconds or 240
+ -- Beta 1.60 (tranche E) : opts.laps tours (défaut 1) ; opts.formation : place de chaque voiture publiée (classement),
+ -- joueur qui tient l'allure du tour de formation (il garde sa place, comme demandé à l'écran).
+ local laps=opts.laps or 1
  local function profile(c,z,caution)
   local zz=z%L; local cl=c.cl
   local lvl=c.L or c.level
@@ -138,6 +141,7 @@ return function(trackName,setName,opts)
   end
   for p,k in ipairs(ord) do
    local c=cars[k]; local a=f.cars[k]; local cmd=e.commands[k]
+   c.rank=p
    local active=app and k~=1 and cmd.active
    local caution=active and cmd.caution or 1
    local aggr=active and cmd.aggression or 0.8
@@ -145,6 +149,7 @@ return function(trackName,setName,opts)
    local vp,binding,inCorner,yaw=profile(c,c.z,caution)
    if not binding and not inCorner then vp=vp*(1+0.012*math.sin(t*0.9+c.phase)) end
    if t<c.react then vp=0 end
+   if opts.formation and k==1 and e.incidents.neutral then vp=min(vp,(e.incidents.formation and e.incidents.formationKmh or e.p.fcySpeedKmh)/3.6) end
    local vpOwn=vp
    -- Référence sans l'app : prudence 1, agressivité de l'IA d'AC, ni limite ni frein (attribution « prudence »).
    local vpBase=vp
@@ -265,7 +270,7 @@ return function(trackName,setName,opts)
        pair[key]=true; R.contacts=R.contacts+1
        if o.appUntil>t then R.contactsApp=R.contactsApp+1; R.why=R.why or {}; R.why[o.appWhy]=(R.why[o.appWhy] or 0)+1 end
        local zz=c.z%L
-       if c.z<L and zz>=corners[1].at-400 and zz<=corners[1].at+corners[1].len then R.contactsFirst=R.contactsFirst+1 end
+       if c.z>=L*(laps-1) and c.z<L*laps and zz>=corners[1].at-400 and zz<=corners[1].at+corners[1].len then R.contactsFirst=R.contactsFirst+1 end
       end
       c.z=o.z-4.6; c.v=min(c.v,o.v)
       f.cars[k].collided=true; f.cars[k].collidedWith=ord[q]; f.cars[ord[q]].collided=true; f.cars[ord[q]].collidedWith=k
@@ -279,7 +284,8 @@ return function(trackName,setName,opts)
   for k=1,n+1 do
    local c=cars[k]; local a=f.cars[k]
    a.z=c.z; a.x=c.x; a.splineLat=c.x; a.spline=(c.z/L)%1; a.lap=max(0,floor(c.z/L)); a.speed=c.v; a.kmh=c.v*3.6
-   if c.z>=L and not lapDone[k] then lapDone[k]=true; if k~=1 then lapSum=lapSum+t; lapN=lapN+1; R.lap1Last=max(R.lap1Last,t) end end
+   if opts.formation then a.position=c.rank or c.grid end
+   if c.z>=L*laps and not lapDone[k] then lapDone[k]=true; if k~=1 then lapSum=lapSum+t; lapN=lapN+1; R.lap1Last=max(R.lap1Last,t) end end
   end
   F.tick(e,f,dt)
   -- Mesures (premier tour de chaque IA).
@@ -342,6 +348,6 @@ return function(trackName,setName,opts)
  R.lap1Mean=lapN>0 and lapSum/lapN or 0; R.finished=lapN
  local so=0; for k=2,n+1 do so=so+cars[k].soloLap end; R.soloMean=so/n
  R.startRadar=e.startRadar or 0; R.startLift=e.startLift or 0
- R.log=e.log
+ R.log=e.log; R.engine=e
  return R
 end

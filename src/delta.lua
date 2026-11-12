@@ -72,6 +72,8 @@ function M.pace(d,states,i,b,multi)
  local s=states[i]
  local own=s.paceCount>=K.paceMinBins and s.pace[b] or 0
  local f=d.fleet[multi and s.class or 1]
+ -- Beta 1.61 (tranche B) : allure gardée du circuit (src/pacemap.lua) en dernier repli, avant la vitesse fixe.
+ if s.priorMap then local v=max(own,f and f[b] or 0); if v==0 then v=s.priorMap[b] or 0 end return v end
  return max(own,f and f[b] or 0)
 end
 -- Vitesse de référence (m/s) d'un régime : allure plus lente du pourcentage ; allure inconnue : vitesse de repli
@@ -94,11 +96,16 @@ end
 local function regime(inc,frame,p,a)
  if inc.red then if a.pit then return '' end; return 'red',p.redDeltaPct,p.redFlagSpeedKmh end
  if not inc.neutral then return '' end
+ -- Beta 1.60 (tranche E) : tour de formation du départ : aucun temps delta (tenir sa place suffit).
+ if inc.formation then return '' end
  local mode=inc.neutralMode
  if mode=='vsc' then return 'vsc',p.vscDeltaPct,p.fcySpeedKmh end
  if mode=='sc' then
   local merging=inc.safetyPhase=='call' or inc.safety>0 and frame.cars[inc.safety].pit
-  return merging and 'scCall' or 'sc',p.fcyDeltaPct,p.fcySpeedKmh
+  if merging then return 'scCall',p.fcyDeltaPct,p.fcySpeedKmh end
+  -- Relecture du lot 3 (S5) : voiture de sécurité en piste à son allure libre : la référence du joueur est celle du
+  -- rattrapage des IA (K.scCatchPct), sinon il ne pouvait pas rejoindre la file sans infraction.
+  return 'sc',K.scCatchPct,K.scNominalKmh+K.scCatchUp
  end
  return 'fcy',p.fcyDeltaPct,p.fcySpeedKmh
 end
@@ -155,7 +162,7 @@ function M.update(d,frame,p,inc,states,now,dt,queued)
     c.delta=max(c.delta,K.deltaStart); c.last=a.spline; c.sector=floor((a.spline%1)*count)
    else
     local vref=M.reference(d,states,i,b,multi,pct,fallback)
-    if kind=='scCall' then vref=min(vref,(p.safetyCarSpeedKmh-K.scMergeMargin)/3.6) end
+    if kind=='scCall' then vref=min(vref,(K.scNominalKmh-K.scMergeMargin)/3.6) end
     vref=max(vref,brakeFloor(d.onsetKmh,now-d.onsetAt,p.yellowDecel))
     if advance(c,a,frame.length,dt,vref,count) and c.delta<-tolerance then
      d.infraction=true; d.infractionKind=kind; d.infractionValue=c.delta

@@ -3,6 +3,10 @@ local L=require('src/lang')
 local U=require('src/util')
 local Flash=require('src/flash')
 local Zones=require('src/zones')
+-- Beta 1.61 (tranche A) : genres d'une zone marquée en piste (bouton zone_kind) ; textes dans lang*.lua et tips*.lua.
+-- Beta 1.62 : tables de données regroupées dans D (limite de 200 locales de module de LuaJIT).
+local D={}
+D.zoneKinds={'nomove','caution','attack'}
 local Engine=require('src/engine')
 local Caps=require('src/caps')
 local Adapter=require('src/applier')
@@ -45,7 +49,7 @@ local function number(value)
  return (text:gsub('%.',L.decimalMark))
 end
 local function shown(s,value)
- if s.choices then return L.choices[value] or tostring(value) end
+ if s.choices then local long=L.choiceLong and L.choiceLong[s.key]; return long and long[value] or L.choices[value] or tostring(value) end
  if type(value)=='boolean' then return value and L.tipOn or L.tipOff end
  return number(value)
 end
@@ -67,10 +71,10 @@ end
 -- Vues de l'onglet Règles de course (Beta 1.19) : les arrêts aux stands et la voiture de sécurité n'apparaissent que
 -- sous le titre de leur interrupteur ; « Règles de course actives » montre tout le reste des règles.
 -- Beta 1.51 : arrêt obligatoire oui ou non, réglé par son seul interrupteur (vue « switch », jamais affichée).
-local ruleViews={switch={mandatoryStops=true},stops={pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true},
- safety={safetyCarSpeedKmh=true,safetyCarEscalation=true,restartOvertake=true}}
+D.ruleViews={switch={mandatoryStops=true},stops={pitWindowOpenPct=true,pitWindowClosePct=true,pitTyres=true,pitRepair=true,pitCompoundChange=true,minPitTime=true,maxStintMin=true,pitFuel=true,pitsClosed=true,pitMessage=true},
+ safety={safetyCarEscalation=true,restartOvertake=true}}
 -- Interrupteurs indépendants des jeux de règles (Beta 1.19, C.switchKeys) : le jeu choisi reste surligné quand on les change.
-local function ruleView(key) for name,keys in pairs(ruleViews) do if keys[key] then return name end end return 'all' end
+local function ruleView(key) for name,keys in pairs(D.ruleViews) do if keys[key] then return name end end return 'all' end
 -- Jeu de règles du profil visé (en-tête, onglet Règles de course, bloc des règles) : refait seulement après une
 -- modification (révision du moteur, édition de la fenêtre) ou pour un autre profil visé, jamais à chaque image.
 local function ruleCategoryOf(v,e)
@@ -179,7 +183,7 @@ local function loadedHere(v,e,view)
 end
 -- Un profil modifié à la main est réglé : aucun préréglage automatique ne le remplacera.
 local function touch(v,p) p.configured=true; mark(v) end
-local globalSliders={'occLatMin','occLatMax','occMargin','occSpeedGain','gripPerLevelPct'}
+D.globalSliders={'occLatMin','occLatMax','occMargin','occSpeedGain','gripPerLevelPct'}
 -- Profil automatique conservé : le préréglage règle son profil, la détection choisit toujours la session.
 local function presetTarget(v,profile)
  if not v.e.g.autoProfile then Engine.select(v.e,profile) end
@@ -192,7 +196,8 @@ end
 -- les règles Endurance (FCY, Slow Zone, BoP, Pro-Am). Journée circuit : le week-end de course reste tel quel.
 local function loadBuiltin(v,name,profile)
  local e=v.e
- C.applyBuiltin(e.g,e.profiles,name,profile,false,v.keptRules)
+ local fr=e.frame
+ C.applyBuiltin(e.g,e.profiles,name,profile,false,v.keptRules,fr and fr.track,fr and fr.length)
  -- Beta 1.38 (demande du pilote) : préréglage visant un autre profil (Endurance depuis les essais, Course depuis les
  -- qualifications...) : appliqué à ce profil, le profil affiché reste et aucune tuile ne s'allume.
  if profile==v.view then presetTarget(v,profile) else v.presetMessage=string.format(L.presetAppliedTo,L.profiles[profile]) end
@@ -202,9 +207,16 @@ end
 -- Allumé quand le profil visé par le bouton porte ce préréglage (préférences du pilote et motifs de classes exclus ;
 -- règles de championnat comprises depuis la Beta 1.29). Beta 1.29 (demande du pilote) : seulement pour le profil affiché,
 -- et seulement si le pilote y a chargé ce préréglage ; aucun bouton n'est présélectionné.
-local noGlobals={}
+D.noGlobals={}
 local function builtinActive(v,name,profile,label)
  local e=v.e
+ -- Relecture 1.62 (S8) : « Multi-class endurance » en journée circuit dépend du circuit : référence refaite quand il change.
+ if name=='Endurance' and profile=='J' then
+  local fr=e.frame; local track=fr and fr.track
+  if v.enduranceTrack~=track then
+   v.enduranceTrack=track; v.builtinConfigs.Endurance.J=C.preset('Endurance','J',{},track,fr and fr.length); v.builtinSignatures[idOf(name,profile)]=nil; v.builtinMemo[idOf(name,profile)]=nil
+  end
+ end
  local candidate=v.builtinConfigs[name][profile]
  -- Les deux signatures finissent par les mêmes réglages globaux : comparées sans eux ; celle du préréglage intégré
  -- (jamais modifié) est calculée une seule fois, celle du profil après chaque modification (révision du moteur,
@@ -216,8 +228,8 @@ local function builtinActive(v,name,profile,label)
   if memo.edits~=v.edits or memo.revision~=e.revision then
    memo.edits=v.edits; memo.revision=e.revision
    local expected=v.builtinSignatures[key]
-   if not expected then expected=Presets.signature(profile,candidate,noGlobals,v.signatureValues,C.presetMatchSkip); v.builtinSignatures[key]=expected end
-   memo.active=Presets.signature(profile,e.profiles[profile],noGlobals,v.signatureValues,C.presetMatchSkip)==expected
+   if not expected then expected=Presets.signature(profile,candidate,D.noGlobals,v.signatureValues,C.presetMatchSkip); v.builtinSignatures[key]=expected end
+   memo.active=Presets.signature(profile,e.profiles[profile],D.noGlobals,v.signatureValues,C.presetMatchSkip)==expected
   end
   active=memo.active
  end
@@ -226,7 +238,7 @@ local function builtinActive(v,name,profile,label)
 end
 -- Base des voitures (dossiers content/cars), lue à la demande par étapes (Beta 1.39 : une part à chaque image, jamais
 -- tout d'un coup), gardée pour la session ; liste vide tant qu'elle n'est pas finie.
-local noCars={}
+D.noCars={}
 local function carDatabase(v)
  if v.carList then return v.carList end
  local loader=v.carLoader
@@ -236,7 +248,7 @@ local function carDatabase(v)
   for _,car in ipairs(v.carList) do v.carNames[car.id]=car.name end
   return v.carList
  end
- return noCars,loader
+ return D.noCars,loader
 end
 -- Fenêtre de réglages « Racing 26 » (Beta 1.35, refonte de Vincent, canevas « AdvancedIA — Refonte UI ») : en-tête
 -- fixe de 84 px (marque, version, mise à jour, session, état, langue, activation, panique ; onglets inclinés et choix
@@ -245,8 +257,8 @@ end
 local tabs={'home','settings','rules','diagnostic'}
 local sidebar={{'drive','general','human','lateral','start'},{'traffic','yield','blue','flash','overtake','traffic'},
  {'race','accidents','sanctions','strategy','lights','endurance','weather'},{'advanced','globals','overlay'}}
-local languageOrder={'fr','en'}
-local languageLabels={fr='FR',en='EN'}
+D.languageOrder={'fr','en'}
+D.languageLabels={fr='FR',en='EN'}
 local HEADER=84
 -- Part de la largeur d'une ligne de choix au-delà de laquelle le texte du défaut n'est plus affiché à droite (il reste
 -- dans l'infobulle) : le libellé garde sa place.
@@ -286,10 +298,10 @@ local function valueText(s,value)
  return number(value)
 end
 -- Texte mémorisé d'un nombre entier (aucune chaîne neuve tant qu'il ne change pas).
-local intTexts={}
+D.intTexts={}
 local function intText(n)
- local t=intTexts[n]
- if not t then t=string.format('%d',n); intTexts[n]=t end
+ local t=D.intTexts[n]
+ if not t then t=string.format('%d',n); D.intTexts[n]=t end
  return t
 end
 local function shortLabel(s) return L.shortLabels[s.key] or s.label end
@@ -311,9 +323,9 @@ end
 -- Une commande de réglage (.st / .r) dans une colonne de largeur w ; renvoie sa hauteur. Clic droit : valeur par
 -- défaut du profil affiché.
 -- Pastilles des couleurs de la section Panneaux lumineux (valeur ac.FlagType de chaque réglage).
-local lightSwatch={lightsYellow=K.flagCaution,lightsRed=K.flagStop,lightsBlue=K.flagFasterCar,lightsWhite=K.flagSlowVehicle,lightsOrange=K.flagSlippery,lightsGreen=K.flagStart}
+D.lightSwatch={lightsYellow=K.flagCaution,lightsRed=K.flagStop,lightsBlue=K.flagFasterCar,lightsWhite=K.flagSlowVehicle,lightsOrange=K.flagSlippery,lightsGreen=K.flagStart}
 local function toggleOpts(v,key,value)
- local sw=lightSwatch[key]
+ local sw=D.lightSwatch[key]
  if not sw then return nil end
  local o=v.lightOpts[key]
  if not o then o={}; v.lightOpts[key]=o end
@@ -399,7 +411,7 @@ end
 local function hiddenNote(view,key,shown)
  if C.penaltyKeys[key] or C.sanctionKeys[key] and C.solo(view) then return not shown.penalties and 'penalties' or nil end
  -- Beta 1.42 : stratégie, pannes, aspiration cassée, fin de course et sanctions de course : course seulement.
- if C.raceKeys[key] or C.sanctionRaceKeys[key] then return not shown.race and 'race' or nil end
+ if C.raceKeys[key] or C.sanctionRaceKeys[key] or C.raceOnlyKeys[key] or C.startUiKeys[key] then return not shown.race and 'race' or nil end
  if key=='enduranceOverlay' then return 'endurance' end
  if key=='spawnMode' then return 'spawn' end
  if key=='floodRangeKm' and not C.hidden(view,'spawnMode') then return 'flood' end
@@ -412,23 +424,26 @@ local function hiddenNote(view,key,shown)
  if key=='qualiCoolLaps' then return not C.hidden(view,'qualiTraffic') and 'qualiQ' or not shown.quali and 'quali' or nil end
  -- Beta 1.59 : arrêt aux stands pour dégâts, jamais en journée circuit ni en hotlap.
  if key=='damagePit' then return 'damage' end
+ -- Relecture d'ensemble 1.62 : espacement (journée circuit seulement), cession ordinaire et pression (hors course).
+ if C.trackDayOnlyKeys[key] then return not shown.trackDay and 'trackDay' or nil end
+ if C.notRaceKeys[key] then return not shown.notRace and 'notRace' or nil end
  return nil
 end
-local noteTexts={quali='qualiOnlySetting',qualiQ='qualifyingOnlySetting',race='raceOnlySetting',penalties='penaltiesTrackDay',endurance='enduranceNotAvailable',spawn='spawnNotAvailable',flood='floodNotAvailable',damage='damagePitTrackDay'}
+D.noteTexts={quali='qualiOnlySetting',qualiQ='qualifyingOnlySetting',race='raceOnlySetting',penalties='penaltiesTrackDay',endurance='enduranceNotAvailable',spawn='spawnNotAvailable',flood='floodNotAvailable',damage='damagePitTrackDay',trackDay='trackDayOnlySetting',notRace='notInRaceSetting'}
 -- Hauteur estimée d'un sous-groupe (répartition des deux colonnes) : titre 30, curseur 44, choix 46, interrupteur 28.
-local heightShown={}
+D.heightShown={}
 local function groupHeight(group,view)
  local h=30
- for k in pairs(heightShown) do heightShown[k]=nil end
+ for k in pairs(D.heightShown) do D.heightShown[k]=nil end
  for _,control in ipairs(group.controls) do
   local s=control.schema
-  if C.hidden(view,s.key) then local note=hiddenNote(view,s.key,heightShown); if note then heightShown[note]=true; h=h+36 end
+  if C.uiHidden(view,s.key) then local note=hiddenNote(view,s.key,D.heightShown); if note then D.heightShown[note]=true; h=h+36 end
   else h=h+(s.min and 44 or s.choices and 46 or (L.lightNotes[s.key] and 42 or 28)) end
  end
  return h
 end
 -- Réglages qui dépendent d'un interrupteur (Beta 1.38, maquette) : grisés tant qu'il est coupé.
-local dependsOn={overtakeModeGap='overtakeMode',overtakeModeBoostPct='overtakeMode',bopStrengthPct='bopEnabled'}
+D.dependsOn={overtakeModeGap='overtakeMode',overtakeModeBoostPct='overtakeMode',bopStrengthPct='bopEnabled'}
 -- Sous-groupe : intertitre (titre et sous-titre), puis ses réglages ; renvoie la hauteur dessinée.
 local function drawGroup(v,group,view,p,x,y,w,shown,lockedKey)
  local c=W.colors(); local top=y
@@ -438,18 +453,18 @@ local function drawGroup(v,group,view,p,x,y,w,shown,lockedKey)
  for k in pairs(shown) do shown[k]=nil end
  for _,control in ipairs(group.controls) do
   local s=control.schema
-  if C.hidden(view,s.key) then
+  if C.uiHidden(view,s.key) then
    local note=hiddenNote(view,s.key,shown)
    if note then
     shown[note]=true
-    local text=L[noteTexts[note]]
+    local text=L[D.noteTexts[note]]
     local h=#W.lines(text,w,12)*W.lineHeight(12)+12
     if W.visible(y,h) then W.paragraph(text,x,y+6,w,12,c.label); W.rect(x,y+h-1,w,1,c.ruleSoft) end
     y=y+h
    end
   else
    local h=settingControl(v,control,view,p,x,y,w,lockedKey==s.key)
-   local parent=dependsOn[s.key]
+   local parent=D.dependsOn[s.key]
    if parent and p[parent]~=true and W.visible(y,h) then W.rect(x,y,w,h,c.veil) end
    y=y+h
    -- Jaune natif du HUD remplacé par les panneaux lumineux : note sous sa ligne (maquette).
@@ -538,7 +553,7 @@ end
 -- Voiture de sécurité : modèle choisi et sa présence sur la grille, étapes de sa sortie, saisie du dossier, filtre et
 -- liste de la base des voitures.
 -- Phases de la bande (maquette) : garée, appelée, en piste, rentre ce tour, aux stands ; lignes de la base montrées.
-local safetyStrip={parked=1,call=2,exit=2,place=2,out=3,['in']=4,parking=5}
+D.safetyStrip={parked=1,call=2,exit=2,place=2,out=3,['in']=4,parking=5}
 local SAFETY_ROWS=8
 local function safetyBlock(v,e,x,y,w)
  local c=W.colors(); local g=e.g
@@ -560,7 +575,7 @@ local function safetyBlock(v,e,x,y,w)
   y=y+64
   -- Phase de la voiture de sécurité (Beta 1.38, maquette) : cinq barres, la phase en cours en cyan.
   if W.visible(y,26) then
-   local current=found and safetyStrip[e.incidents.safetyPhase] or 0
+   local current=found and D.safetyStrip[e.incidents.safetyPhase] or 0
    local bw=(w-12)/5
    for i=1,5 do
     local bx=x+(i-1)*(bw+3)
@@ -603,7 +618,7 @@ local function safetyBlock(v,e,x,y,w)
   v.carFilterBuilt=filter; v.carRowsFor=list; local n=0
   for _,car in ipairs(list) do if filter=='' or car.key:find(filter,1,true) then n=n+1; rows[n]=car end end
   for j=#rows,n+1,-1 do rows[j]=nil end
-  v.carMoreText=n>SAFETY_ROWS and string.format(L.safetyMore,n-SAFETY_ROWS) or nil
+  v.carMoreText=n>SAFETY_ROWS and string.format(n-SAFETY_ROWS==1 and L.safetyMoreOne or L.safetyMore,n-SAFETY_ROWS) or nil
  end
  -- Lecture de la base en cours : « n / N » à la place des lignes.
  if loading then y=y+W.message(fmt(v,'carLoading',L.carLoading,loading.read,#loading.folders),x,y,w,'mut')+4 end
@@ -757,7 +772,7 @@ local function globalBlock(v,e,x,y,w)
  if not two then yr=yl+8 end
  if W.visible(yr,24) then W.heading(L.subgroups.globalsOccupation[1],rx,yr,cw,L.subgroups.globalsOccupation[2]) end
  yr=yr+30
- for _,key in ipairs(globalSliders) do
+ for _,key in ipairs(D.globalSliders) do
   if key~='gripPerLevelPct' then
    local bounds=C.globalBounds[key]
    yr=yr+globalSlider(v,g,idOf('global_',key),key,L.globalShort[key] or L.globalLabels[key],number(g[key]),rx,yr,cw,W.step(bounds[1],bounds[2]),tips[key])
@@ -814,10 +829,10 @@ end
 -- d'Assetto Corsa, comportement, puis les panneaux lumineux du circuit (Beta 1.32).
 -- Beta 1.59 (décision du pilote, n° 15) : « Overlay » en tête : coupé, rien de l'overlay n'est dessiné et les affichages
 -- d'origine d'AC sont rendus (case de session, options de CSP tenues par l'app).
-local overlayContentKeys={'overlayEnabled','overlaySession','overlayExplain','overlayRecap'}
-local overlayNativeKeys={'overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags'}
-local overlayBehaviourKeys={'overlayClickThrough','overlayHideReplay','overlayHidePits'}
-local overlayResetKeys={'overlayX','overlayY','overlayScale','overlayLocked','overlayBackground','overlayContent','panelOpacity','panelShow','panelInfoTime',
+D.overlayContentKeys={'overlayEnabled','overlaySession','overlayExplain','overlayRecap'}
+D.overlayNativeKeys={'overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags'}
+D.overlayBehaviourKeys={'overlayClickThrough','overlayHideReplay','overlayHidePits'}
+D.overlayResetKeys={'overlayX','overlayY','overlayScale','overlayLocked','overlayBackground','overlayContent','panelOpacity','panelShow','panelInfoTime',
  'overlayEnabled','overlaySession','overlayExplain','overlayRecap','overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags','cspMessagesLost',
  'overlayClickThrough','overlayHideReplay','overlayHidePits'}
 local backgroundKeys=C.globalChoices.overlayBackground
@@ -836,10 +851,10 @@ local function switchList(v,g,keys,titles,x,y,w)
  return y
 end
 -- Options de CSP tenues par l'app (Beta 1.40) : état sous leurs interrupteurs, texte et genre ; nil s'il n'y a rien à dire.
-local cspTexts={waiting={'cspWaiting','mut'},pending={'cspPending','wn'},readonly={'cspReadonly','wn'},capped={'cspCapped','wn'},applied={'cspApplied','gr'}}
+D.cspTexts={waiting={'cspWaiting','mut'},pending={'cspPending','wn'},readonly={'cspReadonly','wn'},capped={'cspCapped','wn'},applied={'cspApplied','gr'}}
 local function cspStatus(host,g)
  if g.cspMessagesLost and g.cspHideMessages then return L.cspLost,'wn' end
- local t=host.cspgui and cspTexts[Cspgui.view(host.cspgui)]
+ local t=host.cspgui and D.cspTexts[Cspgui.view(host.cspgui)]
  if t then return L[t[1]],t[2] end
  return nil
 end
@@ -884,12 +899,12 @@ local function overlayBlock(v,e,x,y,w)
  -- Contenu, affichages d'AC, comportement (seconde colonne).
  local rx=two and x+cw+18 or x
  if not two then yr=yl+8 end
- yr=switchList(v,g,overlayContentKeys,L.subgroups.overlayContents,rx,yr,cw)+8
- yr=switchList(v,g,overlayNativeKeys,L.subgroups.overlayNative,rx,yr,cw)
+ yr=switchList(v,g,D.overlayContentKeys,L.subgroups.overlayContents,rx,yr,cw)+8
+ yr=switchList(v,g,D.overlayNativeKeys,L.subgroups.overlayNative,rx,yr,cw)
  local cspText,cspKind=cspStatus(v.host,g)
  if cspText then yr=yr+4+W.message(cspText,rx,yr+4,cw,cspKind)+4 end
  yr=yr+8
- yr=switchList(v,g,overlayBehaviourKeys,L.subgroups.overlayBehaviour,rx,yr,cw)
+ yr=switchList(v,g,D.overlayBehaviourKeys,L.subgroups.overlayBehaviour,rx,yr,cw)
  y=math.max(yl,yr)+10
  -- Panneaux lumineux du circuit : réglés dans leur section (Beta 1.37), une ligne y mène.
  if W.visible(y,24) then
@@ -901,10 +916,10 @@ local function overlayBlock(v,e,x,y,w)
  return y+30
 end
 -- Neutralisation affichée avec le jaune des panneaux (« · VSC », Beta 1.38) ; texte vide sinon.
-local phaseTexts={vsc='lightsPhaseVsc',fcy='lightsPhaseFcy',sc='lightsPhaseSc'}
+D.phaseTexts={vsc='lightsPhaseVsc',fcy='lightsPhaseFcy',sc='lightsPhaseSc'}
 local function lightsPhase(e,value)
  local t=e.incidents
- local key=value==K.flagCaution and t.neutral and phaseTexts[t.neutralMode]
+ local key=value==K.flagCaution and t.neutral and D.phaseTexts[t.neutralMode]
  return key and L[key] or ''
 end
 -- Section Panneaux lumineux (Beta 1.37) : état du circuit en tête (lecture de sa configuration, couleur en cours).
@@ -994,14 +1009,14 @@ end
 -- Réinitialisation d'une section (Beta 1.24) : valeurs par défaut du profil affiché, comme le clic droit sur un réglage ;
 -- préférences du pilote, motifs de classes et réglages fixés par le jeu de règles gardés. Options globales : seulement
 -- celles de l'onglet, jamais le sens latéral mesuré, la graine, la langue ni la voiture de sécurité.
-local globalResetKeys={'levelMode','useGripBoost','useBrakeAssist','overrideAwareness','debugLog','occLatMin','occLatMax','occMargin','occSpeedGain','gripPerLevelPct'}
+D.globalResetKeys={'levelMode','useGripBoost','useBrakeAssist','overrideAwareness','debugLog','trackMemory','occLatMin','occLatMax','occMargin','occSpeedGain','gripPerLevelPct'}
 local function resetSection(v,e,group,view,p)
  if group=='globals' then
-  for _,key in ipairs(globalResetKeys) do e.g[key]=C.globalDefaults[key] end
+  for _,key in ipairs(D.globalResetKeys) do e.g[key]=C.globalDefaults[key] end
   v.presetMessage=string.format(L.sectionResetDone,L.categories.globals); v.resetGroup=group; v.resetText=v.presetMessage; mark(v); return
  end
  if group=='overlay' then
-  for _,key in ipairs(overlayResetKeys) do e.g[key]=C.globalDefaults[key] end
+  for _,key in ipairs(D.overlayResetKeys) do e.g[key]=C.globalDefaults[key] end
   v.presetMessage=L.overlayResetDone; v.resetGroup=group; v.resetText=v.presetMessage; mark(v); return
  end
  local defaults=C.defaults(view)
@@ -1019,7 +1034,7 @@ local function modifiedCount(v,group,view,p)
  if not m then m={}; v.modifiedMemo[group]=m end
  if m.edits~=v.edits or m.revision~=v.e.revision or m.view~=view or m.p~=p then
   local n=0
-  for _,control in ipairs(v.controls[group] or {}) do local s=control.schema; if not C.hidden(view,s.key) and modified(s,p[s.key],view) then n=n+1 end end
+  for _,control in ipairs(v.controls[group] or {}) do local s=control.schema; if not C.uiHidden(view,s.key) and modified(s,p[s.key],view) then n=n+1 end end
   m.edits=v.edits; m.revision=v.e.revision; m.view=view; m.p=p; m.count=n
  end
  return m.count
@@ -1076,7 +1091,7 @@ local function updateAct(v,action)
  elseif action=='notes' then port.open(u.release and u.release.page or Update.page) end
 end
 local function megabytes(bytes) return (string.format('%.1f',bytes/1048576):gsub('%.',L.decimalMark)) end
-local updateErrors={errNet=true,errHash=true,errWrite=true,errFormat=true,errRate=true}
+D.updateErrors={errNet=true,errHash=true,errWrite=true,errFormat=true,errRate=true}
 local function updateText(v,u,view)
  if u.serial~=v.updateSerial then v.updateSerial=u.serial; v.updateClock=Adapter.clockText():sub(12,16); v.updateLine=nil end
  local flag=v.e.g.updateCheck==true
@@ -1099,15 +1114,15 @@ local function updateText(v,u,view)
  return text
 end
 -- Puce du bloc « Mises à jour » selon l'état affiché (MajBloc).
-local updateChips={uptodate={'chipUpToDate','g'},checking={'chipChecking','c'},available={'chipAvailable','C'},downloading={'chipDownloading','c'},
+D.updateChips={uptodate={'chipUpToDate','g'},checking={'chipChecking','c'},available={'chipAvailable','C'},downloading={'chipDownloading','c'},
  verifying={'chipChecking','c'},installing={'chipInstalling','c'},ready={'chipReady','c'},done={'chipInstalled','g'},driving={'chipDriving','n'},
  errNet={'chipError','r'},errHash={'chipError','r'},errWrite={'chipError','r'},errFormat={'chipError','r'},errRate={'chipError','r'},broken={'chipError','r'},
  none={'chipNone','n'},interrupted={'chipRestored','o'},success={'chipUpToDate','g'},rolledback={'chipRolledBack','g'},unchecked={'chipUnchecked','n'}}
-local updateKinds={uptodate='ok',success='ok',done='ok',rolledback='ok',checking='mut',downloading='mut',verifying='mut',installing='mut',ready='mut',
+D.updateKinds={uptodate='ok',success='ok',done='ok',rolledback='ok',checking='mut',downloading='mut',verifying='mut',installing='mut',ready='mut',
  none='mut',unchecked='mut',driving='mut',interrupted='wo',errNet='er',errHash='er',errWrite='er',errFormat='er',errRate='er',broken='er'}
 -- États où les notes de version sont masquées (vérification, installation : maquette, Beta 1.38) ; montrées pendant
 -- le téléchargement (Beta 1.39, maquette).
-local updateBusyViews={checking=true,verifying=true,installing=true,ready=true,done=true}
+D.updateBusyViews={checking=true,verifying=true,installing=true,ready=true,done=true}
 -- Bloc « Mises à jour » du diagnostic (MajBloc) : versions, état, notes de la version publiée et lien, commande
 -- principale (annuler, installer, réessayer), option du lancement, puis « Vérifier maintenant » et retour arrière.
 local function updateBlock(v,e,host,x,y,w)
@@ -1120,7 +1135,7 @@ local function updateBlock(v,e,host,x,y,w)
  local newer=Update.fresh(u)
  local stopped=host.updateStopped
  -- Hauteur connue d'avance (fond du panneau) : notes et lien, message, boutons.
- local notes=r and (newer or view=='success') and not updateBusyViews[view] and math.min(K.updateNotes,#r.notes) or 0
+ local notes=r and (newer or view=='success') and not D.updateBusyViews[view] and math.min(K.updateNotes,#r.notes) or 0
  -- Version disponible (Beta 1.39, maquette) : aucun message, les versions et le bouton suffisent.
  local message=port.ready and (view~='available' and updateText(v,u,view) or '') or L.updateUnavailable
  local mh=message~='' and #W.lines(message,w-33,12)*W.lineHeight(12)+8 or 0
@@ -1128,7 +1143,7 @@ local function updateBlock(v,e,host,x,y,w)
  local height=8+24+8+18+(newer and 16 or 0)+mh+(notes>0 and notes*18+30 or 0)+(r and 22 or 0)+(port.ready and (34+30+32) or 0)+kh+12
  W.panel(x,y,w,height)
  y=y+8
- local chip=updateChips[view] or updateChips.unchecked
+ local chip=D.updateChips[view] or D.updateChips.unchecked
  if W.visible(y,24) then W.heading(L.updateHeading,x+10,y,w-20); W.chipRight(L[chip[1]],x+w-10,y+3,chip[2]) end
  y=y+32
  if v.updateVersions~=u.serial then
@@ -1139,7 +1154,7 @@ local function updateBlock(v,e,host,x,y,w)
  if W.visible(y,16) then W.cell(v.updateInstalledText,x+10,y,w-20,12,c.muted) end
  y=y+18
  if v.updateAvailableText then if W.visible(y,16) then W.cell(v.updateAvailableText,x+10,y,w-20,12,c.cyanText) end; y=y+16 end
- if message~='' then y=y+W.message(message,x+10,y,w-20,updateKinds[view] or 'mut')+8 end
+ if message~='' then y=y+W.message(message,x+10,y,w-20,D.updateKinds[view] or 'mut')+8 end
  if notes>0 then
   if W.visible(y,16) then W.label(fmt(v,'notesOf',L.updateNotesOf,r.version),x+10,y) end
   y=y+16
@@ -1171,7 +1186,7 @@ local function updateBlock(v,e,host,x,y,w)
     -- Aucune version publiée (maquette, Beta 1.39) : « Vérifier maintenant » à la place de l'action, en contour.
     checkShown=true
     if W.button('update_check',L.updateCheckNow,x+10,y,w-20,28,false,tips.updateCheck,cooling and 'disabled' or 'outline') then updateAct(v,'check') end
-   elseif updateErrors[view] then
+   elseif D.updateErrors[view] then
     checkShown=true
     if W.button('update_check',L.updateRetry,x+10,y,w-20,28,false,tips.updateCheck,cooling and 'disabled' or 'outline') then updateAct(v,'check') end
    end
@@ -1200,7 +1215,7 @@ end
 -- Puce d'état de l'en-tête (ACTIF · COURSE, APP COUPÉE, PANIQUE, EN LIGNE, EN ATTENTE, IA NATIVES).
 -- Pause : commandes figées, état du moteur toujours valable (chiffres de l'accueil affichés) ; rediffusion, session
 -- finie, circuit sans spline, image anormale, accès refusé : commandes suspendues (ambre), jamais « actif ».
-local suspendedGuards={replay=true,finished=true,spline=true,dt=true,access=true}
+D.suspendedGuards={replay=true,finished=true,spline=true,dt=true,access=true}
 -- Voitures IA de la session (pilotables), comptées une fois par image du moteur.
 local aiEngine,aiFrame,aiValue=nil,-1,0
 local function aiCars(e)
@@ -1224,13 +1239,13 @@ local function stateKey(e)
  if e.guard=='init' or not e.frame then return 'init' end
  if e.guard=='nosections' then return 'native' end
  if e.guard=='paused' then return 'paused' end
- if suspendedGuards[e.guard] then return 'suspended' end
+ if D.suspendedGuards[e.guard] then return 'suspended' end
  -- Beta 1.36 : moteur prêt mais aucune IA dans la session (seul en piste) : jamais « actif ».
  return aiCars(e)>0 and 'ready' or 'noai'
 end
 -- Chiffres en direct : moteur prêt ou en pause.
 local function live(e) return e.guard=='ready' or e.guard=='paused' end
-local pillKinds={ready='g',noai='n',paused='n',suspended='a',disabled='n',panic='r',online='a',init='n',native='n'}
+D.pillKinds={ready='g',noai='n',paused='n',suspended='a',disabled='n',panic='r',online='a',init='n',native='n'}
 -- Session détectée (accueil, en-tête) : genre (déclaré par race.ini, sinon lu par CSP) et source ; textes de la langue.
 local function sessionKind(frame)
  if not frame then return nil,nil end
@@ -1297,7 +1312,7 @@ local function headerBar(v,e)
  -- Puce d'état à point de couleur (Beta 1.38, maquette).
  local cw=W.dotChipWidth(v.pillText)
  local sx=lx-10-cw
- local s=pillKinds[key]
+ local s=D.pillKinds[key]
  W.dotChip(v.pillText,sx,15,s)
  W.help(v.tips.ui.status,sx,15,cw,18,3)
  -- Milieu : session (circuit / profil) et garde (IA pilotées · état).
@@ -1316,7 +1331,7 @@ local function headerBar(v,e)
   local gid=guardId(e)
   if v.guardFor~=gid or v.guardCount~=e.activeCount or v.guardKind~=kind or v.guardProfile~=e.profile or v.guardAuto~=e.g.autoProfile then
    v.guardFor=gid; v.guardCount=e.activeCount; v.guardKind=kind; v.guardProfile=e.profile; v.guardAuto=e.g.autoProfile
-   v.carsLine=ready and string.format(L.headerCars,e.activeCount) or L.headerNoCars
+   v.carsLine=ready and string.format(e.activeCount==1 and L.headerCarsOne or L.headerCars,e.activeCount) or L.headerNoCars
    v.guardLine=' · '..(e.guard=='ready' and kind and string.format(L.guardReady,kind,source,L.profiles[e.profile],e.g.autoProfile and L.guardAuto or L.guardManual) or L.guards[gid] or L.guards[e.guard] or e.guard)
   end
   local cwid=math.min(W.width(v.carsLine,12,'sb'),mw-12)
@@ -1379,10 +1394,10 @@ local function headerBar(v,e)
  W.rect(0,82,fw,2,c.cyan)
 end
 -- Bandeau d'état global (app coupée, panique, en ligne, initialisation) en tête de l'accueil ; renvoie sa hauteur.
-local bannerStyles={disabled={'neutralBack','muted','ruleHover'},panic={'dangerBack','dangerText','dangerLine'},online={'warnBack','warn','warnLine'},init={'panel','muted','rule'}}
+D.bannerStyles={disabled={'neutralBack','muted','ruleHover'},panic={'dangerBack','dangerText','dangerLine'},online={'warnBack','warn','warnLine'},init={'panel','muted','rule'}}
 local function banner(v,e,x,y,w)
  local key=stateKey(e)
- local style=bannerStyles[key]
+ local style=D.bannerStyles[key]
  -- « Compris » (en ligne, Beta 1.38) : bandeau masqué jusqu'au prochain changement de garde (vu par l'en-tête).
  local gid=guardId(e)
  if not style or key=='online' and v.bannerHide==gid then return 0 end
@@ -1418,9 +1433,9 @@ local function entrySignature(v,entry)
 end
 -- Points à vérifier (Beta 1.10) : texte, lien vers la section concernée.
 -- spotter : fenêtre de SpotterEnginer (Beta 1.52), ouverte par l'hôte.
-local warnTargets={spotter={},signs={'diagnostic'},endurance={'settings','endurance'},weather={'settings','weather'},tabs={'settings','accidents'},lights={'settings','lights'},acpenalties={'settings','sanctions'}}
+D.warnTargets={spotter={},signs={'diagnostic'},endurance={'settings','endurance'},weather={'settings','weather'},tabs={'settings','accidents'},lights={'settings','lights'},acpenalties={'settings','sanctions'}}
 local function openTarget(v,kind)
- local t=warnTargets[kind]
+ local t=D.warnTargets[kind]
  if not t then return end
  if kind=='spotter' then if v.host and v.host.openCompanion then v.host.openCompanion() end return end
  v.tab=t[1]; if t[2] then v.category=t[2] end
@@ -1594,7 +1609,7 @@ local function homeTab(v,e,host)
  local warnings=v.warnings; for i=#warnings,1,-1 do warnings[i]=nil end
  local kinds=v.warningKinds
  if e.frame and e.frame.conflict~='' then addWarning(v,fmt(v,'conflict','%s%s',L.conflict,e.frame.conflict)) end
- if e.g.offsetSign==0 and C.needsOffset(C.effective(view,p,v.derived)) then addWarning(v,L.unavailableSigns,'signs') end
+ if e.g.offsetSign==0 and C.needsOffset(C.effective(view,p,v.derived),view) then addWarning(v,L.unavailableSigns,'signs') end
  if e.frame and e.frame.left>K.enduranceSuggestionSeconds and not p.enduranceOverlay and view~='Q' and view~='P' and view~='H' then addWarning(v,L.enduranceSuggestion,'endurance') end
  if C.any(p) and not C.on(p,'weather') then addWarning(v,L.weatherOff,'weather') end
  if host.raceFlagsHidden==false then addWarning(v,flagsNext(host) and L.nativeFlagsNext or L.nativeFlagsShown) end
@@ -1617,12 +1632,17 @@ local function homeTab(v,e,host)
   end
   addWarning(v,v.companionText,'spotter')
  end
+ -- Beta 1.60 : SpotterEnginer plus ancien que la version qui connaît le tour de formation et le départ lancé, et
+ -- « Départ de la course » autre que le départ arrêté dans le profil Course (version lue une fois au lancement).
+ if host.companionOldStart==true and e.profiles.C and e.profiles.C.raceStart~=nil and e.profiles.C.raceStart~='standing' and C.on(e.profiles.C,'start') then
+  addWarning(v,fmt(v,'seStart',L.companionRaceStart,host.companionVersionText or '?',K.seStartMinMajor,K.seStartMinMinor,K.seStartMinPatch),'spotter')
+ end
  -- Mise à jour (Beta 1.33) : nouvelle version (bouton d'un clic) ou compte rendu de la dernière opération.
  local u=host.updater; local offered=u~=nil and host.updatePort~=nil and host.updatePort.ready and Update.offered(u)
  local report=u~=nil and u.updated~=nil and not offered
  if report and v.updateReportFor~=u.serial then v.updateReportFor=u.serial; v.updateReportText=string.format(L.updateDone[u.updated.kind],u.updated.from,u.updated.to) end
  local count=#warnings+(offered and 1 or 0)+(report and 1 or 0)
- if v.warnCountFor~=count then v.warnCountFor=count; v.warnCountText=string.format(L.warningsCount,count) end
+ if v.warnCountFor~=count then v.warnCountFor=count; v.warnCountText=string.format(count==1 and L.warningsCountOne or L.warningsCount,count) end
  -- Hauteur du panneau : lignes coupées à la largeur du texte (lien à droite).
  local textW=w-24-18-90
  local wh=0
@@ -1644,7 +1664,7 @@ local function homeTab(v,e,host)
    W.quad(x+15.6,wy+8,x+19.6,wy+8,x+16,wy+21,x+12,wy+21,c.warn)
    W.paragraph(text,x+30,wy+7,textW,12,c.body)
    local kind=kinds[i]
-   if warnTargets[kind] then
+   if D.warnTargets[kind] then
     local label=L.warnLinks[kind]
     local lw=W.linkWidth(label)
     if W.link(idOf('warn_',kind),label,x+w-12-lw,wy+8,v.tips.ui.warnLink) then openTarget(v,kind) end
@@ -2036,10 +2056,10 @@ local function diagnosticTab(v,e,host)
  y=y+ch+GAP
  -- Phares et zones.
  local half=(w-20-12)/2
- local zh=8+24+8+18+30+30+8
+ local zh=8+24+8+18+30+30+30+30+8
  W.panel(x,y,w,zh)
  if W.visible(y+8,24) then W.heading(L.diagFlash,x+10,y+8,half); W.heading(L.diagZones,x+22+half,y+8,half,intText(#e.zones),'mono') end
- if W.visible(y+40,80) then
+ if W.visible(y+40,116) then
   if v.flashFor~=e.g.flashField or v.flashEvent~=e.flash.eventId or v.flashCount~=e.flash.eventCount then
    v.flashFor=e.g.flashField; v.flashEvent=e.flash.eventId; v.flashCount=e.flash.eventCount
    v.flashText=L.field..(e.g.flashField~='' and e.g.flashField or L.unlearned)
@@ -2054,9 +2074,17 @@ local function diagnosticTab(v,e,host)
   if frame then
    if W.button('mark_start',L.markStartShort,zx,y+40,zw,26,e.zoneStart>=0,v.tips.ui.markStart) and frame.player>0 then e.zoneStart=frame.cars[frame.player].spline end
    if W.button('mark_end',L.markEndShort,zx+zw+4,y+40,zw,26,false,v.tips.ui.markEnd) and e.zoneStart>=0 and frame.player>0 and #e.zones<K.maxZones then
-    e.zones[#e.zones+1]={from=e.zoneStart,to=frame.cars[frame.player].spline,noYield=true,noOvertake=true,maxOffset=K.pitOffsetMax,note=''}; e.zoneStart=-1
+    -- Beta 1.61 (tranche A) : zone du pilote, du genre choisi ; « sans manœuvre » comme avant.
+    local kind=D.zoneKinds[e.zoneKind or 1] or 'nomove'
+    local nomove=kind=='nomove'
+    e.zones[#e.zones+1]={kind=kind,source='user',from=e.zoneStart,to=frame.cars[frame.player].spline,noYield=nomove,noOvertake=nomove,maxOffset=nomove and K.pitOffsetMax or 1,note=''}; e.zoneStart=-1
+    Zones.index(e.zones)
    end
    if W.button('export',L.exportZones,zx,y+70,half,26,false,v.tips.ui.export,'outline') then host.clipboard(Zones.export(e.zones)) end
+   local kindIndex=e.zoneKind or 1
+   if W.button('zone_kind',L.zoneKinds[kindIndex] or L.zoneKinds[1],zx,y+100,zw,26,false,v.tips.ui.zoneKind,'outline') then e.zoneKind=kindIndex%#D.zoneKinds+1 end
+   if W.button('zone_save',L.zoneSave,zx+zw+4,y+100,zw,26,false,v.tips.ui.zoneSave,'outline') then e.zoneSaveAsk='user' end
+   if W.button('zone_forget',L.zoneForget,zx,y+130,half,26,false,v.tips.ui.zoneForget,'outline') then e.zoneSaveAsk='forget'; e.trackForgetAsk=true end
   end
   W.help(v.tips.ui.zoneCount,x+22+half,y+8,half,24,4)
  end
@@ -2173,6 +2201,12 @@ local function diagnosticTab(v,e,host)
  y=tableTop-tableOffset
  local rowsData=v.debugRows
  local n=0
+ -- Affinage 1.62 (AUDIT_FPS cause 10) : décalage et écart (valeurs qui changent à chaque image) refaits au plus cinq
+ -- fois par seconde du temps du moteur ; niveau, agressivité, prudence et nom aussitôt. Avant, un texte neuf à chaque
+ -- image par voiture remplissait le cache des largeurs jusqu'à le vider (pointe de 62 ms au garage).
+ local now=U.finite(e.time) and e.time or 0
+ local refresh=v.diagRowsAt==nil or now>=v.diagRowsAt or now<v.diagRowsAt-1
+ if refresh then v.diagRowsAt=now+0.2 end
  if frame then
   for i=1,frame.count do
    local a,s,cmd=frame.cars[i],e.states[i],e.commands[i]
@@ -2185,7 +2219,7 @@ local function diagnosticTab(v,e,host)
      local ca=math.floor(cmd.caution*10+0.5); local gp=s.gap<math.huge and math.floor(s.gap+0.5) or -1
      -- Beta 1.53 : niveau réellement écrit dans la voiture (plafond 100 % si CSP refuse plus, sonde, restitution).
      local hs=host.cars[i]; local la=hs and hs.owned and hs.level and math.floor(hs.level*100+0.5) or lv
-     if row.id~=a.index or row.name~=a.name or row.off~=off or row.lv~=lv or row.la~=la or row.ag~=ag or row.ca~=ca or row.gp~=gp then
+     if not row.car or row.id~=a.index or row.name~=a.name or row.lv~=lv or row.la~=la or row.ag~=ag or row.ca~=ca or refresh and (row.off~=off or row.gp~=gp) then
       row.id=a.index; row.name=a.name; row.off=off; row.lv=lv; row.la=la; row.ag=ag; row.ca=ca; row.gp=gp
       row.car=string.format('%02d %s',a.index,a.name~='' and a.name or a.id)
       row.offset=string.format('%+.2f',off/100)
@@ -2271,7 +2305,7 @@ local function windowSetup(v)
  local c=W.colors()
  v.languageCodes={}; v.languageLabels={}; v.languageIds={}
  local known={}; for _,code in ipairs(Locale.codes) do known[code]=true end
- for _,code in ipairs(languageOrder) do if known[code] then v.languageCodes[#v.languageCodes+1]=code; v.languageLabels[#v.languageLabels+1]=languageLabels[code]; v.languageIds[#v.languageIds+1]='lang_'..code end end
+ for _,code in ipairs(D.languageOrder) do if known[code] then v.languageCodes[#v.languageCodes+1]=code; v.languageLabels[#v.languageLabels+1]=D.languageLabels[code]; v.languageIds[#v.languageIds+1]='lang_'..code end end
  v.profileLabels={}; v.profileWidths={}; v.profileCodes={}; v.profileCodeWidths={}; v.profileTotal=0; v.profileCodeTotal=0
  for _,profile in ipairs(C.profiles) do
   local label=W.upper(L.shortProfiles[profile])
@@ -2282,6 +2316,8 @@ local function windowSetup(v)
  end
  v.presetDescs=L.presetDescs
  v.globalSwitches={{'useGripBoost',L.grip},{'useBrakeAssist',L.brake},{'overrideAwareness',L.awareness},{'debugLog',L.debugLog}}
+ -- Beta 1.61 : mémoire des circuits (réglage global), montrée quand sa tranche est livrée (C.pendingGlobals).
+ if not C.pendingGlobals.trackMemory then v.globalSwitches[#v.globalSwitches+1]={'trackMemory',L.trackMemory} end
  v.backgroundLabels={L.backgrounds.solid,L.backgrounds.ghost,L.backgrounds.transparent}
  v.showLabels={L.choiceShort.panelShow.info,L.choices.always}
  -- Défauts des choix globaux (« défaut : … », maquette), en minuscules comme ceux des sections.
@@ -2372,12 +2408,12 @@ local function panelPalette(alpha)
  end
  return panelColors
 end
-local flagColors={lap='pit',red='red',sc='yellow',scIn='yellow',fcy='yellow',vsc='yellow',vscEnd='yellow',restart='green',yellow='yellow',zone='yellow',zone1='yellow',native='yellow',blue='blue',green='green',pit='pit',slippery='yellow',black='ink',penalty='ink',checkered='ink',white='pit',
+D.flagColors={lap='pit',red='red',sc='yellow',scIn='yellow',fcy='yellow',vsc='yellow',vscEnd='yellow',restart='green',yellow='yellow',zone='yellow',zone1='yellow',native='yellow',blue='blue',green='green',pit='pit',slippery='yellow',black='ink',penalty='ink',checkered='ink',white='pit',
  slow='pit',warning='ink',meatball='orange',update='accent',rolling='yellow',standing='yellow',lights='yellow',go='green',jump='red',start='green',finish='pit'}
 -- Sigle inscrit dans le drapeau (rouge, bleu et vert parlent d'eux-mêmes) ; double jaune : « !! ».
-local flagCodes={fcy='FCY',yellow='!',zone='!!',zone1='!',native='!',pit='P'}
+D.flagCodes={fcy='FCY',yellow='!',zone='!!',zone1='!',native='!',pit='P'}
 -- Pastille de lettres (cadre et lettres jaunes sur fond noir) : voiture de sécurité, VSC, départ lancé ou arrêté, feux.
-local badgeCodes={sc='SC',scIn='SC',vsc='VSC',vscEnd='VSC',rolling='RS',standing='SS'}
+D.badgeCodes={sc='SC',scIn='SC',vsc='VSC',vscEnd='VSC',rolling='RS',standing='SS'}
 -- Points réutilisés (src/widgets) et cadres de texte réutilisés : aucune table ni point neufs à chaque image ; chaque
 -- appel de dessin les consomme aussitôt.
 local pv=W.vec
@@ -2780,7 +2816,7 @@ local function flags(v,force)
  -- Clignotement à K.hudBlinkHz Hz : rouge et bleu tout le temps, tout nouveau drapeau quelques secondes.
  local blink=(now*K.hudBlinkHz)%1<0.5
  local flashing=not idle and (kind=='red' or kind=='blue' or kind=='jump' or now-(kind=='ai' and hud.aiAt or panel.changedAt)<K.flagBlinkTime)
- local flagColor=kind=='drs' and colors.text or kind=='clear' and colors.dim or colors[flagColors[kind] or 'yellow']
+ local flagColor=kind=='drs' and colors.text or kind=='clear' and colors.dim or colors[D.flagColors[kind] or 'yellow']
  local shown=flashing and not blink and back or flagColor
  local dark=kind=='black' or kind=='penalty' or kind=='checkered' or kind=='warning' or kind=='ai' and hud.aiBlack
  local accent=dark and (flashing and not blink and back or colors.text) or shown
@@ -2788,7 +2824,7 @@ local function flags(v,force)
  local a=l.accent
  ui.drawRectFilled(pv(a[1],a[2]),pv(math.max(1,a[3]-12*u),a[4]),accent,0)
  local f=l.flag
- local code=badgeCodes[kind] or kind=='lights' and lightsCode(v,panel.lit or 0) or kind=='ai' and not hud.aiBlack and hud.aiCode or nil
+ local code=D.badgeCodes[kind] or kind=='lights' and lightsCode(v,panel.lit or 0) or kind=='ai' and not hud.aiBlack and hud.aiCode or nil
  if kind=='clear' then if callable(ui.drawRect) then ui.drawRect(pv(f[1],f[2]),pv(f[3],f[4]),colors.dim,0,nil,2) end
  elseif kind=='drs' then drsBadge(colors,f)
  elseif code then badge(colors,f,code,flashing and not blink and colors.off or colors.yellow)
@@ -2802,7 +2838,7 @@ local function flags(v,force)
   if callable(ui.drawRect) then ui.drawRect(pv(f[1],f[2]),pv(f[3],f[4]),accent,0,nil,2) end
  else
   ui.drawRectFilled(pv(f[1],f[2]),pv(f[3],f[4]),shown,0)
-  local sigle=kind=='lap' and panel.lapCode or kind=='yellow' and panel.double and '!!' or kind=='update' and updateCode(v,panel.updateVersion) or flagCodes[kind]
+  local sigle=kind=='lap' and panel.lapCode or kind=='yellow' and panel.double and '!!' or kind=='update' and updateCode(v,panel.updateVersion) or D.flagCodes[kind]
   if sigle and sigle~='' then font('display',true); write(sigle,(f[3]-f[1])*(#sigle>2 and 0.34 or #sigle>1 and 0.44 or 0.6),f,(kind=='red' or kind=='blue') and colors.text or colors.ink,CENTER); font('display',false) end
  end
  if place and l.delta and restartBox then placeBox(colors,l.delta,L.restart.box,restartBox)

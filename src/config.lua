@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 1.59.1',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 1.62',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -17,11 +17,22 @@ local presetSections={
 -- Valeurs propres à un préréglage, au-delà des valeurs par défaut du profil. Multi-classes partout : sans écart
 -- d'allure d'au moins classGapPct, une grille d'une seule classe reste une seule classe.
 local presetValues={
- Nordschleife={multiClass=true},Qualifications={multiClass=true},Course={multiClass=true,overtakeSide='auto'},
- -- Beta 1.59 : Journée circuit : côtés libres (cession et dépassement automatiques, pas de « à droite, doubler à
- -- gauche »), appels de phares plus rares et moins insistants (valeurs de la course).
- Circuit={multiClass=true,yieldSide='auto',overtakeSide='auto',flashRange=150,flashMinAdvantage=15},
- Essais={multiClass=true,levelPct=97,aggressionPct=40,paceSpreadPct=6,lapseEnabled=true,overtakeChain=true}}
+ -- Beta 1.62 (décision 7 du pilote) : « Realistic race » avec les options de course pertinentes (aide au dépassement,
+ -- conscience de l'arrière, sanctions des IA, départs réalistes, personnalités dynamiques, pilotage fin, rythme selon
+ -- l'usure, stratégie avancée) ; départ arrêté (raceStart) et vos contacts (sanPlayerContact) jamais imposés.
+ -- Beta 1.62 (choix du pilote, 12 novembre) : options pertinentes dans chaque préréglage. Partout : pilotage fin,
+ -- personnalités dynamiques, rythme selon l'usure, conscience de l'arrière (sauf l'aide au dépassement hors course), météo en
+ -- direct. Essais et qualifications : arrêt pour dégâts, vrais passages (qualiRuns). Course : arrêt pour dégâts, stratégies
+ -- de départ variées. Journée circuit : pas d'arrêt pour dégâts (sans effet en profil J) ni de nuance des classes
+ -- (onglet Drapeaux bleus sans objet hors course). Jamais imposés : mémoire des circuits, départ lancé ou formation, vos contacts.
+ -- Journée circuit (règles du pilote) : tour de chauffe progressif après la sortie des stands (outLapEnabled).
+ Nordschleife={multiClass=true,outLapEnabled=true,fineInputs=true,dynamicPersona=true,wearPace=true,rearAwareness=true,weatherLive=true},Qualifications={multiClass=true,fineInputs=true,dynamicPersona=true,wearPace=true,rearAwareness=true,weatherLive=true,damagePit=true,qualiRuns=true},
+ Course={multiClass=true,overtakeSide='auto',passAid=true,rearAwareness=true,sanContact=true,startRealism=true,dynamicPersona=true,fineInputs=true,wearPace=true,strategySmart=true,weatherLive=true,damagePit=true,strategyStartVariety=true},
+ -- Beta 1.59 : Journée circuit : appels de phares plus rares et moins insistants (valeurs de la course).
+ -- Relecture d'ensemble 1.62 : biais de ligne coupé, sans effet quand le plus lent garde sa ligne.
+ -- Beta 1.62 (décision 1 du pilote) : journée circuit hors Nordschleife : le plus lent garde sa ligne (yieldSide='line').
+ Circuit={multiClass=true,yieldSide='line',laneBiasEnabled=false,overtakeSide='auto',flashRange=150,flashMinAdvantage=15,outLapEnabled=true,fineInputs=true,dynamicPersona=true,wearPace=true,rearAwareness=true,weatherLive=true},
+ Essais={multiClass=true,levelPct=97,aggressionPct=40,paceSpreadPct=6,lapseEnabled=true,overtakeChain=true,fineInputs=true,dynamicPersona=true,wearPace=true,rearAwareness=true,weatherLive=true,damagePit=true,qualiRuns=true}}
 -- Version 1.2.0 des préréglages intégrés, figée : un profil resté identique est mis à jour une seule fois.
 local legacySections={
  Nordschleife={general=true,yield=true,flash=true,overtake=true,lateral=true,human=true,start=true,weather=true,traffic=true},
@@ -37,8 +48,8 @@ M.ruleProfiles={'P','Q','C'}
 -- +15 % (F1, défaut de toutes les catégories) ; FCY réelle à 80 km/h fixes, rendue par un delta +150 % (du même ordre
 -- sur la plupart des circuits) ; Slow Zone d'endurance à 80 km/h ; stands fermés sous FCY (GT et WEC) et pendant trois
 -- tours de voiture de sécurité (WEC 2026, art. 14.5) ; stands ouverts sous FCY en GT World Challenge (SRO 2026, art. 39.4 :
--- seule la FCY courte les ferme) ; arrêt GT Sprint entre 25 et 35 min sur 60, sans temps minimal ; F1 sans fenêtre
--- (arrêt fait avant 95 % de la course), pneus changés sous drapeau rouge ; F1 2025 avec DRS ; F1 2026 avec Overtake Mode
+-- seule la FCY courte les ferme) ; arrêt GT Sprint entre 25 et 35 min sur 60, sans temps minimal ; F1 avec fenêtre
+-- de 20 à 95 % de la course, pneus changés sous drapeau rouge ; F1 2025 avec DRS ; F1 2026 avec Overtake Mode
 -- et aileron mobile sans attente (pluie et drapeaux le coupent toujours). Ravitaillement interdit en F1 (depuis 2010) et en
 -- GT World Challenge Sprint : plein prévu au départ ; autorisé en endurance (WEC) : ravitaillement à l'arrêt,
 -- libre au fil de la course (fin de relais, réservoir), pneus neufs et réparations à chaque arrêt (Beta 1.20). Voiture de
@@ -83,7 +94,7 @@ M.sanctionRaceKeys={sanTrackWarnings=true,sanCutPenalty=true,sanCutSeconds=true,
 M.sanctionPracticeKeys={sanPlayerSession=true}
 -- Interrupteurs des sanctions : tous coupés quand la section est décochée.
 M.sanctionSwitches={'sanTrackLimits','sanCutPenalty','sanJumpStart','sanPitSpeed','sanPitExit','sanWrongWay','sanUnservedTime','sanGiveBack','sanMessages','sanPlayerTrackLimits','sanEscalation','sanReport'}
-function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or key=='qualiRuns' and profile~='P' and profile~='Q' or key=='qualiCoolLaps' and profile~='Q' or profile=='C' and M.sanctionPracticeKeys[key] or key=='damagePit' and M.solo(profile) or false end
+function M.hidden(profile,key) return M.solo(profile) and (M.penaltyKeys[key] or M.sanctionKeys[key]) or profile~='C' and (M.raceKeys[key] or M.sanctionRaceKeys[key] or M.raceOnlyKeys[key]) or (profile=='P' or profile=='Q' or profile=='H') and M.overlayKeys[key] or (profile=='C' or profile=='H') and M.spawnKeys[key] or key=='floodRangeKm' and profile~='J' or key=='qualiTraffic' and profile~='P' and profile~='Q' or key=='qualiRuns' and profile~='P' and profile~='Q' or key=='qualiCoolLaps' and profile~='Q' or profile=='C' and M.sanctionPracticeKeys[key] or key=='damagePit' and M.solo(profile) or false end
 -- Préférences du pilote (panneau, messages, drapeau du HUD, DRS) : conservées au chargement d'un préréglage intégré.
 M.preferenceKeys={'flagPanel','yellowHud','yellowMessage','pitMessage','drsAssist','drsBeepVolume','deltaBeeps'}
 -- Clés ajoutées depuis la 1.3.0 (préréglages personnels antérieurs et préréglages intégrés 1.2.0).
@@ -118,7 +129,8 @@ n('general','spawnGapVariation','Variation des écarts au départ (%)',0,100,100
 n('general','floodRangeKm','Portée d’AI flood de CSP, sous le seuil (km)',1,5,1,1,1)
 newKeys.open=nil
 b('yield','yieldEnabled','Cession ordinaire',true,true,false)
-e('yield','yieldSide','Côté de cession','right','right','right',{'left','right','auto'})
+-- Beta 1.62 (décision 1 du pilote, pour R1) : « line » : le plus lent garde sa ligne et lève le pied, le plus rapide se décale.
+e('yield','yieldSide','Côté de cession','right','right','right',{'left','right','auto','line'})
 n('yield','yieldOffset','Décalage de cession',0.2,0.95,0.65,0.8,0.6)
 n('yield','yieldDetectBehind','Détection arrière (m)',30,400,100,200,80)
 n('yield','yieldBehindMargin','Avantage du suiveur (km/h)',1,30,6,4,6)
@@ -264,7 +276,6 @@ n('rules','fcySpeedKmh','FCY : vitesse de repli, allure inconnue (km/h)',40,150,
 n('rules','fcyDeltaPct','FCY : temps de référence plus lent de (%)',10,150,50,50,50)
 n('rules','vscDeltaPct','VSC : temps de référence plus lent de (%)',10,80,30,30,30)
 n('rules','neutralizationHold','Durée minimale de neutralisation (s)',10,180,30,30,30)
-n('rules','safetyCarSpeedKmh','Vitesse de la voiture de sécurité (km/h)',60,250,120,120,120)
 b('rules','safetyCarEscalation','Voiture de sécurité sur incident aggravé',false,true,true)
 e('rules','restartOvertake','Dépassement permis après la relance','line','line','line',{'line','scIn'})
 b('rules','redFlagEnabled','Drapeau rouge sur accident grave (essais, qualifications, course)',true,true,true)
@@ -368,11 +379,27 @@ b('sanctions','sanMessages','Annonces des sanctions des IA à l’écran',false,
 -- pilotée), pénalités de limites de piste croissantes (IA et joueur), rapport de course en CSV. Tous coupés par défaut.
 b('sanctions','sanPlayerTrackLimits','Vos limites de piste gérées par l’app',false,false,false)
 e('sanctions','sanPlayerSession','Vos sorties en essais et qualifications','invalid','invalid','invalid',{'invalid','notice'})
-e('sanctions','sanPlayerPenalty','Votre pénalité de limites de piste (course)','time','time','time',{'time','throttle'})
+e('sanctions','sanPlayerPenalty','Votre pénalité en course (limites de piste, contacts)','time','time','time',{'time','throttle'})
 b('sanctions','sanEscalation','Pénalités croissantes en cas de récidive',false,false,false)
 n('sanctions','sanEscalationStep','Hausse à chaque récidive (s)',1,30,5,5,5)
 n('sanctions','sanEscalationMax','Pénalité maximale par sortie (s)',5,60,30,30,30)
 b('sanctions','sanReport','Rapport de course (fichier CSV)',false,false,false)
+-- Beta 1.60 (étape de base) : neuf réglages, tous coupés ou neutres dans tous les profils et tous les préréglages
+-- intégrés ; clés nouvelles (anciens préréglages personnels : valeur par défaut). Voir M.pendingKeys en fin de fichier.
+b('human','fineInputs','Pilotage plus fin (gaz progressifs, erreurs à la limite)',false,false,false)
+b('human','dynamicPersona','Personnalités dynamiques (phase de course, fatigue, pression)',false,false,false)
+b('lateral','rearAwareness','Conscience de l’arrière',false,false,false)
+b('overtake','passAid','Aide au dépassement (le défenseur tient sa ligne)',false,false,false)
+b('weather','wearPace','Rythme selon l’usure, la gomme et le carburant',false,false,false)
+b('strategy','strategySmart','Stratégie avancée (temps perdu aux stands, piste libre, voiture de sécurité)',false,false,false)
+e('start','raceStart','Départ de la course','standing','standing','standing',{'standing','formation','rolling'})
+b('sanctions','sanContact','Collisions et drapeaux bleus : sanctions des IA',false,false,false)
+b('sanctions','sanPlayerContact','Collisions : vous êtes jugé aussi',false,false,false)
+-- Beta 1.61 (étape de base) : trois réglages de profil, coupés dans tous les profils et tous les préréglages intégrés ;
+-- clés nouvelles. Le quatrième, trackMemory, est global (fin de fichier). Voir M.pendingKeys en fin de fichier.
+b('blue','classNuance','Retardataires et classes : comportement nuancé',false,false,false)
+b('start','startRealism','Départs réalistes (réactions, tour de formation, faux départs gradués)',false,false,false)
+b('weather','weatherLive','Météo en direct (rythme progressif, pneus anticipés)',false,false,false)
 newKeys.open=nil
 n('traffic','trafficGapSeconds','Intervalle de base (s)',0.5,5,2.5,2.5,2.5)
 n('traffic','trafficDensityGain','Distance ajoutée par IA (m)',0.5,5,2.8,2.8,2.8)
@@ -446,7 +473,7 @@ M.K={maxCars=61,paceBins=400,logLines=200,logRate=20,logDedup=5,maxZones=64,maxZ
  weatherPeriod=1,weatherConfirm=15,weatherWetOn=0.12,weatherWetOff=0.05,weatherRainOn=0.1,weatherRainOff=0.02,weatherWaterOn=0.03,weatherWaterOff=0.01,weatherHeavy=0.6,maxTyreCompounds=32,tyreCatalogBudget=2,tyreStopSpeed=1,tyreSalt=90000,spawnWindow=15,enduranceSuggestionSeconds=3600}
 M.timerFields={'since','aiFlashAt','stintStart','pitExitUntil','pitCautionUntil','pitGuardUntil','pendingUntil','holdUntil','ignoreUntil','restUntil','nextPerception',
  'defendUntil','defendCooldown','calmUntil','speedWindowStart','lastContact','lapseAt','errorUntil','lastDirectionAt','driveUntil','yieldStart'}
-M.optionalTimerFields={'pendingAt','lapseUntil','slowTeleportAt','flashMuteUntil','flashHoldUntil','flashFailAt','noAdvAt','cornerGiveUntil','cornerEntryAt'}
+M.optionalTimerFields={'pendingAt','lapseUntil','slowTeleportAt','flashMuteUntil','flashHoldUntil','flashFailAt','noAdvAt','cornerGiveUntil','cornerEntryAt','blueVetoAt'}
 -- Beta 1.41 (journées circuit du 3 novembre : île de Man, Nordschleife) : trafic des IA. Table à part, versée dans K.
 local traffic141={
  -- Chronomètre du coût par image : boucle d'essai de os.preciseClock au lancement.
@@ -508,12 +535,12 @@ for key,value in pairs(k150) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- qualiYieldTime s au plus, qui se rapproche d'au moins qualiYieldSa km/h (ou à moins de qualiYieldNear m). Avis au
 -- joueur : IA lancée à qualiWarnTime s au plus derrière lui, au plus une fois toutes les qualiWarnRepeat s par IA.
 local k151={qualiOutGrace=30,qualiCoolRatio=0.75,qualiCoolPaceMin=0.85,qualiCoolTime=4,qualiCoolMinKmh=30,qualiYieldTime=3,qualiYieldSa=5,qualiYieldNear=30,
- qualiYieldRange=1.5,qualiWarnTime=3,qualiWarnSa=5,qualiWarnRepeat=30,qualiLogGap=20,
+ qualiYieldRange=1.5,qualiWarnTime=3,qualiWarnRepeat=30,qualiLogGap=20,
  -- Tours de refroidissement des IA (qualifications) : après qualiPushMin à qualiPushMax tours lancés de suite (tiré par
  -- IA), un tour au niveau abaissé de qualiCoolLevel, atteint en qualiCoolRamp s, rendu en qualiCoolRelease s après la
  -- ligne ; jamais quand il reste moins de qualiCoolLate tours (temps de la session restant, dernier tour de l'IA, au
  -- moins qualiCoolLapMin s par tour) : le dernier essai compte.
- qualiCoolLevel=0.12,qualiCoolRamp=4,qualiCoolRelease=3,qualiPushMin=1,qualiPushMax=2,qualiCoolLate=2.5,qualiCoolLapMin=60,qualiCoolSalt=7151}
+ qualiCoolLevel=0.18,qualiCoolRamp=4,qualiCoolRelease=3,qualiPushMin=1,qualiPushMax=2,qualiCoolLate=2.5,qualiCoolLapMin=60,qualiCoolSalt=7151}
 for key,value in pairs(k151) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.52 (relecture du pilotage des IA) : valeurs en dur nommées. Lancement du départ tant que la prudence de départ
 -- (0 à 1) reste sous launchCare ; bornes des commandes de niveau et de prudence : nativeLevelMax et minCaution (bloc k152c) ;
@@ -825,15 +852,21 @@ function M.validateGlobals(input,out)
  if out.loadedPreset~='' then out.presetsUsed=true end
  return out,errors
 end
-function M.preset(name,profile,out)
+-- Relecture 1.62 (S8, puis sans état global) : track et length (circuit de la session, facultatifs) choisissent la base
+-- de « Multi-class endurance » en journée circuit ; inconnus : « Journée circuit ».
+function M.preset(name,profile,out,track,length)
  local p=(name=='Nordschleife' or name=='Circuit') and 'J' or name=='Essais' and 'P' or name=='Qualifications' and 'Q' or name=='Endurance' and profile or 'C'
  out=M.validate(p,M.defaults(p),out)
- local base=presetSections[name] and name or p=='J' and 'Nordschleife' or 'Course'
+ -- Beta 1.62 (audit des règles, I2 ; relecture S8) : « Multi-class endurance » en journée circuit : base du circuit de
+ -- la session, Nordschleife (serrer à droite) sur la Nordschleife, « Journée circuit » ailleurs.
+ local base=presetSections[name] and name or p=='J' and (track~=nil and M.trackDayPreset(track,length or 0) or 'Circuit') or 'Course'
  local sections=presetSections[base]
  for _,group in ipairs(M.sections) do out['section_'..group]=sections[group]==true end
  for key,value in pairs(presetValues[base]) do out[key]=value end
  local endurance=name=='Endurance' and profile~='Q' and profile~='P'
  if endurance then out.section_endurance=true; out.enduranceOverlay=true; out.multiClass=true; out.lapseEnabled=true end
+ -- Beta 1.62 (décision 7 du pilote) : multi-classes en course : retardataires et classes nuancés.
+ if name=='Endurance' and profile=='C' then out.classNuance=true end
  out.configured=true
  return out
 end
@@ -881,6 +914,13 @@ function M.effective(profile,p,out)
  if not M.on(p,'weather') then out.outLapEnabled=false; out.lockWearEnabled=false end
  if not M.on(p,'strategy') then out.strategyEnabled=false; out.failuresEnabled=false end
  if not M.on(p,'sanctions') then for _,key in ipairs(M.sanctionSwitches) do out[key]=false end end
+ -- Beta 1.60 : réglages des sections décochées coupés (départ : départ arrêté d'AC).
+ if not M.on(p,'human') then out.fineInputs=false; out.dynamicPersona=false end
+ if not M.on(p,'lateral') then out.rearAwareness=false end
+ if not M.on(p,'overtake') then out.passAid=false end
+ if not M.on(p,'weather') then out.wearPace=false end
+ if not M.on(p,'strategy') then out.strategySmart=false end
+ if not M.on(p,'start') then out.raceStart='standing' end
  return out
 end
 function M.effectiveGlobals(g,p,out)
@@ -890,8 +930,9 @@ function M.effectiveGlobals(g,p,out)
  end
  return out
 end
-function M.needsOffset(p)
- return p.yieldEnabled or p.blueFlagEnabled or p.flashMode~='never' or p.overtakeEnabled or p.defenseEnabled or p.obstacleEnabled or p.laneBiasEnabled or p.personalLineJitter>0 or p.multiClass
+-- Relecture 1.62 (S9) : la défense n'agit qu'en course (profile connu : ignorée ailleurs).
+function M.needsOffset(p,profile)
+ return p.yieldEnabled or p.blueFlagEnabled or p.flashMode~='never' or p.overtakeEnabled or p.defenseEnabled and (profile==nil or profile=='C') or p.obstacleEnabled or p.laneBiasEnabled or p.personalLineJitter>0 or p.multiClass
 end
 local function equal(a,b) return a==b or type(a)=='number' and type(b)=='number' and math.abs(a-b)<1e-6 end
 -- Valeurs de la 1.2.0 changées depuis : espacement de la journée circuit (Beta 1.20).
@@ -1192,12 +1233,12 @@ end
 -- de la session, appliqué tout seul) : règles de championnat du profil gardées (jeu de règles, arrêt obligatoire, voiture
 -- de sécurité réglés pour le week-end), rien n'est copié aux autres profils. Sinon (clic du pilote, Beta 1.29) : règles
 -- du préréglage, valables pour tout le week-end.
-function M.applyBuiltin(g,profiles,name,profile,keepRules,kept)
+function M.applyBuiltin(g,profiles,name,profile,keepRules,kept,track,length)
  local p=profiles[profile]; kept=kept or {}
  for key in pairs(kept) do kept[key]=nil end
  for key in pairs(M.presetKeptKeySet) do kept[key]=p[key] end
  if keepRules then for _,s in ipairs(M.ruleSchema) do kept[s.key]=p[s.key] end end
- M.preset(name,profile,p)
+ M.preset(name,profile,p,track,length)
  for key,value in pairs(kept) do p[key]=value end
  M.validate(profile,p,p)
  if not keepRules then if name=='Endurance' and profile=='C' then M.applyRules('Endurance',profiles) else M.spreadRules(profile,profiles) end end
@@ -1207,7 +1248,7 @@ end
 function M.withRules(category,profile,p) applyValues(category,profile,p); return M.validate(profile,p,p) end
 -- Axe et jeux de règles de la Beta 1.3, figés : un profil enregistré resté sur l'un d'eux reçoit sa version Beta 1.4.
 local axis13={'noMoveBraking','neutralization','majorIncidentTime','fcySpeedKmh','fcyDeltaPct','vscDeltaPct','neutralizationHold',
- 'safetyCarSpeedKmh','redFlagEnabled','redFlagCars','redFlagSpeedKmh','redDeltaPct','redFlagHold','mandatoryStops','pitWindowOpenPct',
+ 'redFlagEnabled','redFlagCars','redFlagSpeedKmh','redDeltaPct','redFlagHold','mandatoryStops','pitWindowOpenPct',
  'pitWindowClosePct','pitTyres','pitCompoundChange','minPitTime','maxStintMin','pitMessage','overtakeMode','overtakeModeGap',
  'overtakeModeBoostPct','rulesDrs','rulesDrsLaps','aiDrs','bopEnabled','bopStrengthPct','proAmEnabled','predictableSlowClass','yellowSpeedKmh'}
 local presets13={base={},F1={neutralization='vsc',mandatoryStops=1,pitWindowOpenPct=20,pitWindowClosePct=80,pitCompoundChange=true,overtakeMode=true},
@@ -1286,8 +1327,8 @@ local k159hb={startVarietyShare=0.4,startVarietyBias=0.3,startVarietySalt=1597,s
  compoundHardnessLong={{'hyper',0},{'ultra',1},{'extrasoft',2},{'supersoft',2},{'soft',3},{'medium',4},{'extrahard',6},{'superhard',6},{'hard',5}},
  compoundHardnessShort={HS=0,US=1,ES=2,SS=2,S=3,M=4,H=5,EH=6,SH=6},
  damagePitScanPeriod=2,damagePitBody=80,damagePitSuspension=0.08,damagePitGearbox=0.3,damagePitEngine=700,damagePitConfirm=3,
- damagePitMinLapsLeft=2,damagePitUnsafe=0.3,damagePitUnsafeGearbox=0.6,damagePitRegrowBody=40,damagePitRegrowSuspension=0.05,
- damagePitRegrowGearbox=0.1,damagePitRegrowEngine=150}
+ damagePitMinLapsLeft=2,damagePitUnsafe=0.3,damagePitRegrowBody=40,damagePitRegrowSuspension=0.05,
+ damagePitRegrowEngine=150}
 for key,value in pairs(k159hb) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.59 : stratégies de départ variées, course seulement (arrêt pour dégâts masqué en journée circuit et en hotlap : M.hidden).
 M.raceKeys.strategyStartVariety=true
@@ -1306,6 +1347,85 @@ for key,value in pairs(k159hc) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- cornerGiveBackGap m derrière, pas de nouvelle attaque pendant cornerGiveHold s).
 local k159t={slowUnknownRatio=0.5,yieldRefuseKmh=3,yieldPassDeltaKmh=15,yieldCapGapOff=40,yieldCapDecelOff=6,nordschleifeMinLength=15000,radarClearMargin=0.3,radarOpenRate=0.5,radarLatTau=0.2,radarOpenHold=0.15,corridorLeadMargin=1.5,cornerPhaseGap=0.5,yieldQueueTime=3,slowQueueLinks=6,cornerNoseMargin=2.2,cornerGiveLift=0.8,cornerGiveHold=1.5,cornerEntryWindow=1,cornerGiveBackGap=20,cornerLiftRate=1,yieldCapReleaseKmh=8,yieldCapReleaseMargin=15}
 for key,value in pairs(k159t) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60 (étape de base). Visibilité des neuf réglages : course seulement (stratégie avancée, départ, collisions du
+-- joueur) ; collisions des IA : essais, qualifications et course (M.sanctionKeys).
+M.raceKeys.strategySmart=true; M.raceKeys.raceStart=true
+M.sanctionKeys.sanContact=true; M.sanctionKeys.sanPlayerContact=true; M.sanctionRaceKeys.sanPlayerContact=true
+for _,key in ipairs({'sanContact','sanPlayerContact'}) do M.sanctionSwitches[#M.sanctionSwitches+1]=key end
+-- Réglages en attente de leur tranche : jamais montrés (src/groups.lua, M.hidden) et tenus à leur valeur par défaut tant que la
+-- tranche qui les fait agir n'est pas livrée (règle du pilote : aucun réglage visible sans effet). Chaque tranche
+-- supprime SA ligne ci-dessous, et seulement elle ; une version publiée sans une tranche garde la ligne de celle-ci.
+M.pendingKeys={}
+do
+ local effective=M.effective
+ local default={}; for _,s in ipairs(M.schema) do default[s.key]=s.defaults end
+ function M.effective(profile,p,out)
+  out=effective(profile,p,out)
+  for key in pairs(M.pendingKeys) do out[key]=default[key][profile] end
+  return out
+ end
+end
+-- Constantes lues par plusieurs tranches de la Beta 1.60 (blocs des tranches : k160a à k160e, ajoutés après celui-ci).
+local k160={rollCallDistance=500}
+for key,value in pairs(k160) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, tranche B : responsabilité des collisions (src/blame.lua). Positions relevées toutes les blameSample s ;
+-- frottement sous blameMinKmh km/h d'écart sans suite : personne ; départ : blameStartGrace s, sauf choc par l'arrière
+-- à plus de blameStartKmh km/h ; carambolage : voiture déjà touchée par une autre depuis moins de blameChain s ; retour
+-- en piste depuis moins de blameRejoin s ; changement de ligne : au moins blameMoveMin m en blameCutTime s et
+-- blameMoveRatio fois plus que l'autre ; suites jugées blameOutcome s après (grave : perte de contrôle, sortie, ou
+-- blamePlaces places perdues) ; blameWarnings avertissements ; drive-through si l'autre reste arrêtée blameOutTime s ;
+-- un dossier par paire, rouvert blamePairGap s après la dernière image de contact.
+local k160b={blameSample=0.25,blameMinKmh=3,blameStartGrace=20,blameStartKmh=30,blameChain=2,blameRejoin=3,blameCutTime=1,blameMoveRatio=2,blameOutcome=6,
+ blamePlaces=2,blameWarnings=2,blameOutTime=15,blameMoveMin=1,blamePairGap=3}
+for key,value in pairs(k160b) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, tranche C (réglages fineInputs et dynamicPersona, src/mood.lua, src/mistakes.lua). Remise des gaz en sortie
+-- de virage : sortie reconnue quand la rectitude repasse exitCornerFrom après exitMinCorner s en virage, accélérateur à
+-- exitGas au moins ; plafond de exitFromPro (professionnel) à exitFromAm (amateur), rendu en exitTimePro à exitTimeAm s
+-- (allongé de exitWetGain sur piste mouillée, raccourci de exitPassFactor en dépassement), jamais sous exitFromRear avec
+-- une voiture collée derrière, écrit par pas de exitStep ; après un gros freinage, roue libre à coastThrottle pendant au
+-- plus coastTimeAm s (amateur). Erreur à la limite : dérive de limitSlipDeg degrés tenue limitSlipTime s en sortie, une
+-- chance limitChance (× le risque du pilote), patinage de gravité limitSeverity pendant limitTimeMin à limitTimeMax s, au
+-- plus une par IA toutes les limitCooldown s. Style du pilote : grade pour styleGradeShare, le reste selon l'assurance.
+-- Humeur : stress (suiveur à moins de moodPressTime s depuis moodPressHold s : moodStressRise par seconde ; contact,
+-- erreur, place perdue), retombée en moodStressDecay s (× moodDecayPro à moodDecayAm), gains moodGainPro à moodGainAm ;
+-- fatigue : relais de moodFatigueStint s, plus moodFatigueRace sur la course, moodFatigueRest rendu par un arrêt ;
+-- agressivité selon la phase de la course (phaseEarly jusqu'à phaseEarlyEnd, phaseLate sur les phaseLateShare derniers) ;
+-- effets bornés (moodAggrMin à moodAggrMax) ; une ligne de journal par IA au plus toutes les moodLogGap s.
+local k160c={exitCornerFrom=0.5,exitMinCorner=0.6,exitGas=0.5,exitFromPro=0.85,exitFromAm=0.7,exitTimePro=0.4,exitTimeAm=1.4,exitWetGain=0.5,exitPassFactor=0.5,exitFromRear=0.9,exitStep=0.05,coastBrake=0.1,coastThrottle=0.5,coastTimeAm=0.3,limitSlipDeg=6,limitSlipTime=0.3,limitChance=0.08,limitSeverity=0.75,limitTimeMin=0.2,limitTimeMax=0.5,limitCooldown=90,styleGradeShare=0.7,
+ moodPressTime=0.6,moodPressHold=2,moodStressRise=0.05,moodStressContact=0.3,moodStressMistake=0.2,moodStressPlace=0.15,moodStressDecay=45,moodDecayPro=0.7,moodDecayAm=1.3,moodGainPro=0.7,moodGainAm=1.3,moodFatigueStint=3600,moodFatigueRace=0.3,moodFatigueRest=0.5,phaseEarly=0.95,phaseEarlyEnd=0.1,phaseLate=1.08,phaseLateShare=0.15,moodAggrGain=0.12,moodAggrMin=0.85,moodAggrMax=1.15,moodCautionStress=0.1,moodCautionFatigue=0.08,moodLevelFatigue=0.012,moodRiskStress=0.5,moodLapseFatigue=0.3,moodLogGap=120,moodLogStress=0.6,moodLogFatigue=0.6,moodPeriod=1,moodStepMax=2}
+for key,value in pairs(k160c) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, tranche D (réglages wearPace et strategySmart). Temps perdu aux stands appris (moyenne glissante pitLossAlpha,
+-- voie entre pitLossMin et pitLossMax s, journal à chaque variation de pitLossLogStep s, tour neutralisé appris sur les
+-- voitures à plus de pitLossMinSpeed m/s) ; rival à moins de smartRivalGap s ; sortie des stands : arrêt dû,
+-- voiture plus lente de rejoinSlowPct à moins de rejoinAhead s, file de rejoinTrain voitures dans
+-- rejoinTrainSpan s, arrêt retardé de rejoinDelayMax tours au plus ; neutralisation : arrêt peu coûteux à partir de
+-- scMinWear × le seuil d'usure et de scGainMin s gagnées, décision des audacieux (arrêt à plus de scStayOutLaps tours)
+-- après scDecideDelay s, restent en piste si scStayOutShare des voitures devant sont appelées ; clé de SpotterEnginer
+-- (seStrategyKey, seStrategyBytes octets, figée après seStrategyStale s, gain et perte bornés à seStrategyMax s) ; clé
+-- publiée strategyPubKey, au plus toutes les strategyPubPeriod s. Rythme : usure sans effet sous wearPaceStart, perte
+-- wearPaceAtThreshold au seuil puis wearPaceCliff à 100 % ; compoundPaceStep par cran de gomme (compoundPaceMax au plus) ;
+-- fuelPace entre réservoir plein et vide ; surchauffe de wearHotDelta °C tenue wearHotTime s : wearHotPct ; total entre
+-- -wearScaleMaxLoss et +wearScaleMaxGain, étalé à wearScaleRate par seconde, revu toutes les wearPeriod s ; freinages plus
+-- prudents de wearBrakeCaution, remise des gaz plus longue de wearExitGain ; journal par pas de wearLogStep, espacé de
+-- wearLogGap s.
+local k160d={pitLossAlpha=0.3,pitLossMin=8,pitLossMax=120,pitLossLogStep=1,pitLossMinSpeed=5,smartRivalGap=1.5,rejoinAhead=4,rejoinSlowPct=0.01,rejoinTrain=3,rejoinTrainSpan=6,rejoinDelayMax=2,
+ scMinWear=0.5,scGainMin=8,scStayOutLaps=6,scStayOutShare=0.5,scDecideDelay=1,seStrategyKey='SpotterEnginer.strategy',seStrategyBytes=160,seStrategyStale=6,seStrategyMax=600,
+ strategyPubKey='AdvancedIA.strategy',strategyPubPeriod=1,
+ wearPaceStart=0.3,wearPaceAtThreshold=0.015,wearPaceCliff=0.04,compoundPaceStep=0.0035,compoundPaceMax=0.007,fuelPace=0.012,wearHotDelta=15,wearHotTime=10,wearHotPct=0.005,
+ wearScaleMaxLoss=0.05,wearScaleMaxGain=0.01,wearBrakeCaution=0.08,wearExitGain=0.5,wearScaleRate=0.01,wearLogStep=0.005,wearLogGap=60,wearPeriod=1}
+for key,value in pairs(k160d) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, tranche E (départ de la course : tour de formation, départ lancé). formationMaxLength : au-delà, le tour
+-- durerait plus que K.neutralMax ; allure de la tête : max(fcySpeedKmh, formationMinKmh) x formationSpeedMult ;
+-- rollGreenBefore : drapeau vert du départ lancé quand la tête est à cette distance de la ligne ; rollClearAhead :
+-- aucun vert avec un incident à moins de cette distance après la ligne (formationExtraLaps tour(s) de plus au
+-- maximum) ; rollT1Min / rollT1Max : premier virage attentif imposé après un départ lancé (fin au premier freinage
+-- terminé, jamais avant rollT1Min s, au plus rollT1Max s).
+local k160e={formationMaxLength=7500,formationMinKmh=80,formationSpeedMult=1.25,formationExtraLaps=1,rollGreenBefore=100,rollClearAhead=400,rollT1Min=4,rollT1Max=25}
+for key,value in pairs(k160e) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60 (fusion des tranches) : formationGrace : délai après le feu vert d'AC pendant lequel le joueur n'est pas jugé
+-- pour un dépassement au tour de formation (envol).
+local k160m={formationGrace=8}
+for key,value in pairs(k160m) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.59.1 (rapport de bedstyboi, Donington, 11 novembre) : distance à la trajectoire lue pour une voiture hors piste
 -- sous offLineKmh km/h (dégagement des voitures arrêtées hors piste, qui n'était jugé qu'au départ d'une course) ;
 -- voiture en incident en piste qui ne s'éloigne pas de K.stuckRadius m en trackWedgedTime s : dépannée ; voiture
@@ -1313,4 +1433,231 @@ for key,value in pairs(k159t) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- de la piste (drapeau rouge, piste bloquée) : second point de la trajectoire lineAheadMeters m plus loin.
 local k159n={offLineKmh=25,trackWedgedTime=45,passAfterIncident=30,lineAheadMeters=5}
 for key,value in pairs(k159n) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, tranche A (src/rear.lua, src/director.lua). Conscience de l'arrière : rapprochement minimal (km/h), horizon
+-- (s, du pilote le moins au plus attentif), tenue du côté (s), arrivée rapide (km/h, s au contact, portée en m, part de
+-- la confirmation), attaquant déjà décalé (m), prudence de l'intention, mouvement noté au journal (m). Voiture collée
+-- derrière : distance minimale (m), temps (s), éloignement permis (km/h). Régulateur sans coup de frein : descente de
+-- l'accélérateur (par s) et plancher, descente de la limite de vitesse (km/h par s), du niveau (par s), frein du radar
+-- au plus, dernier recours (s au contact), montée de la prudence (par s). Aide au dépassement : écart latéral et
+-- distance de l'engagement (m), ligne tenue (s), gain de niveau, durée (s), attente par paire (s), cible qui s'éloigne
+-- (km/h), minuteries retenues (s).
+local k160a={rearMinSa=5,rearHorizonMin=1,rearHorizonMax=2,rearHold=0.5,rearFastSa=25,rearYieldTtc=6,rearFastRange=250,rearFastConfirm=0.5,defensePulledLat=2.2,intentCaution=1.1,rearLogMove=0.05,rearCloseMin=8,rearCloseTime=0.7,rearCloseSa=10,rearThrottleRate=0.6,rearThrottleFloor=0.7,rearCapDecel=6,rearLevelRate=0.03,rearBrakeMax=0.12,rearLastTtc=0.8,rearCautionRate=0.5,commitLat=1.5,commitGap=8,holdLineTime=1.5,passAidLevel=0.015,passAidMax=6,passAidPairCooldown=30,passAidSaMax=5,passAidHold=4,passReopenSa=25,passReopenWait=10,yieldOverallMargin=0.01,yieldRefuseOverallKmh=8,passMinRoom=1.2}
+for key,value in pairs(k160a) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60 (fusion, relecture indépendante et journaux du 11 novembre).
+-- Borne de décalage vers le grand côté de la piste (src/director.lua, M.reachable) : part du côté au plus, mètres hors
+-- de la trajectoire au plus, marge au bord (m, en plus de la demi-voiture) ; largeurs lues plus loin (s, s, m au moins).
+-- Jugement des collisions : période de lecture de l'écart latéral à la piste (s) ; virage : accélération latérale (m/s²).
+-- Voiture lente : déplacement (m) sous lequel la distance à la trajectoire n'est pas relue.
+-- SpotterEnginer : première version qui connaît le tour de formation et le départ lancé (X, Y, Z).
+-- Voiture en difficulté sous drapeau : part de l'allure permise sous laquelle elle l'est, durée (s).
+-- Côté sans place (m de décalage permis) : cession ou dépassement de l'autre côté ; côté de piste compté au plus (m) ;
+-- durée (s) d'une réouverture de l'attente après deux échecs.
+local k160m2={reachWideShare=0.8,reachWideMeters=4,reachEdgeMargin=0.5,reachLook1=1,reachLook2=2,reachLookMin=15,blameLatPeriod=0.1,blameCornerG=3,lineStill=0.05,seStartMinMajor=1,seStartMinMinor=3,seStartMinPatch=4,troubleRatio=0.5,troubleTime=3,sideMinRoom=1,reachSideMax=6,passReopenHold=8,reachLookPeriod=0.1,reachLookStagger=0.016}
+for key,value in pairs(k160m2) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60 (course de Bakou du 11 novembre, décisions du pilote) : voiture de sécurité à son allure libre (réglage
+-- « Vitesse de la voiture de sécurité » retiré). scNominalKmh : allure nominale gardée pour ce qui a besoin d'un nombre
+-- (peloton sous l'allure d'appel, durée des stands fermés, attente du regroupement, retour au stand après le vert) ;
+-- scCatchPct : rattrapage des voitures hors de la file, à leur allure propre plus lente de ce pourcentage ; scPacePct :
+-- allure libre bornée à l'allure de la voiture juste derrière elle, plus lente de ce pourcentage (jamais un peloton
+-- distancé par une voiture de sécurité plus rapide que lui) ; scWatch : portée (m) de la surveillance « doublée » ;
+-- scOverlapDrop : km/h de moins qu'elle pour une voiture à sa hauteur ; scPassedMax : délai (s) pour rendre la place ;
+-- scLeaveStill : immobile à son emplacement depuis ce délai (s) après sa libération : posée en piste sans attendre
+-- scLeaveMax ; scBunchGap : écart (m) au plus entre deux voitures de la file ; scBunchLaps : tours (à scNominalKmh)
+-- d'attente du regroupement au plus avant « rentre ce tour ».
+local k160s={scNominalKmh=120,scCatchPct=10,scPacePct=25,scWatch=200,scOverlapDrop=10,scPassedMax=60,scLeaveStill=10,scBunchGap=150,scBunchLaps=1}
+for key,value in pairs(k160s) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, lot 3 (essais du pilote du 11 novembre : les IA s'écartent mais la voiture de derrière hésite, on arrive au
+-- virage suivant et tout recommence ; tours de chauffe impossibles à distinguer des tours lancés).
+-- Passage franc : cible qui cède à cette IA et vraiment sortie de la trajectoire (frankOffM m de décalage, ou
+-- frankClear m de jeu latéral entre les deux voitures) : tentative lancée sans délai de confirmation, gain de niveau
+-- borné (frankLevel pendant frankMax s), la voiture qui cède lève franchement le pied tant que l'attaquant engagé est
+-- à sa hauteur ou à moins de frankLiftGap m (frankDeltaKmh km/h sous lui en ligne droite, à la rampe
+-- ordinaire de la cession ; frankYieldLevel de niveau en moins ailleurs), jamais avec une autre voiture dans sa file à moins de
+-- frankThirdGap m derrière elle ; la cession dure au plus frankYieldExtra s de plus tant que l'attaquant est là.
+-- Tours de chauffe : qualiOutLevel de niveau en moins pendant le tour de sortie des essais et qualifications (rampe de
+-- qualiOutRamp s) ; qualiYieldLead : voiture lancée vue jusqu'à ce temps (s) derrière une voiture qui ne l'est pas.
+-- nameRefresh : période (s) de mise à jour du niveau et de l'agressivité affichés après le nom d'un pilote.
+-- frankTracePeriod, frankTraceGap : ligne de suivi d'un dépassement sur cession (toutes les frankTracePeriod s, cible à
+-- moins de frankTraceGap m) : vitesses, niveaux et limites des deux voitures (quelle limite retient l'attaquant).
+local k160w={frankOffM=1,frankClear=0.4,frankLevel=0.02,frankMax=8,frankDeltaKmh=30,frankLiftGap=20,frankThirdGap=25,frankYieldLevel=0.06,frankYieldExtra=15,
+ qualiOutLevel=0.12,qualiOutRamp=3,qualiYieldLead=6,nameRefresh=1,frankTracePeriod=2,frankTraceGap=30}
+for key,value in pairs(k160w) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60 (lot 4) : « cible plus rapide » jugé sur l'écart en temps (abortTgGrow s de plus que le plus petit de la
+-- tentative ; vitesse d'au moins abortTgSpeed m/s pour le calcul) ; réouverture d'une attente en course après
+-- passReopenWaitRace s.
+-- Relecture du lot 3 : sideFollowerLat m (suiveur déjà décalé), teleportPath (saut en multiples du chemin parcouru),
+-- scDownKmh (voiture de sécurité en difficulté).
+local k160x={abortTgGrow=0.1,abortTgSpeed=10,passReopenWaitRace=20,sideFollowerLat=1,teleportPath=1.5,scDownKmh=40,frankCapMinKmh=50}
+for key,value in pairs(k160x) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.60, lot 5 (course du pilote du 11 novembre au Nürburgring, relecture du lot 3) : attente d'un dépassement
+-- bornée en course, journal des drapeaux bleus entre IA, voiture de sécurité (allure libre bornée et hystérésis, attente
+-- du regroupement, enveloppe de freinage du rattrapage, place non rendue), voiture en difficulté en tête de file
+-- seulement, arrêt obligatoire étalé pour un plan limité par les pneus.
+local k160y={passSoonShare=1,passIgnoreMaxRace=180,scFreeMargin=20,scFreeGap=80,scBunchMax=180,scGiveNear=15,scGiveStuck=8,scGiveFloor=60,troubleAheadGap=30,planSpreadLaps=2}
+for key,value in pairs(k160y) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.61 (étape de base). Réglage global « Mémoire des circuits » (coupé ; options globales). Départs réalistes :
+-- course seulement. Réglages en attente de leur tranche, comme en 1.60 : jamais montrés, tenus à leur défaut ; chaque
+-- tranche supprime SA ligne ci-dessous, et seulement elle (trackMemory : la première des tranches A et B livrée).
+M.globalDefaults.trackMemory=false
+M.raceKeys.startRealism=true
+-- Relecture d'ensemble 1.62 : réglages affichés là où ils n'ont aucun effet. Départ arrêté et premier tour attentif : course
+-- seulement (lus avec profile=='C') ; espacement : journée circuit seulement (src/traffic.lua) ; cession ordinaire et
+-- pression : hors course seulement (les drapeaux bleus gardent leurs propres réglages). Masqués dans l'interface seulement
+-- (M.uiHidden) : jamais remis à leur défaut par M.validate, pour ne rien changer aux valeurs enregistrées ni à la
+-- reconnaissance des anciens préréglages.
+M.startUiKeys={startDelay=true,startCautionMult=true,startAggrMult=true,startRelax=true,startLaneHold=true,firstLapCare=true}
+M.trackDayOnlyKeys={trafficGapSeconds=true,trafficDensityGain=true,trafficVariation=true,trafficMaxReduction=true}
+M.notRaceKeys={yieldEnabled=true,pressureEnabled=true,pressureGap=true,pressureTime=true}
+function M.uiHidden(profile,key) return M.hidden(profile,key) or profile~='C' and M.startUiKeys[key] or profile~='J' and M.trackDayOnlyKeys[key] or profile=='C' and M.notRaceKeys[key] or false end
+M.pendingGlobals={} -- réglage global trackMemory livré (tranches A et B) ; la table reste (ui.lua, effectiveness.py)
+do
+ local effectiveGlobals=M.effectiveGlobals
+ function M.effectiveGlobals(g,p,out)
+  out=effectiveGlobals(g,p,out)
+  for key in pairs(M.pendingGlobals) do out[key]=M.globalDefaults[key] end
+  return out
+ end
+end
+-- Constantes lues par plusieurs tranches de la Beta 1.61 (blocs des tranches : k161a à k161e, ajoutés après celui-ci).
+-- Fichiers par circuit (src/trackfile.lua) : dans Documents\Assetto Corsa\<presetFolder>\<zoneFolder ou paceFolder>,
+-- nommés <clé du circuit>.ini (clé d'au plus trackKeyMax caractères) ; longueur du circuit à trackLengthTol près
+-- (fraction) ; format trackFileFormat, au plus trackFileMaxBytes octets, trackFileMaxSections sections,
+-- trackFileMaxKeys clés par section et trackFileMaxValue caractères par valeur.
+local k161={trackLengthTol=0.01,trackKeyMax=96,zoneFolder='tracks',paceFolder='pace',trackFileFormat=1,trackFileMaxBytes=262144,trackFileMaxSections=512,trackFileMaxKeys=32,trackFileMaxValue=8192}
+for key,value in pairs(k161) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.61, tranche C (réglage classNuance) : retardataires et classes, voir src/nuance.lua. blueCatchTime : temps
+-- d'arrivée de la voiture qui prend un tour ; blueBrakeTime, classNoDiveTime : attente avant un point de freinage ;
+-- blueZoneTime : zone d'attaque préférée ; blueFastSa, blueSlowMin : niveau rendu ; nuanceBattleTime, blueTruceAfter :
+-- trêve ; unlapMargin, relapHold, relapSa : dédoublement ; classSideLat, classAmCorridor, classTrainTime : classes ;
+-- bluePlayerOrderTime, blueStartGrace, blueTrainRange, trafficKeyBytes : drapeau bleu du joueur et clé annexe ;
+-- nuanceLogGap : écart entre deux lignes d'un même genre pour une voiture.
+local k161c={blueCatchTime=5,blueBrakeTime=2,blueZoneTime=4,blueFastSa=20,blueSlowMin=0.02,nuanceBattleTime=1,blueTruceAfter=2,unlapMargin=1.3,relapHold=10,relapSa=8,
+ classSideLat=1.5,classNoDiveTime=2,classAmCorridor=1.2,classTrainTime=2,bluePlayerOrderTime=2,blueStartGrace=30,blueTrainRange=200,trafficKeyBytes=160,nuanceLogGap=20,classAmStyle=0.6}
+for key,value in pairs(k161c) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.61 (tranche A) : zones par circuit (src/zones.lua, src/zonelearn.lua). Fichier au format zoneFormat, note
+-- d'au plus zoneNote caractères, au plus zoneLearntMax zones apprises, zoneBrakeMax points de freinage, attackMax zones
+-- d'attaque. Zone apprise : appliquée après zoneConfirmSessions sessions, oubliée après zoneForgetSessions sessions
+-- sans confirmation. Point de freinage : brakeLearnHits freinages de brakeLearnCars voitures au moins dans la session.
+-- Zone d'attaque : marge de dépassement x attackMargin dedans ; à moins de attackWaitTime s de son début, un
+-- dépassement attend, sauf rapprochement de plus de attackNoWaitSa km/h, voiture retenue depuis attackStuckTime s,
+-- voiture à un tour ou classe plus lente devant ; apprise de attackLearnPasses dépassements réussis à moins de
+-- attackMergeMeters m, longue de attackMinMeters à attackMaxMeters m. Ligne d'une zone : prise par lineShareDefault
+-- des IA (tirage lineSalt), installée en lineRamp s. Enregistrement des zones apprises : au plus toutes les
+-- zoneSavePeriod s.
+local k161a={zoneFormat=1,zoneLearntMax=64,zoneNote=64,zoneConfirmSessions=2,zoneForgetSessions=10,brakeLearnHits=5,brakeLearnCars=2,zoneBrakeMax=48,
+ attackMargin=0.8,attackWaitTime=6,attackNoWaitSa=20,attackStuckTime=8,attackLearnPasses=4,attackMergeMeters=150,attackMaxMeters=600,attackMinMeters=120,attackMax=8,
+ lineRamp=1.5,lineShareDefault=0.5,lineSalt=1613,zoneSavePeriod=300,lineWet=0.1}
+for key,value in pairs(k161a) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.61, tranche B (mémoire du circuit, src/pacemap.lua ; réglage global trackMemory). Fichier d'allure : format
+-- paceMapFormat, au plus paceMapMaxBytes octets et paceMapModels modèles (nom d'au plus paceMapNameMax caractères),
+-- compteurs d'au plus paceMapSerialMax ; vitesse d'au plus paceMapMaxSpeed dixièmes de m/s ; valeur isolée (écart de plus
+-- de paceMapSpike à la médiane de ses voisins) écartée ; modèle gardé s'il connaît paceMapMinShare du tour.
+-- Fusion : paceMapAlpha par session, valeur de session sous paceMapLow × gardé ignorée, bornée à paceMapHigh × gardé ;
+-- session mouillée plus de paceMapWetShare de son temps : non retenue. Sauvegarde toutes les paceMapSavePeriod s au
+-- plus (écriture de plus de paceMapSlowMs ms : fin de session seulement) ; note du départ après paceMapStartNote s.
+-- A priori : donné au directeur après priorRatioMin endroits appris, rythme borné de priorRatioLow à priorRatioHigh
+-- (lissage priorRatioAlpha) ; jamais au-dessus de priorWetMax d'humidité.
+local k161b={paceMapFormat=1,paceMapMaxBytes=262144,paceMapModels=32,paceMapNameMax=64,paceMapSerialMax=100000,paceMapAlpha=0.3,paceMapLow=0.7,paceMapHigh=1.15,
+ paceMapMinShare=0.5,paceMapWetShare=0.1,paceMapMaxSpeed=1200,paceMapSpike=0.4,paceMapSavePeriod=300,paceMapSlowMs=30,paceMapStartNote=5,
+ priorRatioMin=10,priorRatioLow=0.8,priorRatioHigh=1.2,priorRatioAlpha=0.1,priorWetMax=0.1}
+for key,value in pairs(k161b) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.61 (tranche D, réglage startRealism). Tour de formation : envol rangée par rangée (formLaunchGap s),
+-- allure de la tête lente sur formOutDistance m puis sur les formBunchDistance derniers mètres (formSlowMult), vive
+-- entre les deux (formBriskMult) ; zigzag (weaveAmp, période weavePeriodMin à weavePeriodMax s, weaveClear m libres,
+-- plus de weaveStopBefore m avant la ligne, au-dessus de weaveMinKmh, sous weaveLatAccel m/s² : ligne droite), décalage
+-- amené à formOffsetRate par seconde ; départ lancé : vert entre rollZoneFrom m et rollGreenBefore m de la ligne.
+-- Envol : réaction anticReactMin à anticReactMax s ; envols manqués : anticPoorShare du plateau (x 1+anticWetGain
+-- sous la pluie), anticPoorMax au plus, accélérateur de anticBogThrottle à 1 en anticBogTimeMin à anticBogTimeMax s,
+-- jamais sous anticBogFloor avec une voiture collée derrière ; départs lancés : rampe depuis anticRollThrottle à
+-- partir de la rangée anticAccordionRow ; tirages oubliés anticTail s après le dernier plafond.
+-- Faux départs : mouvement sur la grille de jumpCreepMin à jumpCreepMeters m sous jumpCreepKmh km/h, flagrant à
+-- jumpFlagrantMeters m ou jumpFlagrantLead s d'avance (pénalité x jumpFlagrantMult), rejugé après jumpJudgeTime s ;
+-- IA qui vole le départ : chance anticJumpChance par départ, anticJumpLeadMin à anticJumpLeadMax s d'avance.
+local k161d={formLaunchGap=0.6,formBunchDistance=800,formOutDistance=300,formSlowMult=0.75,formBriskMult=1.15,formOffsetRate=0.25,
+ weaveAmp=0.35,weaveClear=25,weaveStopBefore=600,weavePeriodMin=2,weavePeriodMax=3.5,weaveMinKmh=40,weaveLatAccel=1.5,rollZoneFrom=300,
+ anticReactMin=0.05,anticReactMax=0.4,anticPoorShare=0.12,anticPoorMax=3,anticBogThrottle=0.75,anticBogTimeMin=0.8,anticBogTimeMax=1.8,anticBogFloor=0.85,
+ anticWetGain=1,anticSalt=1619,anticAccordionRow=3,anticRollThrottle=0.7,anticTail=1,
+ jumpCreepMin=0.2,jumpCreepMeters=0.6,jumpCreepKmh=3,jumpFlagrantMeters=4,jumpFlagrantLead=0.5,jumpFlagrantMult=2,jumpJudgeTime=5,
+ anticJumpChance=0.03,anticJumpLeadMin=0.1,anticJumpLeadMax=0.35}
+for key,value in pairs(k161d) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.61, tranche E (réglage weatherLive, src/wx.lua et src/weather.lua). Tendance : pentes lissées sur wxTrendTau s,
+-- pente minimale wxSlopeMin par seconde, bascule estimée au plus à wxEtaMax s. Rythme : humidité effective suivie avec
+-- wxPaceTau s, pneus secs sur le mouillé × (1+wxSlickPenalty), intermédiaires sous forte pluie × (1+wxInterHeavy),
+-- pneus pluie sous wxDryLine : humidité équivalente wxWetOnDry ; talent sous la pluie de wxSkillMin à wxSkillMax ;
+-- première pluie : × wxOnsetCaution pendant wxOnsetTime s en pneus secs ; borne wxWetMax. Pneus : seuils décalés de
+-- ± wxRiskSpan selon l'audace, arrêt anticipé si la bascule est attendue sous wxAnticipate s (audace >= wxGambleRisk ou
+-- arrêt prévu sous wxComboLaps tours) à partir de wxPitEntryFrom du tour, averse courte : wxShowerTime s, pneu pluie
+-- choisi sur l'eau projetée à wxProjectTime s (au plus ± wxProjectMax), pas de retour avant wxMinStint s, wxPitWave arrêts météo appelés à la
+-- fois ; une ligne de tendance par wxLogGap s au plus ; clé annexe d'au plus weatherKeyBytes octets.
+local k161e={wxPeriod=1,wxTrendTau=60,wxSlopeMin=0.0005,wxEtaMax=900,wxPaceTau=8,wxSlickPenalty=0.5,wxInterHeavy=0.2,wxDryLine=0.15,wxWetOnDry=0.3,
+ wxSkillMin=0.8,wxSkillMax=1.2,wxSkillSalt=1621,wxOnsetTime=90,wxOnsetCaution=1.1,wxWetMax=1.6,wxRiskSpan=0.08,wxAnticipate=90,wxGambleRisk=0.65,
+ wxComboLaps=3,wxPitEntryFrom=0.7,wxShowerTime=180,wxProjectTime=300,wxProjectMax=0.3,wxMinStint=240,wxPitWave=3,wxLogGap=60,weatherKeyBytes=160,wxRetry=60,wxCallMax=180}
+for key,value in pairs(k161e) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Finition 1.61 : attente fixe après un échec contre une attardée en course (s), délai de grâce de la clé trafic.
+local k161f={passLappedHold=10}
+for key,value in pairs(k161f) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Affinage 1.61 (courses de Zandvoort et de Spa, essais de Spa du 11 novembre) : attaquant décalé de sa cible sans
+-- prudence de suivi envers elle (m), écart en temps qui doit grandir en course avant « cible plus rapide » (s),
+-- déboîtement dans l'aspiration (m) et rapprochement minimal pris pour juger la ligne droite qui reste (m/s).
+local k161t={passFreeLat=1.2,abortTgGrowRace=0.3,pullOutCloseGap=8,pullOutClosingMin=1,passFreeCaution=1}
+for key,value in pairs(k161t) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Affinage 1.61 (coût en jeu, Spa 40 IA) : métadonnées des voitures relues par tranches de metaCarsPerFrame voitures
+-- par image (avant : toutes dans la même image, chaque seconde) ; image plus lente que slowFrameMs ms : une ligne de
+-- journal par poste (au plus slowFrameLogs par lancement, slowFrameGap s entre deux).
+local k161u={metaCarsPerFrame=8,slowFrameMs=40,slowFrameLogs=20,slowFrameGap=10}
+for key,value in pairs(k161u) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Correctif 1.61 (Spa, 11 novembre : tour de formation puis départ arrêté) : grille du circuit acceptée jusqu'à
+-- gridNodeAfter m après la ligne, emplacement au latéral jusqu'à gridNodeLatMax ramené à gridLatClamp ; feux au plus
+-- gridWaitMax s après la première IA retenue ; retardataire à plus de gridLateRoll m de sa place : continue pendant les
+-- feux. Tour de formation (départs réalistes) : zigzag d'un bord à l'autre (formWeaveAmp, borne formWeaveMax, à
+-- formWeaveEdge m du bord en plus de la demi-voiture, rampe formWeaveRate par seconde et pilotage formWeaveRampMult fois
+-- plus vif), arrêté formWeaveStopBefore m avant la ligne et à moins de formAheadBrakeTime s d'une voiture qui freine
+-- (frein au-dessus de formAheadBrake) ; freinages de chauffe de formBrakeTime s (limite baissée de formBrakeDrop km/h,
+-- jamais sous formBrakeFloor) tous les formBrakeEveryMin à formBrakeEveryMax s, personne à moins de formBrakeClear m
+-- derrière ; coup d'accélérateur avant la place (formBurstFrom à formBurstTo m, +formBurstKmh km/h pendant
+-- formBurstTime s, borné par l'arrêt à formBurstDecel m/s²).
+local k161v={gridPlayerWait=25,gridNodeAfter=400,gridNodeLatMax=1.6,gridLatClamp=0.85,gridWaitMax=12,gridWaitFirstMax=18,formWeaveFullKmh=80,formWeaveFastKmh=140,formWeaveFastShare=0.35,gridLateRoll=30,
+ formWeaveAmp=0.85,formWeaveMax=0.85,formWeaveEdge=0.6,formWeaveRate=0.9,formWeaveRampMult=3,formWeaveStopBefore=800,
+ formAheadBrakeTime=1,formAheadBrake=0.2,formBrakeTime=0.6,formBrakeDrop=30,formBrakeFloor=60,formBrakeEveryMin=8,
+ formBrakeEveryMax=15,formBrakeClear=40,formBurstFrom=80,formBurstTo=45,formBurstKmh=12,formBurstTime=0.7,formBurstDecel=3}
+for key,value in pairs(k161v) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.62 (règles par session, partie pilotage, src/director.lua) : accélération latérale (m/s²) qui fait d'une
+-- courbe un virage (a.corner = 0) ; journée circuit : suivi à au moins jFollowTime s (prudence × jFollowCaution),
+-- marge latérale jPassMargin m du passage franc « line » ; qualifications : cession dès le seuil ordinaire avec une
+-- voiture lancée à moins de qualiSacrificeTime s, pas de dépassement entre voitures pas lancées dans les lapEndMeters
+-- derniers mètres ; essais : relais long, suiveur plus rapide au tour d'au moins practiceLapMargin.
+local k162a={cornerLatRef=10,jFollowTime=1,jFollowCaution=1.4,jPassMargin=0.5,qualiSacrificeTime=2,lapEndMeters=600,practiceLapMargin=0.015}
+for key,value in pairs(k162a) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.62, règles par session (partie R2, hors pilotage) :
+--  qualifications : tour de sortie, voiture devant à moins de qualiExitGap s : niveau abaissé de qualiGapLevel au plus
+--  (rampe qualiOutRamp), seulement avant qualiGapUntil du tour, baisse totale du tour de sortie au plus qualiOutMaxDrop ;
+--  écart en temps mesuré à qualiGapMinSpeed m/s au moins ; vrais passages : tour fautif refait au plus runsRedoMax fois ;
+--  course : drapeau bleu de plus toutes les blueIgnoreStep s d'attente, pénalité au blueIgnoreMax-ième ; emplacement
+--  retenu tant qu'une voiture lancée dans la voie (plus de boxLaneKmh km/h) est à moins de boxReleaseGap m derrière, au
+--  plus boxReleaseMax s, voiture à l'arrêt (sous boxReleaseStill km/h) ; tour de formation : file étirée au-delà de
+--  formationMaxGap m (dix longueurs) depuis formationGapTime s, tête ralentie à formationWaitMult ;
+--  journée circuit : attente de la piste libre après une sortie au plus rejoinWaitMaxJ s.
+local k162b={qualiExitGap=2,qualiGapLevel=0.08,qualiGapUntil=0.6,qualiOutMaxDrop=0.2,qualiGapMinSpeed=10,runsRedoMax=2,
+ blueIgnoreStep=6,blueIgnoreMax=3,blueVetoGrace=2,boxLaneKmh=20,boxReleaseGap=60,boxReleaseMax=8,boxReleaseStill=3,boxReleaseCatch=15,
+ formationMaxGap=44,formationGapTime=4,formationWaitMult=0.8,rejoinWaitMaxJ=30}
+for key,value in pairs(k162b) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 1.62 (audit, I4) : réglages sans effet hors course, masqués hors du profil Course.
+-- Relecture 1.62 (S9) : la défense et ses trois réglages, masqués hors course.
+M.raceOnlyKeys={defenseEnabled=true,defenseMaxOffset=true,defenseCooldown=true,defenseTriggerGap=true}
+-- Beta 1.62 (fusion R1 + R2) : inattentions loin d'un point de freinage et d'une voiture nettement plus rapide derrière.
+local k162c={lapseBrakeTime=3,lapseRearTime=6,lapseFastKmh=15}
+for key,value in pairs(k162c) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Affinage 1.62 (sessions du 12 novembre) : prudence au plus passFreeCornerCaution en courbe pour un attaquant décalé de
+-- sa cible (hors freinage) ; bord du grand côté des manœuvres à au moins reachWideEdge m de la carrosserie (vibreurs et
+-- murs comptés dans la largeur de certains circuits : Monaco) ; départ : voiture devant encore dans son envol manqué
+-- (et anticBogGrace s après) : jamais de « pied tenu » derrière elle.
+local k162q={passFreeCornerCaution=1,reachWideEdge=1.2,anticBogGrace=1}
+for key,value in pairs(k162q) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Affinage 1.62 (12 novembre, demande de la communauté) : recherche de l'aspiration en ligne droite (src/director.lua,
+-- slipSeek) : voiture de devant écartée d'au moins seekLat m (au plus seekLatMax), à moins de seekTime s et seekRange m,
+-- rattrapée d'au plus seekSaMax km/h (contact à seekTTC s au moins) ; seekAheadTime s de ligne droite devant pour
+-- commencer, retour à la ligne sous seekReturnTime s ; recalage si l'écart dépasse seekSettleLat m, au plus toutes les
+-- seekSettle s ; déboîtement retenu jusqu'à seekPullMargin s du temps juste nécessaire.
+local k162s={seekLat=1,seekLatMax=5,seekTime=2,seekRange=90,seekSaMax=25,seekTTC=3,seekAheadTime=5,seekReturnTime=3,seekSettleLat=0.4,seekSettle=1.5,seekPullMargin=1.5,seekLogGap=20}
+for key,value in pairs(k162s) do assert(M.K[key]==nil,key); M.K[key]=value end
 return M

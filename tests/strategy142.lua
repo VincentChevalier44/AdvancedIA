@@ -147,7 +147,9 @@ tests.STRATEGY_142_MANDATORY_ALIGNED=function()
  end
  local off=scene(false); assert(off.commands[2].rulePit,'precondition: mandatory stop called by the rules')
  local e,_,c=scene(true)
- assert(c.planned and c.nextLap==18 and math.abs(e.commands[2].stratPlanAt-0.9)<1e-9,'planned around lap 18 (90 %)')
+ -- Lot 5 (N7) : plan limité par les pneus : avancé de 0 à K.planSpreadLaps tours selon la voiture, jamais avant le tour suivant.
+ local at=math.max(17,18-(2%(K.planSpreadLaps+1)))
+ assert(c.planned and c.nextLap==18 and math.abs(e.commands[2].stratPlanAt-at/20)<1e-9,'planned around lap 18, brought forward for this car: '..tostring(e.commands[2].stratPlanAt))
  assert(not e.commands[2].rulePit,'mandatory stop waits for the planned stop')
 end
 -- Tour de sortie : après un vrai passage à l'emplacement, niveau abaissé jusqu'à la ligne, puis rendu en douceur ;

@@ -159,19 +159,21 @@ tests.POSTFIX_CHECKPOINT_THROTTLE_142=function()
  local a=A.new(); assert(A.access(a))
  for _,cmd in ipairs(e.commands) do cmd.active=false end
  local cmd=e.commands[2]; cmd.active=true; cmd.offset=0; cmd.levelOwned=true; cmd.aggressionOwned=false; cmd.cautionOwned=false; cmd.level=0.9; cmd.speedLimit=K.unlimitedSpeed
- local t=1; local lim=1
+ local t=1; local lim=1; local dirty=0
  local function frame(target)
   if lim>target then lim=math.max(target,lim-K.sanCutRampDown/60) else lim=math.min(target,lim+K.sanCutRampUp/60) end
   cmd.throttleLimit=lim; t=t+1/60
   A.apply(a,f,e.commands,e.g,t)
-  if a.recoveryDirty then A.checkpoint(a,f) end
+  if a.recoveryDirty then dirty=dirty+1; A.checkpoint(a,f) end
  end
  for _=1,60 do frame(1) end
+ dirty=0
  local w0,s0=host.throttleWrites,host.storeWrites
  for _=1,360 do frame(K.sanCutThrottle) end
  for _=1,90 do frame(1) end
  assert(host.throttleWrites-w0>10,'the throttle cut is written')
  assert(host.storeWrites==s0,'no checkpoint store per throttle write')
+ assert(dirty==0,'a throttle-only write never marks the checkpoint dirty ('..dirty..' frames)')
  assert(host.throttleLimits[f.cars[2].index]==1,'throttle back to exactly 1')
 end
 

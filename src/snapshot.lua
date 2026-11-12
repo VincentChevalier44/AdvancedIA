@@ -1,7 +1,18 @@
 local U=require('src/util')
 local K=require('src/config').K
+local TrackFile=require('src/trackfile') -- Beta 1.61 : clé des fichiers par circuit
 local M={}
 local function hexByte(c) return string.format('%02x',string.byte(c)) end
+-- Beta 1.60 (lot 3) : Content Manager écrit le niveau et l'agressivité de la liste des engagés à la fin du nom du pilote
+-- (« G. Tsaknis (100%, 100%) », parfois coupé par AC : « P. Müller (100% »). L'app applique ensuite ses propres valeurs :
+-- ce suffixe est faux. Nom sans ce suffixe, ou nil s'il n'en porte pas (nom laissé tel quel).
+local function stripName(name)
+ -- Relecture (N4) : suffixe de Content Manager seulement après une espace (« Team(2) » reste un nom).
+ local base=name:match('^(.-)%s+%(%d+%%,%s*%d+%%%)$')
+ if not base then base=name:match('^(.-)%s+%(%d[%d%%,%s]*$') end
+ if base and base~='' then return base end
+ return nil
+end
 -- Beta 1.57 (Ved, Overtake : CSP 0.3.0-preview212, « en ligne » hors connexion) : une version de CSP plus ancienne n'a
 -- pas tous les champs d'ac.getSim() et d'ac.getCar() ; lire un champ absent d'une structure FFI lève une erreur, et un
 -- seul champ absent faisait échouer toute la lecture (session suspendue pour toujours, voitures jamais lues). Au premier
@@ -59,7 +70,6 @@ local function carGet(index)
  return view
 end
 -- Champs absents pour le journal et le diagnostic ; numéro de version de la liste (changé à chaque nouveau champ).
-function M.missingFields() return safe.sim.list,safe.car.list,safe.serial end
 -- Champ absent de certaines versions de CSP : lu sous protection, sans fermeture créée à chaque image.
 local function collidedWith(raw) return raw.collidedWith end
 -- Dégâts d'une IA à son emplacement (Beta 1.20) : carrosserie (somme des quatre côtés, km/h), suspension la plus
@@ -89,13 +99,13 @@ local function playerDamage(s,a)
  s.playerBlown=blown; s.damageRate=U.number(simGet().mechanicalDamageRate,0,1000,1); s.playerDamageSlot=a.slot
 end
 function M.new()
- local s={cars={},count=0,player=0,errors=0,invalid=0,track='',trackName='',patch='',conflict='',metaAt=-1,session=-1,
+ local s={cars={},count=0,player=0,errors=0,invalid=0,track='',layout='',trackKey='',trackName='',patch='',conflict='',metaAt=-1,session=-1,
   online=true,onlineKind='',readError='',missingSim='',missingCar='',replay=false,paused=false,menu=false,started=false,finished=false,length=0,time=0,startIn=0,left=0,wet=0,rain=0,water=0,type=1,stamp=-1,configType=0,configTrackDay=false,configSession=-1,
   flag=0,fuelRate=1,pitWindowStart=0,pitWindowEnd=0,simTime=0,sessionLaps=0,sessionMinutes=0,timedRace=false,leaderLaps=0,
   playerDamageSlot=0,playerDamageAt=-1,playerBody=0,playerSuspension=0,playerEngine=1000,playerGearbox=0,playerBlown=false,damageRate=1}
  for i=1,K.maxCars do s.cars[i]={slot=i,index=i-1,valid=false,control=false,player=false,pit=false,offtrack=false,
- x=0,y=0,z=0,lx=0,lz=1,speed=0,kmh=0,yaw=0,corner=1,spline=0,splineValid=false,lap=0,lapValid=false,
- length=K.length,width=K.width,brake=0,gas=0,aiLevel=1,aiAggression=0.5,stopped=0,slip=0,leftWidth=0,rightWidth=0,
+ x=0,y=0,z=0,lx=0,lz=1,speed=0,kmh=0,yaw=0,corner=1,cornerYaw=1,spline=0,splineValid=false,lap=0,lapValid=false,
+ length=K.length,width=K.width,brake=0,gas=0,aiLevel=1,aiAggression=0.5,stopped=0,slip=0,leftWidth=0,rightWidth=0,leftAhead=0,rightAhead=0,leftAhead2=0,rightAhead2=0,trackLat=0,trackLatValid=false,trackLatAge=math.huge,
  highBeams=false,headlightsActive=false,lowBeams=false,flashingLightsActive=false,hornActive=false,
  id='',name='',skin='',skinKnown=false,skinSafety=false,position=0,teleport=false,previousX=0,previousZ=0,initialized=false} end
  return s
@@ -109,57 +119,88 @@ local function laneProbe()
 end
 -- Beta 1.59.1 : longueur du circuit de la lecture en cours (sens de la piste d'une voiture lente).
 local trackLength=0
+-- Beta 1.60 : jugement des collisions en service pour la lecture en cours (écart latéral de toutes les voitures).
+local blameWanted=false
+-- Affinage 1.62 (coût, AUDIT_FPS cause 1) : sens latéral de la voiture (raw.side, une référence cdata par voiture) lu
+-- seulement quand l'hôte en a besoin (recherche ou mesure du sens latéral, src/calibration.lua) ; vrai par défaut.
+M.sideWanted=true
+local sideWanted=true
+-- Affinage 1.62 (coût) : collision lue sous protection une seule fois par lancement (comme isRequestingPitStop) ; ensuite
+-- lecture directe, ou valeur neutre sur un CSP sans ce champ.
+local collidedKnown=nil
+local function collidedValue(raw)
+ if collidedKnown==nil then local ok,value=pcall(collidedWith,raw); collidedKnown=ok; return ok and value or nil end
+ return collidedKnown and raw.collidedWith or nil
+end
 local function readCar(a,index,dt,lane)
  a.valid=false; a.control=false; a.player=false; a.teleport=false
  local raw=carGet(index)
  -- Champs vectoriels lus une fois : chaque lecture d'un champ structuré d'une cdata crée une référence (déchet).
  local position,look=raw and raw.position,raw and raw.look
- if not raw or not vector(position) or not vector(look) or not U.finite(raw.speedKmh) then return false end
+ -- Affinage 1.62 (coût) : chaque champ lu une seule fois par image (avant : vitesse lue cinq fois, roues hors piste,
+ -- spline, tours… plusieurs fois) ; valeurs et ordre des tests inchangés.
+ local kmh=raw and raw.speedKmh
+ if not raw or not vector(position) or not vector(look) or not U.finite(kmh) then return false end
  local norm=math.sqrt(look.x*look.x+look.z*look.z)
- if norm<0.1 or raw.speedKmh<0 or raw.speedKmh>1000 then return false end
+ if norm<0.1 or kmh<0 or kmh>1000 then return false end
  local x,z=position.x,position.z
- a.teleport=a.initialized and (x-a.previousX)^2+(z-a.previousZ)^2>K.teleport^2
+ -- Relecture du lot 3 (S10) : une image très longue n'est pas une téléportation : saut d'au moins 1,5 fois le chemin
+ -- parcouru à la vitesse lue pendant dt (une voiture lancée à 300 km/h fait 8 m en 0,1 s).
+ local jump=math.max(K.teleport,K.teleportPath*kmh/3.6*(dt or 0))
+ a.teleport=a.initialized and (x-a.previousX)^2+(z-a.previousZ)^2>jump*jump
  a.previousX=x; a.previousZ=z; a.x=x; a.z=z; a.y=U.number(position.y,-10000,10000,0)
  local lx,lz=look.x/norm,look.z/norm; local yaw=math.atan2(lx,lz)
  local angular=a.initialized and U.wrap(yaw-a.yaw)/math.max(0.001,dt) or 0
  a.yawRate=U.ema(a.yawRate or 0,angular,dt,K.yawTau); a.yaw=yaw; a.lx=lx; a.lz=lz
- local side=raw.side
- a.sideDot=side and U.finite(side.x) and U.finite(side.z) and (-side.x*lz+side.z*lx) or 0
- a.kmh=raw.speedKmh; a.speed=U.ema(a.speed,a.kmh/3.6,dt,K.speedTau)
- if not a.initialized or a.teleport then a.speed=a.kmh/3.6; a.yawRate=0 end
+ if sideWanted then
+  local side=raw.side
+  a.sideDot=side and U.finite(side.x) and U.finite(side.z) and (-side.x*lz+side.z*lx) or 0
+ else a.sideDot=0 end
+ a.kmh=kmh; a.speed=U.ema(a.speed,kmh/3.6,dt,K.speedTau)
+ if not a.initialized or a.teleport then a.speed=kmh/3.6; a.yawRate=0 end
  a.initialized=true; a.valid=raw.isConnected~=false and raw.isActive~=false
- a.player=raw.isUserControlled==true
- a.control=raw.isAIControlled==true and not a.player and not raw.isRemote and raw.physicsAvailable~=false
- a.pit=raw.isInPit==true or raw.isInPitlane==true
- a.inPitBox=raw.isInPit==true
+ local player=raw.isUserControlled==true
+ a.player=player
+ local control=raw.isAIControlled==true and not player and not raw.isRemote and raw.physicsAvailable~=false
+ a.control=control
+ local inPit=raw.isInPit==true
+ a.pit=inPit or raw.isInPitlane==true
+ a.inPitBox=inPit
  -- Beta 1.58 : demande d'arrêt d'AC (journal détaillé, arrivée à l'emplacement). Beta 1.59 (relecture) : lue à part,
  -- essayée une seule fois par lancement : sur un CSP sans ce champ, elle n'envoie plus toutes les lectures des voitures par
  -- le chemin des champs absents.
  a.requestingPit=requestingPit(raw)
- a.compoundIndex=U.finite(raw.compoundIndex) and raw.compoundIndex>=0 and math.floor(raw.compoundIndex) or nil
+ local compound=raw.compoundIndex
+ a.compoundIndex=U.finite(compound) and compound>=0 and math.floor(compound) or nil
  a.currentTyreIsDry=a.compoundIndex~=nil and a.dryCompounds~=nil and a.dryCompounds[a.compoundIndex]==true
- a.nativeRainTyres=raw.isAIUsingRainTyres==true
+ local rainTyres=raw.isAIUsingRainTyres
+ a.nativeRainTyres=rainTyres==true
  -- DRS natif d'AC (zones du circuit, règle de la seconde) : seulement lu, pour le bip et le panneau du joueur.
  a.drsPresent=raw.drsPresent==true; a.drsAvailable=raw.drsAvailable==true; a.drsActive=raw.drsActive==true
  -- Pénalité native d'AC en cours (renseignée pour la voiture du joueur seulement) : reprise par le panneau.
- a.penaltyType=a.player and math.floor(U.number(raw.currentPenaltyType,0,16,0)) or 0
- a.penaltyParam=a.player and math.floor(U.number(raw.currentPenaltyParameter,-1,100000,0)) or 0
+ a.penaltyType=player and math.floor(U.number(raw.currentPenaltyType,0,16,0)) or 0
+ a.penaltyParam=player and math.floor(U.number(raw.currentPenaltyParameter,-1,100000,0)) or 0
  -- Carburant des IA (litres ; -1 inconnu) et estimation d'AC par tour (0 tant qu'elle n'est pas disponible).
- if a.control then a.fuel=U.number(raw.fuel,0,10000,-1); a.maxFuel=U.number(raw.maxFuel,0,10000,-1); a.fuelPerLap=U.number(raw.fuelPerLap,0,1000,0)
+ if control then a.fuel=U.number(raw.fuel,0,10000,-1); a.maxFuel=U.number(raw.maxFuel,0,10000,-1); a.fuelPerLap=U.number(raw.fuelPerLap,0,1000,0)
  else a.fuel=-1; a.maxFuel=-1; a.fuelPerLap=0 end
  -- Dégâts lus seulement à l'emplacement ; un champ absent laisse la voiture valide, sans dégât connu.
  -- Beta 1.24 : aussi sur une IA lente ou arrêtée (voiture cassée à évacuer aussitôt).
  -- Beta 1.28 : aussi sur une IA anormalement lente surveillée par le moteur (diagnostic).
- if not (a.control and (a.inPitBox or a.kmh<K.damageReadSpeed or a.watchDamage or a.damageScan) and pcall(damageRead,a,raw)) then a.damageBody=0; a.damageSuspension=0; a.engineLife=K.engineLifeNew; a.repairingNative=false; a.damageGearbox=0 end
- a.nativeRainTyresKnown=type(raw.isAIUsingRainTyres)=='boolean'
- a.offtrack=not U.finite(raw.wheelsOutside) or raw.wheelsOutside>2
- a.splineValid=U.finite(raw.splinePosition) and raw.splinePosition>=0 and raw.splinePosition<=1
- a.spline=a.splineValid and raw.splinePosition or 0
- a.lapValid=U.finite(raw.lapCount) and raw.lapCount>=0 and raw.lapCount%1==0
- a.lap=a.lapValid and raw.lapCount or 0
+ if not (control and (inPit or kmh<K.damageReadSpeed or a.watchDamage or a.damageScan) and pcall(damageRead,a,raw)) then a.damageBody=0; a.damageSuspension=0; a.engineLife=K.engineLifeNew; a.repairingNative=false; a.damageGearbox=0 end
+ a.nativeRainTyresKnown=type(rainTyres)=='boolean'
+ local outside=raw.wheelsOutside
+ local outsideOK=U.finite(outside)
+ a.offtrack=not outsideOK or outside>2
+ local spline=raw.splinePosition
+ a.splineValid=U.finite(spline) and spline>=0 and spline<=1
+ a.spline=a.splineValid and spline or 0
+ local laps=raw.lapCount
+ a.lapValid=U.finite(laps) and laps>=0 and laps%1==0
+ a.lap=a.lapValid and laps or 0
  -- Beta 1.42 : roues hors des limites (0 à 4), validité du tour en cours, secteur et temps du tour (sanctions des IA).
- a.wheelsOut=U.finite(raw.wheelsOutside) and math.max(0,math.min(4,math.floor(raw.wheelsOutside))) or 0
- a.lapNowValid=raw.isLapValid~=false; a.sector=U.finite(raw.currentSector) and math.max(0,math.floor(raw.currentSector)) or 0
+ a.wheelsOut=outsideOK and math.max(0,math.min(4,math.floor(outside))) or 0
+ local sector=raw.currentSector
+ a.lapNowValid=raw.isLapValid~=false; a.sector=U.finite(sector) and math.max(0,math.floor(sector)) or 0
  a.lapTimeMs=U.number(raw.lapTimeMs,0,1e9,0)
  -- Meilleur et dernier tour (Beta 1.25, overlay et récapitulatif de course), en secondes ; 0 : aucun.
  a.bestLap=U.number(raw.bestLapTimeMs,0,1e8,0)/1000; a.lastLap=U.number(raw.previousLapTimeMs,0,1e8,0)/1000
@@ -173,43 +214,101 @@ local function readCar(a,index,dt,lane)
  if vector(velocity) and a.speed>1 then a.slip=math.abs(U.wrap(math.atan2(velocity.x,velocity.z)-yaw))*180/math.pi end
  a.finished=raw.isRaceFinished==true
  -- Position au classement de la course (CSP) ; 0 si inconnue.
- a.position=U.finite(raw.racePosition) and raw.racePosition>=1 and math.floor(raw.racePosition) or 0
- local collidedOK,collided=pcall(collidedWith,raw)
- a.collided=collidedOK and U.finite(collided) and collided>=0
+ local place=raw.racePosition
+ a.position=U.finite(place) and place>=1 and math.floor(place) or 0
+ local collided=collidedValue(raw)
+ a.collided=U.finite(collided) and collided>=0
  -- Voiture touchée (Beta 1.24) : 0 = décor, sinon numéro de la voiture plus 1, soit sa case dans la liste.
  a.collidedWith=a.collided and math.floor(collided) or -1
- a.highBeams=raw.highBeams==true; a.headlightsActive=raw.headlightsActive==true; a.lowBeams=raw.lowBeams==true
- a.flashingLightsActive=raw.flashingLightsActive==true; a.hornActive=raw.hornActive==true
+ -- Affinage 1.62 (coût) : feux et klaxon lus pour le joueur seulement (et la première voiture, place du joueur quand un
+ -- mode ne publie pas isUserControlled) : seuls lecteurs, l'apprentissage et l'appel de phares du joueur (src/flash.lua,
+ -- src/engine.lua) ; les appels de phares entre IA sont commandés par l'app, jamais lus.
+ if player or index==0 then
+  a.highBeams=raw.highBeams==true; a.headlightsActive=raw.headlightsActive==true; a.lowBeams=raw.lowBeams==true
+  a.flashingLightsActive=raw.flashingLightsActive==true; a.hornActive=raw.hornActive==true
+ else a.highBeams=false; a.headlightsActive=false; a.lowBeams=false; a.flashingLightsActive=false; a.hornActive=false end
  a.leftWidth=0; a.rightWidth=0
  if a.splineValid and ac.getTrackAISplineSides then
   local ok,sides=pcall(ac.getTrackAISplineSides,a.spline)
   if ok and sides then a.leftWidth=U.number(sides.x,0,100,0); a.rightWidth=U.number(sides.y,0,100,0) end
  end
+ -- Beta 1.60 : largeurs K.reachLook1 et K.reachLook2 s plus loin (K.reachLookMin m au moins par pas), pour les IA
+ -- pilotées : la borne de décalage du grand côté (src/director.lua, M.reachable) se referme avant que la trajectoire
+ -- ne traverse la piste. Lecture manquée : 0, la borne reste celle d'avant.
+ -- Relecture (coût) : relues toutes les K.reachLookPeriod s par voiture, décalées d'une voiture à l'autre (une image
+ -- par indice, six groupes) ; la dernière lecture reste valable entre deux.
+ if a.control and a.leftWidth>0 and a.rightWidth>0 and trackLength>0 then
+  a.aheadAge=a.aheadAge==nil and K.reachLookPeriod-(index%6)*K.reachLookStagger or a.aheadAge+dt
+  if a.aheadAge>=K.reachLookPeriod then
+   a.aheadAge=0
+   a.leftAhead=0; a.rightAhead=0; a.leftAhead2=0; a.rightAhead2=0
+   local d1=math.max(a.speed*K.reachLook1,K.reachLookMin); local d2=math.max(a.speed*K.reachLook2,K.reachLookMin*2)
+   local ok,sides=pcall(ac.getTrackAISplineSides,(a.spline+d1/trackLength)%1)
+   if ok and sides then a.leftAhead=U.number(sides.x,0,100,0); a.rightAhead=U.number(sides.y,0,100,0) end
+   ok,sides=pcall(ac.getTrackAISplineSides,(a.spline+d2/trackLength)%1)
+   if ok and sides then a.leftAhead2=U.number(sides.x,0,100,0); a.rightAhead2=U.number(sides.y,0,100,0) end
+  end
+ else a.leftAhead=0; a.rightAhead=0; a.leftAhead2=0; a.rightAhead2=0; a.aheadAge=nil end
  -- Écart à la trajectoire IA (m, repère latéral interne : positif à droite), lu seulement pendant le départ.
  a.splineLat=0; a.splineLatValid=false
  -- Beta 1.59.1 : voiture lente ou arrêtée hors des stands, dans toutes les sessions (src/incidents.lua) : distance à la
  -- trajectoire IA (m ; voiture arrêtée hors piste loin de la trajectoire, dégagée) et écart latéral selon le sens de la
  -- PISTE (m ; drapeau rouge, piste vraiment bloquée : l'écart du départ suit le cap de la voiture, faux pour une voiture
  -- en travers). Sens de la piste : second point K.lineAheadMeters m plus loin.
+ local prevDist,prevDistValid,prevLat,prevLatValid=a.lineDist,a.lineDistValid,a.lineLat,a.lineLatValid
  a.lineDist=0; a.lineDistValid=false; a.lineLat=0; a.lineLatValid=false
  local slow=not a.pit and a.kmh<K.offLineKmh
- if (lane and a.control or slow) and a.splineValid then
+ -- Beta 1.60 (relecture : deux lectures par voiture lente et par image, grille entière arrêtée avant les feux) : voiture
+ -- qui n'a pas bougé de K.lineStill m depuis sa dernière lecture réussie : valeurs gardées, aucune lecture.
+ local still=slow and prevDistValid==true and prevLatValid==true and a.lineX~=nil and math.abs(x-a.lineX)<K.lineStill and math.abs(z-a.lineZ)<K.lineStill
+ if still then a.lineDist=prevDist; a.lineDistValid=true; a.lineLat=prevLat; a.lineLatValid=prevLatValid; slow=false end
+ -- Beta 1.60 (relecture : le jugement des collisions lisait l'écart du départ, jamais mesuré hors du départ ni pour le
+ -- joueur) : écart latéral selon le sens de la piste (a.trackLat, m) pour TOUTE voiture hors des stands, joueur
+ -- compris, quand le jugement est en service (s.blameWanted, src/engine.lua) ; relu toutes les K.blameLatPeriod s par
+ -- voiture, la dernière valeur restant valable entre deux lectures.
+ local trackDue=false
+ if blameWanted and not a.pit and a.splineValid then
+  -- Relecture (coût) : premières lectures décalées d'une voiture à l'autre (une image par indice, six groupes).
+  if a.trackLatAge==nil or a.trackLatAge==math.huge then a.trackLatAge=K.blameLatPeriod-(index%6)*K.reachLookStagger else a.trackLatAge=a.trackLatAge+dt end
+  trackDue=a.trackLatAge>=K.blameLatPeriod
+ else a.trackLatValid=false; a.trackLatAge=math.huge end
+ if (lane and a.control or slow or trackDue) and a.splineValid then
   local probe=laneProbe()
   if probe and pcall(ac.trackProgressToWorldCoordinateTo,a.spline,probe) and U.finite(probe.x) and U.finite(probe.z) then
    if lane and a.control then a.splineLat=(x-probe.x)*lz-(z-probe.z)*lx; a.splineLatValid=true end
-   if slow then
+   if slow or trackDue then
     local px,pz=probe.x,probe.z
-    a.lineDist=math.sqrt((x-px)^2+(z-pz)^2); a.lineDistValid=true
+    if slow then a.lineDist=math.sqrt((x-px)^2+(z-pz)^2); a.lineDistValid=true; a.lineX=x; a.lineZ=z end
     local step=trackLength and trackLength>0 and K.lineAheadMeters/trackLength or 0
+    local lat=nil
     if step>0 and pcall(ac.trackProgressToWorldCoordinateTo,(a.spline+step)%1,probe) and U.finite(probe.x) and U.finite(probe.z) then
      local tx,tz=probe.x-px,probe.z-pz; local n=math.sqrt(tx*tx+tz*tz)
-     if n>K.lineAheadMeters*0.5 and n<K.lineAheadMeters*2 then a.lineLat=((x-px)*tz-(z-pz)*tx)/n; a.lineLatValid=true end
+     if n>K.lineAheadMeters*0.5 and n<K.lineAheadMeters*2 then lat=((x-px)*tz-(z-pz)*tx)/n end
     end
+    if slow and lat then a.lineLat=lat; a.lineLatValid=true end
+    if trackDue then a.trackLatValid=lat~=nil; a.trackLat=lat or 0; a.trackLatAge=0 end
    end
-  end
+  elseif trackDue then a.trackLatValid=false end
  end
  return a.valid
 end
+-- Beta 1.61 (tranche E, réglage weatherLive) : prévision météo de CSP (type en cours, type à venir, transition de 0 à 1),
+-- lue sous protection une fois par K.wxPeriod s au plus, et seulement quand le réglage est en service (M.wxWanted, posé par
+-- l'hôte) ; lecture ratée (champs absents, CSP plus ancien) : prévision inconnue, nouvel essai K.wxRetry s plus tard.
+M.wxWanted=false
+local wxAt,wxRetryAt=-math.huge,-math.huge
+local function wxFields() local c=ac.getSim().weatherConditions; return c.currentType,c.upcomingType,c.transition end
+local function wxRead(s)
+ if not M.wxWanted then return end
+ if math.abs(s.time-wxAt)<K.wxPeriod then return end
+ if s.wxKnown==false and math.abs(s.time-wxRetryAt)<K.wxRetry then return end
+ wxAt=s.time
+ local ok,cur,upc,tr=pcall(wxFields)
+ if ok and type(tr)=='number' and tonumber(upc)~=nil then
+  s.wxKnown=true; s.wxCurrent=tonumber(cur) or -1; s.wxUpcoming=tonumber(upc); s.wxTransition=U.number(tr,0,1,0)
+ else wxRetryAt=s.time; s.wxKnown=false; s.wxCurrent=-1; s.wxUpcoming=-1; s.wxTransition=-1 end
+end
+M.wxRead=wxRead
 local function simRead(s)
  local r=simGet()
  s.online=r.isOnlineRace==true or r.isAltOnlineRace==true
@@ -229,6 +328,7 @@ local function simRead(s)
  s.left=U.number(r.sessionTimeLeft,0,1e12,0)/1000
  s.wet=U.number(r.rainWetness,0,1,0)
  s.rain=U.number(r.rainIntensity,0,1,0); s.water=U.number(r.rainWater,0,1,0)
+ wxRead(s)
  s.count=math.floor(U.number(r.carsCount,0,K.maxCars,0))
  -- 1.42 SANCTIONS : vitesse limite des stands (excès de vitesse des IA) ; nombre de secteurs (dernier secteur : tour
  -- suivant invalidé aussi), lu une fois par session.
@@ -251,6 +351,7 @@ local function raceRead(s)
  -- Consommation de carburant de la session (0 : coupée, rien à gérer) ; champ absent : comptée.
  s.fuelRate=U.number(r.fuelConsumptionRate,0,100,1)
 end
+local conflictPeriod=30
 local function conflictingApp(app)
  if type(app)~='table' then return nil end
  local name=tostring(app.name or ''):sub(1,K.metadataLength)..' '..tostring(app.title or ''):sub(1,K.metadataLength)
@@ -309,7 +410,44 @@ function M.cleanError(err)
  if #text>K.readErrorChars then text=text:sub(1,K.readErrorChars) end
  return text
 end
+-- Métadonnées d'une voiture (identifiant, nom, taille, livrée, usure) : une tranche de n voitures à partir de s.metaNext.
+local function metaCars(s,n)
+ local last=math.min(s.count,(s.metaNext or 1)+n-1)
+ for i=s.metaNext or 1,last do
+  local a=s.cars[i]
+  local oldID,oldName=a.id,a.name
+  local idOK,id=pcall(ac.getCarID,a.index); if idOK and type(id)=='string' then a.id=id:sub(1,K.metadataLength) end
+  -- Beta 1.60 (lot 3) : nom brut gardé (identité de la voiture, inchangée) ; nom affiché sans le suffixe de Content
+  -- Manager (le moteur y ajoute le niveau et l'agressivité appliqués, src/engine.lua).
+  local oldRaw=a.rawName or oldName
+  local nameOK,name=pcall(ac.getDriverName,a.index)
+  if nameOK and type(name)=='string' then
+   name=name:sub(1,K.metadataLength)
+   if name~=a.rawName then
+    local base=stripName(name)
+    a.rawName=name; a.cmSuffix=base~=nil; a.baseName=base or name; a.name=a.baseName; a.nameLv=nil; a.nameAg=nil
+   end
+  end
+  if a.id~=oldID or (a.rawName or a.name)~=oldRaw then a.identity=(a.id..'\0'..(a.rawName or a.name)):gsub('.',hexByte) end
+  if not pcall(sizeRead,a) then a.length=K.length; a.width=K.width end
+  -- Livrée (dossier du skin) : une livrée « safety » désigne la voiture de sécurité parmi celles du modèle.
+  local skinOK,skin=pcall(ac.getCarSkinID,a.index)
+  if a.valid and a.control and not pcall(wearRead,a) then a.wearKnown=false end
+  if skinOK and type(skin)=='string' and (skin~=a.skin or not a.skinKnown) then a.skin=skin:sub(1,K.metadataLength); a.skinKnown=true; a.skinSafety=a.skin:lower():find(K.safetySkinPattern,1,true)~=nil end
+ end
+ s.metaNext=last+1
+end
+-- Affinage 1.62 (mesure fine, AUDIT_FPS §7) : horloge de l'hôte (secondes, nil sans chronomètre) et coût cumulé des
+-- sous-postes de la lecture : 1 session, 2 voitures, 3 métadonnées, 4 gommes ; remis à zéro par l'hôte (journal).
+M.clock=nil
+M.cost={0,0,0,0}
+local function tick(i,at)
+ if not at then return nil end
+ local now=M.clock(); if not now then return nil end
+ M.cost[i]=M.cost[i]+(now-at); return now
+end
 function M.read(s,dt,now,light)
+ local at=M.clock and M.clock() or nil
  local ok,err=pcall(simRead,s)
  -- Beta 1.57 : premier échec : champs de la session essayés un par un (version de CSP plus ancienne), puis relecture
  -- par la vue ; seul un champ essentiel absent reste une erreur de lecture.
@@ -330,11 +468,12 @@ function M.read(s,dt,now,light)
   if not retried then s.flag=0; s.pitWindowStart=0; s.pitWindowEnd=0; s.errors=math.min(K.counterMax,s.errors+1) end
  end
  -- Beta 1.52 : première lecture toujours complète (place du joueur connue avant toute lecture légère).
+ at=tick(1,at)
  if light and not s.playerSlot then light=false end
  if not light and s.lightLast then s.metaAt=-1; s.configSession=-1 end
  s.lightLast=light==true
  s.player=0
- trackLength=s.length
+ trackLength=s.length; blameWanted=s.blameWanted==true; sideWanted=M.sideWanted~=false
  if not light then for i=1,s.count do
   local a=s.cars[i]; local good,result=pcall(readCar,a,i-1,dt,s.laneWanted)
   -- Beta 1.57 : premier échec d'une voiture : champs des voitures essayés un par un, puis relecture par la vue.
@@ -362,10 +501,14 @@ function M.read(s,dt,now,light)
    else a.valid=false; a.control=false end
   end
  end
+ at=tick(2,at)
  if not light and s.player>0 and now>=s.playerDamageAt then
   s.playerDamageAt=now+K.playerDamagePeriod
   if not pcall(playerDamage,s,s.cars[s.player]) then s.playerDamageSlot=0 end
  end
+ -- Affinage 1.61 (coût en jeu) : passe complète (première lecture, changement de session)
+ -- dans la même image ; relecture périodique par tranches de K.metaCarsPerFrame voitures (suite dans les images suivantes).
+ local metaFull=s.metaAt<0 or s.configSession~=s.session
  if now>=s.metaAt or s.configSession~=s.session then
   s.metaAt=now+K.metaPeriod
   -- race.ini est fixe pendant le processus : relu au changement de session, ou de nouveau après un échec.
@@ -391,22 +534,19 @@ function M.read(s,dt,now,light)
   if sessionOK then s.sessionLaps=math.floor(U.number(laps,0,100000,0)); s.sessionMinutes=U.number(minutes,0,100000,0); s.timedRace=timed==true end
   local patchOK,patch=pcall(ac.getPatchVersion); if patchOK and type(patch)=='string' then s.patch=patch:sub(1,K.metadataLength) end
   local trackOK,track=pcall(ac.getTrackID); if trackOK and type(track)=='string' then s.track=track end
+  -- Beta 1.61 : tracé du circuit et clé des fichiers par circuit (src/trackfile.lua) ; clé vide : rien n'est lu ni écrit.
+  local layoutOK,layout=pcall(ac.getTrackLayout); s.layout=layoutOK and type(layout)=='string' and layout or ''
+  s.trackKey=TrackFile.key(s.track,s.layout) or ''
   -- Beta 1.39 : nom affiché du circuit (en-tête de la fenêtre) ; l'identifiant reste pour le diagnostic.
   local nameOK,name=pcall(ac.getTrackName); if nameOK and type(name)=='string' then s.trackName=name:sub(1,K.metadataLength) end
-  if not light then for i=1,s.count do
-   local a=s.cars[i]
-   local oldID,oldName=a.id,a.name
-   local idOK,id=pcall(ac.getCarID,a.index); if idOK and type(id)=='string' then a.id=id:sub(1,K.metadataLength) end
-   local nameOK,name=pcall(ac.getDriverName,a.index); if nameOK and type(name)=='string' then a.name=name:sub(1,K.metadataLength) end
-   if a.id~=oldID or a.name~=oldName then a.identity=(a.id..'\0'..a.name):gsub('.',hexByte) end
-   if not pcall(sizeRead,a) then a.length=K.length; a.width=K.width end
-   -- Livrée (dossier du skin) : une livrée « safety » désigne la voiture de sécurité parmi celles du modèle.
-   local skinOK,skin=pcall(ac.getCarSkinID,a.index)
-   if a.valid and a.control and not pcall(wearRead,a) then a.wearKnown=false end
-   if skinOK and type(skin)=='string' and (skin~=a.skin or not a.skinKnown) then a.skin=skin:sub(1,K.metadataLength); a.skinKnown=true; a.skinSafety=a.skin:lower():find(K.safetySkinPattern,1,true)~=nil end
-  end end
-  s.conflict=''
-  if ac.getAppWindows then
+  s.metaNext=1
+  if not light then metaCars(s,metaFull and s.count or K.metaCarsPerFrame) end
+  -- Affinage 1.62 (coût, AUDIT_FPS cause 8) : fenêtres des apps (jusqu'à 256, noms recopiés et convertis) cherchées au
+  -- changement de session puis toutes les conflictPeriod s, plus à chaque relecture des métadonnées (chaque seconde) ;
+  -- l'avertissement garde sa valeur entre deux recherches.
+  local scan=metaFull or now>=(s.conflictAt or -math.huge)
+  if scan then s.conflictAt=now+conflictPeriod; s.conflict='' end
+  if scan and ac.getAppWindows then
    local appsOK,apps=pcall(ac.getAppWindows)
    if appsOK and type(apps)=='table' then
     for j=1,math.min(#apps,K.maxAppWindows) do
@@ -415,13 +555,15 @@ function M.read(s,dt,now,light)
     end
    end
   end
- end
+ elseif not light and s.metaNext and s.metaNext<=s.count then metaCars(s,K.metaCarsPerFrame) end
+ at=tick(3,at)
  local budget=K.tyreCatalogBudget
  if not light then for i=1,s.count do
   local a=s.cars[i]
   -- Beta 1.49 : le joueur aussi (noms de ses composés : arrêt obligatoire F1, stratégie des stands).
   if a.valid and (a.control or a.player) and a.tyresID~=(a.identity or '') and budget>0 then tyres(a); budget=budget-1 end
  end end
+ tick(4,at)
  return true
 end
 function M.zones(track)
@@ -513,4 +655,5 @@ function M.menu()
  local ok,visible=pcall(menuVisible)
  return ok and visible==true
 end
+M.stripName=stripName
 return M

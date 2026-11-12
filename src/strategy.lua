@@ -11,6 +11,9 @@ local K=C.K
 local L=require('src/lang')
 local Locale=require('src/locale')
 local Pits=require('src/pits')
+-- Beta 1.60 (tranche D) : temps perdu aux stands et écarts en temps (réglage strategySmart), perte due à l'usure (wearPace).
+local Pitloss=require('src/pitloss')
+local Wear=require('src/wear')
 local floor,max,min,abs=math.floor,math.max,math.min,math.abs
 local M={}
 local function car()
@@ -28,7 +31,11 @@ local function car()
   noTyreStop=false,noFuelStop=false,kersSeen=false,critical=false,hardTyres=false,deferLogged=false,wearLow=-1,wearLowLap=-1,blockOut=false,
   -- Relecture 1.42 (après correctifs) : premier tour vu par la sonde de l'usure, dernier passage à l'emplacement vu,
   -- carburant demandé avant l'emplacement, arrêt servi sous drapeau rouge.
-  probeFrom=-1,lastVisit=-1,stopTarget=-1,stopRed=false}
+  probeFrom=-1,lastVisit=-1,stopTarget=-1,stopRed=false,
+  -- Beta 1.60 (tranche D, réglage strategySmart) : tours encore possibles (usure maximale, réserve de carburant), arrêt
+  -- retardé pour le trafic à la sortie (nombre, tour jugé, tour tenu), arrêt possible sous neutralisation et moment de
+  -- la décision d'un audacieux ; tour de formation vu pendant le tour (usure par tour non apprise).
+  room=0,rejoinDelay=0,rejoinEval=-1,rejoinHold=-1,scCand=false,scAt=0,lapForm=false}
 end
 local function clear(list) for k=#list,1,-1 do list[k]=nil end end
 function M.new()
@@ -53,7 +60,7 @@ function M.rebase(t,amount)
  for i=1,K.maxCars do
   local c=t.cars[i]
   c.planLoggedAt=c.planLoggedAt-amount; c.wantSince=c.wantSince-amount; c.outFrom=c.outFrom-amount; c.retryAt=c.retryAt-amount
-  c.failAt=c.failAt-amount; c.failNext=c.failNext-amount; c.checkAt=c.checkAt-amount
+  c.failAt=c.failAt-amount; c.failNext=c.failNext-amount; c.checkAt=c.checkAt-amount; c.scAt=c.scAt-amount
   -- Relecture 1.52 : fin du tour de sortie décalée aussi (repère -math.huge : pas encore finie).
   if U.finite(c.outEnd) then c.outEnd=c.outEnd-amount end
  end
@@ -146,6 +153,7 @@ local function plan(t,c,e,frame,a,p,i,risk)
  local raw=perLap>0 and (a.fuel or -1)>=0 and a.fuel/perLap or math.huge
  c.critical=left>=0 and raw<K.strategyCriticalFuel and raw<left
  c.hardTyres=tyreHard<=1
+ c.room=min(tyreHard,raw-K.fuelReserveLaps)
  if laps==math.huge or left<0 then c.stops=-1; c.nextLap=-1; c.planned=false; return left,laps,threshold end
  -- Fin de course : aucun arrêt si le carburant couvre l'arrivée avec la réserve et si les pneus tiennent jusqu'à
  -- l'usure maximale, au plus K.strategyStretchLaps tours (selon la prise de risque) au-delà du seuil réglé ; la marge de
@@ -198,6 +206,79 @@ local function mandatoryDue(e,i,p)
  -- Relecture 1.52 : fenêtre ouverte en ce moment (pits.opened reste vrai après sa fermeture).
  return (p.mandatoryStops or 0)>0 and pits~=nil and pits.state=='open' and pc~=nil and pc.windowStops<p.mandatoryStops
 end
+-- Beta 1.60 (tranche D, réglage strategySmart) : rival « proche » jugé en temps (moins de K.smartRivalGap s, temps au
+-- tour appris de la voiture de derrière) ; temps inconnu ou réglage coupé : la règle en mètres d'avant.
+local function near(e,frame,i,j,r,a,p)
+ if p.strategySmart then local g=Pitloss.gap(e,frame,i,j); if g then return abs(g)<=K.smartRivalGap end end
+ return r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0)
+end
+-- Undercut avec estimation : gain par tour = perte de rythme due à l'usure (src/wear.lua, si elle agit) moins le tour de
+-- sortie réparti sur K.strategyUndercutLaps tours ; sortie des stands libre exigée quand le temps perdu est connu.
+-- Rend : feu vert, écart en secondes et gain estimé (nil si inconnus : règle d'avant).
+local function smartUndercut(e,frame,i,j,p)
+ local lapTime=Pitloss.lapTimeOf(e,i)
+ local gain=nil
+ local loss=Wear.lossOf(e.wear,i)
+ if loss>0 and lapTime>0 then
+  gain=lapTime*(loss-(p.outLapEnabled and p.outLapLevelPct/100 or 0)/max(1,K.strategyUndercutLaps))
+  if gain<=0 then return false end
+ end
+ if Pitloss.rejoin(e.pitloss,e,frame,i)==true then return false end
+ return true,Pitloss.gap(e,frame,i,j),gain
+end
+-- Sortie des stands dans le trafic : l'arrêt dû (non critique, pneus et carburant qui tiennent encore deux tours) est
+-- retardé d'un tour, K.rejoinDelayMax fois au plus par relais ; jugé une fois par tour.
+local function rejoinWait(e,frame,c,a,i,now)
+ local lap=a.lap or 0
+ if c.rejoinHold==lap then return true end
+ if c.rejoinEval==lap or c.rejoinDelay>=K.rejoinDelayMax or c.critical or c.hardTyres or c.room<2 then return false end
+ c.rejoinEval=lap
+ local traffic,j,gap=Pitloss.rejoin(e.pitloss,e,frame,i)
+ if not traffic then return false end
+ c.rejoinDelay=c.rejoinDelay+1; c.rejoinHold=lap
+ U.log(e.log,now,'INFO',string.format('strategie: %s arret retarde d un tour (trafic a la sortie : %s a %.1f s)',name(a),j>0 and name(frame.cars[j]) or 'une file',gap),i)
+ return true
+end
+-- Arrêts opportunistes (réglage strategySmart), arrêt encore à faire et pas encore dû :
+--  - neutralisation, stands ouverts : arrêt « peu coûteux » si les pneus sont assez usés (ou le carburant en cause) et si
+--    le gain sur un arrêt sous drapeau vert atteint K.scGainMin s ; un audacieux dont l'arrêt est loin attend
+--    K.scDecideDelay s et reste en piste si assez de voitures devant lui, dans le même tour, sont appelées ;
+--  - arrêt dû au tour suivant : pris maintenant si la sortie est libre et qu'une voiture arrive juste derrière ce point.
+local function smartStop(t,e,frame,c,a,i,p,now,neutral,neutralStart,hold,stintLeft,risk)
+ local inc=e.incidents
+ if neutralStart then c.scCand=true; c.scAt=now+K.scDecideDelay elseif not neutral then c.scCand=false end
+ if hold then return end
+ if c.scCand and not inc.pitsClosed then
+  local saving=Pitloss.neutralSaving(e.pitloss,e,Pitloss.lapTimeOf(e,i))
+  local w=c.noTyreStop and -1 or wearUse(t,a)
+  local need=c.limit=='fuel' or w>=K.scMinWear*U.clamp(p.strategyTyreWearPct/100,0,1)
+  if saving<K.scGainMin or not need then c.scCand=false; return end
+  if risk>=K.strategyBoldRisk and stintLeft>K.scStayOutLaps then
+   if now<c.scAt then return end
+   local ahead,called=0,0
+   for j=1,frame.count do
+    local b=frame.cars[j]
+    if j~=i and b.valid and not b.safetyCar and not b.finished and (b.lap or 0)==(a.lap or 0) and (b.spline or 0)>(a.spline or 0) then
+     ahead=ahead+1
+     if t.cars[j].wanted or e.commands[j].rulePit or b.pit then called=called+1 end
+    end
+   end
+   if ahead>0 and called/ahead>=K.scStayOutShare then
+    c.scCand=false
+    U.log(e.log,now,'INFO',string.format('strategie: %s reste en piste sous neutralisation (position en piste)',name(a)),i)
+    return
+   end
+  end
+  c.scCand=false
+  want(t,e,c,a,i,'neutral',now,string.format('strategie: %s arret sous neutralisation (gain %.0f s)',name(a),saving))
+  return
+ end
+ if not neutral and stintLeft==1 and c.rejoinEval~=(a.lap or 0) and not c.critical then
+  c.rejoinEval=a.lap or 0
+  local traffic,_,_,behind=Pitloss.rejoin(e.pitloss,e,frame,i)
+  if traffic==false and behind<=K.rejoinAhead then want(t,e,c,a,i,c.limit,now,string.format('strategie: %s arret avance (piste libre a la sortie)',name(a))) end
+ end
+end
 local function rivals(t,e,frame,j,now,p)
  local row=e.perception.rows[j]; if not row then return end
  local b=frame.cars[j]
@@ -210,7 +291,7 @@ local function rivals(t,e,frame,j,now,p)
  for k=1,row.count do
   local r=row.neighbors[k]; local i=r.index; local a=frame.cars[i]; local c=t.cars[i]
   if a and i~=j and c.planned and not c.reaction and not c.wanted and eligible(a,e.states[i],e,i) and not a.pit
-   and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap and r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0) then
+   and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap and near(e,frame,i,j,r,a,p) then
    local risk=e.states[i].persona.strategyRisk or 0.5
    local w=wearUse(t,a)
    -- Beta 1.59 (undercut arret obligatoire) : arrêt obligatoire encore dû, fenêtre ouverte, sans autre arrêt prévu.
@@ -318,7 +399,8 @@ local function failure(t,e,frame,a,c,i,p,now,seed,racing,cmd)
  local f=U.clamp((now-c.failAt)/max(1,c.failRamp),0,1)
  local loss=c.failLoss*f
  cmd.levelScale=cmd.levelScale*(1-loss)
- cmd.throttleLimit=min(cmd.throttleLimit,max(K.failureThrottleMin,1-loss*K.failureThrottleShare))
+ c.failCeil=max(K.failureThrottleMin,1-loss*K.failureThrottleShare); c.failCeilAt=now
+ cmd.throttleLimit=min(cmd.throttleLimit,c.failCeil)
  if racing and now-c.failAt>=K.failurePitDelay and not a.pit and not inc.red and not inc.pitsClosed then
   if not c.wanted then want(t,e,c,a,i,'failure',now) end
   c.failAsked=true
@@ -358,8 +440,10 @@ function M.update(t,e,frame,now,_dt)
    -- Relecture 1.42 (après correctifs) : overcut et réaction oubliés à chaque passage à l'emplacement (arrêt des règles,
    -- arrêt natif), pas seulement à l'arrêt demandé par la stratégie.
    local visitNow=e.pits.cars[i].visit
-   if visitNow~=c.lastVisit then if c.lastVisit>=0 then c.shift=0; c.reaction=false; c.mandShiftLap=false end; c.lastVisit=visitNow end
+   if visitNow~=c.lastVisit then if c.lastVisit>=0 then c.rejoinDelay=0; c.scCand=false end; if c.lastVisit>=0 then c.shift=0; c.reaction=false; c.mandShiftLap=false end; c.lastVisit=visitNow end
    probe(t,e,a,c,i,now)
+   -- Beta 1.60 (tranche D, besoin de la tranche E) : tour de formation, usure par tour non apprise sur ce tour.
+   if inc.formation then c.lapForm=true end
    -- Blocage qui use un pneu (mistakes.lua) : une ligne de journal par blocage.
    if (cmd.wearId or 0)~=c.wearSeen then
     c.wearSeen=cmd.wearId or 0
@@ -378,18 +462,25 @@ function M.update(t,e,frame,now,_dt)
      -- Usure par tour, apprise sur chaque tour complet sans changement de pneus.
      local wear=wearOf(a)
      local sameLap=(a.lap or 0)==c.lap
-     if not sameLap and c.lap>=0 and (a.lap or 0)==c.lap+1 and c.lapWear>=0 and wear>=c.lapWear and not a.pit then
+     if not sameLap and c.lap>=0 and (a.lap or 0)==c.lap+1 and c.lapWear>=0 and wear>=c.lapWear and not a.pit and not c.lapForm then
       local rate=wear-c.lapWear
       if rate>0 and rate<K.strategyWearRateMax then c.wearRate=c.wearLaps>0 and c.wearRate+(rate-c.wearRate)*K.strategyWearAlpha or rate; c.wearLaps=c.wearLaps+1 end
      end
      if not sameLap or c.lapWear<0 then c.lap=a.lap or 0; c.lapWear=wear end
+     if not sameLap then c.lapForm=false end
      local risk=s.persona.strategyRisk or 0.5
      local before=c.stops
      local left=plan(t,c,e,frame,a,p,i,risk)
      if c.planned and c.stops~=before and now-c.planLoggedAt>=K.strategyPlanLogGap then
       c.planLoggedAt=now
-      U.log(e.log,now,'INFO',string.format('strategie: %s plan %d arret(s), prochain vers le tour %d (%s), risque %.0f %%',name(a),c.stops,c.stops>0 and c.nextLap or -1,c.limit=='tyres' and 'pneus' or 'carburant',risk*100),i)
-      event(t,'plan',name(a),c.stops,c.stops>0 and c.nextLap or -1)
+      -- Beta 1.60 (course au Red Bull Ring du 11 novembre : « prochain vers le tour -1 ») : plan sans arrêt dit en clair.
+      if c.stops>0 then
+       U.log(e.log,now,'INFO',string.format('strategie: %s plan %d arret(s), prochain vers le tour %d (%s), risque %.0f %%',name(a),c.stops,c.nextLap,c.limit=='tyres' and 'pneus' or 'carburant',risk*100),i)
+       event(t,'plan',name(a),c.stops,c.nextLap)
+      else
+       U.log(e.log,now,'INFO',string.format('strategie: %s plan 0 arret(s), aucun arret prevu, risque %.0f %%',name(a),risk*100),i)
+       event(t,'plan',name(a),0,-1)
+      end
      end
      -- Undercut : un audacieux à quelques tours de son arrêt, collé au rival devant, s'arrête le premier.
      -- Beta 1.47 : aussi pour l'arrêt obligatoire encore dû, fenêtre ouverte (l'arrêt de la stratégie y compte).
@@ -398,12 +489,15 @@ function M.update(t,e,frame,now,_dt)
       local row=e.perception.rows[i]
       local r=row and row.front>0 and row.neighbors[row.front]
       local b=r and frame.cars[r.index]
-      if b and not b.pit and r.gap<=K.strategyRivalGap*max(K.strategyRivalMinSpeed,a.speed or 0) and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap then
+      local go,gapS,gainS=true,nil,nil
+      if b and not b.pit and p.strategySmart then go,gapS,gainS=smartUndercut(e,frame,i,r.index,p) end
+      if b and not b.pit and go and near(e,frame,i,r.index,r,a,p) and abs((a.lap or 0)+(a.spline or 0)-(b.lap or 0)-(b.spline or 0))<K.strategyRivalLap then
        -- Beta 1.59 (undercut arret obligatoire) : seul l'arrêt obligatoire encore dû le déclenche (aucun autre arrêt
        -- prévu) : demande marquée, jamais retirée dans la même image comme « plus necessaire » (avant, l'undercut de la
        -- 1.47 pour l'arrêt obligatoire était demandé puis retiré aussitôt et ne servait jamais).
        c.reaction=true
        if not (c.stops>0 and c.nextLap-(a.lap or 0)<=K.strategyUndercutLaps) then if earlyInWindow(e) then want(t,e,c,a,i,'undercut',now,string.format('strategie: %s arret obligatoire avance (undercut)',name(a)),true) end
+       elseif gapS and gainS then want(t,e,c,a,i,'undercut',now,string.format('strategie: %s undercut sur %s (ecart %.1f s, gain estime %.2f s par tour)',name(a),name(b),abs(gapS),gainS))
        else want(t,e,c,a,i,'undercut',now) end
       end
      end
@@ -420,10 +514,13 @@ function M.update(t,e,frame,now,_dt)
      -- nouvelle demande, carburant critique compris (relecture 1.42 après correctifs : jugé après le contrôle).
      if c.serving or c.checkAfter then
      elseif c.critical then want(t,e,c,a,i,'fuel',now)
+     elseif c.stops>0 and stintLeft<=0 and not hold and p.strategySmart and not mandatoryDue(e,i,p) and rejoinWait(e,frame,c,a,i,now) then
+      -- Beta 1.60 (tranche D) : trafic à la sortie des stands, arrêt retardé d'un tour.
      elseif c.stops>0 and stintLeft<=0 then
       if not hold then want(t,e,c,a,i,c.limit,now)
       elseif not c.deferLogged then c.deferLogged=true; U.log(e.log,now,'INFO',string.format('strategie: %s arret retenu jusqu a l ouverture de la fenetre obligatoire',name(a)),i) end
-     elseif neutralStart and not hold and c.stops>0 and stintLeft<=K.strategyNeutralLaps*(0.5+(s.persona.strategyRisk or 0.5)) and not inc.pitsClosed then want(t,e,c,a,i,'neutral',now) end
+     elseif neutralStart and not hold and c.stops>0 and stintLeft<=K.strategyNeutralLaps*(0.5+(s.persona.strategyRisk or 0.5)) and not inc.pitsClosed then want(t,e,c,a,i,'neutral',now)
+     elseif p.strategySmart and c.stops>0 and not inc.formation and not inc.relaunch then smartStop(t,e,frame,c,a,i,p,now,neutral,neutralStart,hold,stintLeft,s.persona.strategyRisk or 0.5) end
     end
    end
    -- Demande tenue jusqu'au passage à l'emplacement ; oubliée hors course ou stratégie coupée (sauf une panne).
@@ -478,7 +575,20 @@ function M.update(t,e,frame,now,_dt)
    if active and c.planned and c.stops>0 and c.nextLap>=0 then
     local left=lapsLeft(e,frame,a,i)
     local total=(a.lap or 0)+max(0,left)
-    if total>0 then cmd.stratPlanAt=c.nextLap/total end
+    -- Beta 1.60 (course au Red Bull Ring du 11 novembre : 9 des 14 arrêts obligatoires aux tours 13 et 14 sur 15) : un
+    -- arrêt prévu pour le SEUL carburant n'attire plus l'arrêt obligatoire quand l'app ravitaille à cet arrêt (carburant
+    -- « plan » ou « refuel » : le plein y est fait pour la suite). Toutes les voitures du même modèle avaient le même
+    -- tour prévu, vers la fin, et y attendaient ; l'arrêt obligatoire reprend sa place propre dans la fenêtre (graine de
+    -- la voiture, src/pits.lua). Arrêt prévu pour les pneus, ou carburant laissé à AC : aligné comme avant.
+    local fuelOnly=c.limit=='fuel' and p.pitFuel~='ac' and mandatoryDue(e,i,p)
+    if total>0 and not fuelOnly then
+     local at=c.nextLap
+     -- Relecture du lot 3 (N7) : plan limité par les pneus, arrêt obligatoire encore dû, carburant géré par l'app :
+     -- avancé de 0 à K.planSpreadLaps tours selon la voiture (jamais plus tard que la limite, jamais avant le tour
+     -- suivant) : les voitures du même modèle ne rentrent plus toutes au même tour. Carburant laissé à AC : inchangé.
+     if c.limit~='fuel' and p.pitFuel~='ac' and mandatoryDue(e,i,p) then at=max((a.lap or 0)+1,at-(i%(K.planSpreadLaps+1))) end
+     cmd.stratPlanAt=at/total
+    end
     cmd.stratLaps=max(1,floor(min(left,c.stops>1 and math.ceil(max(1,left)/(c.stops)) or left)))
    end
    -- Beta 1.59 (undercut arret obligatoire) : arrêt obligatoire seul encore dû, retardé (overcut) : point visé transmis à
@@ -508,6 +618,11 @@ function M.update(t,e,frame,now,_dt)
  end
 end
 -- Point de reprise (rechargement de l'app en pleine course) : pannes faites ou en cours, par voiture.
+-- Beta 1.61 (tranche E, src/wx.lua) : arrêt prévu par le stratège dans les « laps » tours à venir (lecture seule).
+function M.dueWithin(t,i,lap,laps)
+ local c=t.cars and t.cars[i]
+ return c~=nil and c.planned==true and c.nextLap>=0 and c.nextLap-(lap or 0)<=laps
+end
 function M.serialize(t,session)
  local rows={tostring(session)}
  for i=1,K.maxCars do local c=t.cars[i]; if c.identity~='' and c.failState>0 and c.identity:match('^[%w_%-]+$') then rows[#rows+1]=c.identity..','..c.failState end end

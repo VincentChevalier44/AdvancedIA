@@ -5,10 +5,18 @@ local Delta=require('src/delta')
 local Grid=require('src/grid')
 local min,max=math.min,math.max
 local M={}
+-- Beta 1.60 (correctif, pont) : une voiture roule à contresens quand elle avance nez en premier contre le sens de la
+-- piste : son déplacement depuis l'image précédente (lastX, lastZ) va dans le sens de son cap. Une voiture qui recule
+-- (quitte un mur en marche arrière) est dans le bon sens. Utilisé ici et par src/sanctions.lua (drapeau noir).
+function M.noseFirst(a,lastX,lastZ) return (a.x-lastX)*a.lx+(a.z-lastZ)*a.lz>0 end
 local function clearCar(c)
  c.incident=false; c.dismissed=false; c.since=0; c.spline=0; c.onTrack=false; c.clearedAt=-math.huge; c.wrong=0; c.spin=0; c.contact=false; c.lastSpline=-1; c.calm=0
  c.still=0; c.halt=0; c.moved=false; c.fresh=true; c.slow=0; c.counted=false; c.lastCrash=-math.huge; c.window=0; c.windowStart=-math.huge; c.crashAt=-math.huge; c.holding=false; c.holdUntil=0; c.holdMax=0; c.announced=false
  c.restart=false; c.restartLast=0; c.stuckFor=0; c.anchorX=math.huge; c.anchorZ=math.huge
+ -- Beta 1.60 : surveillance de la voiture de sécurité (derrière elle, l'a doublée, vue devant elle).
+ c.scBehind=false; c.scPassed=false; c.scPassedAt=-math.huge; c.scAhead=false
+ -- Beta 1.60 : voiture en difficulté sous drapeau (src/director.lua) : dépassement permis.
+ c.trouble=false
  -- Beta 1.59 : vitesse au début de la glissade, tête-à-queue confirmé (perte de vitesse), zone double (arrêtée ou au pas).
  c.spinFrom=0; c.spun=false; c.double=false; c.backOn=0; c.hotspotFed=false
 end
@@ -19,6 +27,7 @@ function M.new()
   playerFlag=false,playerYellow=false,playerZoneDouble=false,slipperyUntil=-math.huge,messageId=0,messageKind='',messageValue=0,messageExtra=0,messageText='',
   standing='none',gridReady=false,gridWhy='',gridLit=0,gridSlot=0,gridGap=0,gridPit=false,gridPlaced=false,gridPassed=false,jumpUntil=-math.huge,
   relaunchLeader=0,relaunchSpline=0,relaunchTravel=0,relaunchSpanUntil=-math.huge,
+  formation=false,formationKind='',formationAborted=false,formationExtra=0,formationKmh=0,rollGo=false,rollCall=false,relaunchToLine=math.huge,
   relaunch=false,escalated=false,ending=false,endingUntil=0,restart=false,restartSince=0,playerRestart=false,pitsClosed=false,releaseAt={},
   gate={},gateSince={},openedAt={},releaseList={},releaseN=0,redOrder={},redRank={},redOrderN=0,restored={},junction=-1,
   safetyPlaceSince=-math.huge,safetyTarget=-1,safetyRef=0,safetyFrom='',safetySlow=false,safetyLastSpline=-1,parkingSince=-math.huge,firstOut=0,firstOutSpline=0,
@@ -58,6 +67,7 @@ function M.reset(t)
  t.releaseN=0; clearOrder(t); t.safetyPlaceSince=-math.huge; t.safetyTarget=-1; t.safetySlow=false; t.safetyLastSpline=-1; t.parkingSince=-math.huge; t.firstOut=0
  t.standing='none'; t.gridLit=0; t.jumpUntil=-math.huge; t.gridPlaced=false; t.gridPassed=false
  t.relaunchLeader=0; t.relaunchTravel=0; t.relaunchSpanUntil=-math.huge
+ t.formation=false; t.formationKind=''; t.formationAborted=false; t.formationExtra=0; t.rollGo=false; t.rollCall=false; t.relaunchToLine=math.huge
  t.recentN=0; for k=1,K.hotspotRecent do t.recent[k].at=-math.huge end; t.hotspotN=0
 end
 function M.rebase(t,amount)
@@ -86,11 +96,13 @@ function M.rebase(t,amount)
  end
 end
 -- Un seul message affiché par image : le plus important l'emporte (rouge, neutralisation, vert, jaune, stands, météo).
-local priorities={penaltyDq=5,aiDq=4,aiBlackFlag=4,aiSanction=2,playerSanction=3,penaltyDelta=5,penaltyPass=5,penaltyRed=5,penaltyStop=5,red=5,redSession=5,sessionResume=3,redRestartSc=4,standing=4,penaltyJump=5,redRestartVsc=4,redRestartFcy=4,sc=4,fcy=4,vsc=4,vscEnd=4,scIn=3,green=3,restart=3,yellow=2,pitOpen=1,pitOpenCsp=1,pitCompound=1,pitPlanSame=1,pitPlanOk=1,fastCar=1,pitNotCounted=2,pitValidated=1,wet=1,dry=1,drsLaps=1,drsOn=1,drsWet=1,scOut=3,scLeading=2,restartPlace=2,restartRetake=2}
+local priorities={penaltyDq=5,aiDq=4,aiBlackFlag=4,aiSanction=2,playerSanction=3,penaltyDelta=5,penaltyPass=5,penaltyRed=5,penaltyStop=5,red=5,redSession=5,sessionResume=3,redRestartSc=4,standing=4,penaltyJump=5,redRestartVsc=4,redRestartFcy=4,sc=4,fcy=4,vsc=4,vscEnd=4,scIn=3,green=3,restart=3,yellow=2,pitOpen=1,pitOpenCsp=1,pitCompound=1,pitPlanSame=1,pitPlanOk=1,fastCar=1,pitNotCounted=2,pitValidated=1,wet=1,dry=1,drsLaps=1,drsOn=1,drsWet=1,scOut=3,scLeading=2,restartPlace=2,restartRetake=2,formation=4,rollStart=2,rollGreen=3}
+priorities.jumpWarn=3; priorities.jumpFlagrant=5 -- Beta 1.61 : faux départs gradués (startRealism)
+priorities.playerContact=3 -- Beta 1.60 : vos contacts en tort (sanPlayerContact), comme vos limites de piste
 -- Beta 1.49 : annonces de l'arrêt F1 du joueur (lues par SpotterEnginer) : jamais perdues. Écartées par une annonce plus
 -- importante de la même image, ou remplacées par elle, elles attendent (une seule place, la dernière l'emporte) la
 -- première image suivante sans annonce (M.flushHeld, en fin d'image), au plus K.heldMessageMax s.
-local held={pitCompound=true,pitPlanSame=true,pitPlanOk=true,pitNotCounted=true,pitValidated=true,scOut=true,scLeading=true,restartPlace=true,restartRetake=true}
+local held={pitCompound=true,pitPlanSame=true,pitPlanOk=true,pitNotCounted=true,pitValidated=true,scOut=true,scLeading=true,restartPlace=true,restartRetake=true,rollStart=true}
 -- Ordre d'émission (seq) : la place d'attente garde la dernière émise.
 local function hold(t,kind,value,extra,text,seq)
  if t.heldKind and (t.heldSeq or 0)>seq then return end
@@ -148,10 +160,16 @@ end
 -- Fin du tour de relance d'un drapeau rouge en course (Beta 1.34) : départ arrêté si les règles le demandent et que
 -- tout est prêt (t.gridReady, décidé par le moteur : capacités, sens latéral, piste), sinon départ lancé (raison au
 -- journal). Dépassement interdit jusqu'à la ligne, juste devant la grille.
-local function standing(t,frame,now,p,profile)
+-- Beta 1.60 (tranche E) : force (fin du tour de formation du départ de la course) : true = départ arrêté quelles que
+-- soient les règles de relance ; false = jamais (départ lancé choisi, ou tour de formation abandonné) ; nil = relance
+-- d'un drapeau rouge, comme avant.
+local function standing(t,frame,now,p,profile,force)
+ if force==false then return false end
+ if force~=true then
  if profile~='C' or p.redRestart~='standing' then return false end
+ end
  if not t.gridReady then note(t,'INFO','relance arretee indisponible ('..(t.gridWhy~='' and t.gridWhy or '?')..'): depart lance',-1); return false end
- t.standing='grid'; t.gridLit=0; note(t,'INFO','relance: depart arrete (SS)',-1)
+ t.standing='grid'; t.gridLit=0; note(t,'INFO',force and 'depart: depart arrete (SS) apres le tour de formation' or 'relance: depart arrete (SS)',-1)
  restart(t,frame,now,p)
  if p.yellowMessage then message(t,'standing') end
  return true
@@ -167,18 +185,23 @@ local function leaderLap(t,frame,now)
   i=0; local best=math.huge
   for j=1,frame.count do
    local b=frame.cars[j]
-   if b.valid and not b.pit and not b.finished and not b.safetyCar and b.splineValid and (b.control or b.player) then
+   -- Beta 1.60 (tranche E) : tour de formation du départ : la meilleure IA (le joueur en pole qui s'échappe ne donne
+   -- ni la grille ni le drapeau vert : ils viennent avec le peloton).
+   if b.valid and not b.pit and not b.finished and not b.safetyCar and b.splineValid and (b.control or b.player) and not (b.player and (t.formation or t.formationAborted)) then
     local pos=(b.position or 0)>=1 and b.position or math.huge
     if i==0 or pos<best then best=pos; i=j end
    end
   end
-  t.relaunchLeader=i
+  t.relaunchLeader=i; t.relaunchToLine=math.huge
   if i>0 then t.relaunchSpline=frame.cars[i].spline end
   return false
  end
  local step=U.spline(a.spline-t.relaunchSpline); t.relaunchSpline=a.spline
  if step>0 then t.relaunchTravel=t.relaunchTravel+step end
- return t.relaunchTravel>=K.relaunchTravel and ((-a.spline)%1)*frame.length<=K.gridFormFrom
+ -- Beta 1.60 (tranche E) : distance de la tête à la ligne (appel du départ lancé) ; vert du départ lancé à
+ -- K.rollGreenBefore m de la ligne, grille formée à K.gridFormFrom m comme avant.
+ t.relaunchToLine=((-a.spline)%1)*frame.length
+ return t.relaunchTravel>=K.relaunchTravel and ((-a.spline)%1)*frame.length<=(t.formation and t.formationKind~='formation' and (t.rollGreenAt or K.rollGreenBefore) or K.gridFormFrom)
 end
 -- Sortie des stands après un drapeau rouge : ordre figé au drapeau rouge (Beta 1.48, joueur compris ; sinon ordre du
 -- classement), une IA toutes les deux secondes après un court délai, chacune seulement quand la voiture qui la précède
@@ -395,6 +418,32 @@ local function queueHead(t,frame,sc,length)
  end
  return who,near
 end
+-- Beta 1.60 (Bakou, 11 novembre : rentrée après 60 s, peloton coupé en deux, puis un tour entier sans dépassement ni
+-- drapeau bleu pour les voitures loin de la ligne) : file derrière le point ref (spline de la voiture de sécurité) :
+-- de proche en proche, chaque voiture à K.scBunchGap m au plus de la précédente (lead m d'avance tolérés pour la
+-- première : au vert, la voiture de sécurité ralentit dans l'entrée des stands). Voitures comptées : en piste, en
+-- course, hors incident. Marque c.inTrain ; renvoie le nombre de voitures dans la file et le total.
+local function train(t,frame,ref,length,lead,p)
+ local total=0
+ for j=1,frame.count do
+  local b=frame.cars[j]; local c=t.cars[j]
+  c.inTrain=false; c.trainD=nil
+  -- Relecture du lot 3 (S4) : jamais comptée une voiture qui ne peut pas rejoindre la file (incident écarté, retenue,
+  -- en difficulté, hors piste, presque arrêtée) : le regroupement n'aboutissait jamais.
+  if j~=t.safety and b.valid and not b.pit and not b.finished and b.splineValid and (b.control or b.player) and not c.incident
+   and not c.dismissed and not c.holding and not c.trouble and not b.offtrack and not (p and b.kmh<p.obstacleSpeedKmh) then
+   total=total+1; c.trainD=((ref-b.spline)*length+lead)%length-lead
+  end
+ end
+ local edge,count=0,0
+ while true do
+  local best,bj=math.huge,0
+  for j=1,frame.count do local c=t.cars[j]; if c.trainD and not c.inTrain and c.trainD<best then best=c.trainD; bj=j end end
+  if bj==0 or best-edge>K.scBunchGap then break end
+  t.cars[bj].inTrain=true; edge=max(edge,best); count=count+1
+ end
+ return count,total
+end
 -- Annonce « voiture de sécurité en piste » (pont des apps compagnes) : valeur = indice AC (0) de la voiture juste
 -- derrière elle (-1 si aucune), extra = écart en m (-1 si aucune).
 local function scOut(t,frame,sc,length,p)
@@ -434,8 +483,8 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   local identity=a.identity or a.id
   if c.identity~=identity or a.teleport then clearCar(c); c.identity=identity end
   if a.valid and a.splineValid and not a.pit then
-   if c.lastSpline>=0 and a.kmh>=K.wrongWaySpeed and U.spline(a.spline-c.lastSpline)<0 then c.wrong=min(K.wrongWayTime*2,c.wrong+dt) else c.wrong=max(0,c.wrong-dt) end
-   c.lastSpline=a.spline
+   if c.lastSpline>=0 and a.kmh>=K.wrongWaySpeed and U.spline(a.spline-c.lastSpline)<0 and M.noseFirst(a,c.lastX,c.lastZ) then c.wrong=min(K.wrongWayTime*2,c.wrong+dt) else c.wrong=max(0,c.wrong-dt) end
+   c.lastSpline=a.spline; c.lastX=a.x; c.lastZ=a.z
   else c.lastSpline=-1; c.wrong=0 end
   if a.valid and a.slip>K.slipDegrees and a.kmh>=K.spinSpeed then
    -- Beta 1.59 : vitesse la plus haute de la glissade, pour juger la perte de vitesse d'un vrai tête-à-queue.
@@ -536,9 +585,11 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   -- Retenue hors piste seulement : en piste, l'IA repart aussitôt, jamais immobilisée sur la trajectoire.
   if candidate and not c.holding and a.offtrack and now-c.crashAt<=K.crashSettle and a.kmh<p.obstacleSpeedKmh then
    c.crashes=(c.crashes+1)%K.counterMax; c.holding=true; c.crashAt=-math.huge
-   c.holdUntil=now+U.lerp(p.incidentStopMin,p.incidentStopMax,U.unit(seed,i,K.crashSalt+c.crashes)); c.holdMax=c.holdUntil+K.rejoinWaitMax
+   c.holdUntil=now+U.lerp(p.incidentStopMin,p.incidentStopMax,U.unit(seed,i,K.crashSalt+c.crashes)); c.holdMax=c.holdUntil+(profile=='J' and K.rejoinWaitMaxJ or K.rejoinWaitMax)
    c.holdStart=now; t.held=t.held+1; note(t,'INFO',string.format('IA accidentee arretee %.1f s, %s',c.holdUntil-now,a.name),i)
   end
+  -- Beta 1.62 (règles de la journée circuit) : en journée circuit, elle attend la piste libre derrière plus longtemps
+  -- (K.rejoinWaitMaxJ s au plus) avant de repartir.
   -- Libérée : un choc relevé pendant la retenue (fin de glissade) appartient au même accident, jamais une nouvelle
   -- retenue aussitôt.
   if c.holding and (not candidate or now>=c.holdMax or now>=c.holdUntil and not traffic(frame,i,p)) then
@@ -582,8 +633,23 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
  -- Beta 1.35 (relecture) : sous VSC ou FCY, le tour de relance d'un départ arrêté finit quand le meneur boucle son tour
  -- (à K.gridFormFrom m de la ligne, au moins K.relaunchTravel tour parcouru depuis la sortie des stands), jamais sur un
  -- délai : la grille se serait formée n'importe où sur le circuit, des voitures retenues en pleine piste.
- local formLap=relaunch and t.neutralMode~='sc' and profile=='C' and p.redRestart=='standing'
+ -- Beta 1.60 (tranche E) : le tour de formation du départ de la course finit de la même façon, quelles que soient les
+ -- règles de relance ; abandonné (incident), il finit au délai comme une neutralisation ordinaire.
+ local formLap=relaunch and t.neutralMode~='sc' and not t.formationAborted and (t.formation or profile=='C' and p.redRestart=='standing')
  local lapDone=formLap and leaderLap(t,frame,now)
+ if t.formation then
+  local roll=t.formationKind~='formation'
+  t.rollCall=roll and t.relaunchTravel>=K.relaunchTravel and t.relaunchToLine<=K.rollCallDistance
+  -- Départ lancé : aucun vert avec un incident juste après la ligne ; un tour de plus (K.formationExtraLaps au plus).
+  if lapDone and roll and t.formationExtra<K.formationExtraLaps then
+   local near=math.huge
+   for k=1,t.zoneCount do local d=t.zones[k].spline*frame.length; if d<near then near=d end end
+   if near<=K.rollClearAhead then
+    t.formationExtra=t.formationExtra+1; t.relaunchTravel=0; t.rollCall=false; lapDone=false
+    note(t,'INFO',string.format('depart lance: un tour de plus (incident a %.0f m apres la ligne)',near),-1)
+   end
+  end
+ end
  if mode~='local' and major and not t.red and not (t.neutral and now-t.neutralSince>=K.neutralMax) then
   if not t.neutral then
    t.neutral=true; t.neutralMode=mode; t.neutralSince=now; t.relaunch=false; t.ending=false
@@ -595,23 +661,42 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
    -- Nouvel incident pendant la fin de VSC : la VSC continue.
    t.ending=false; note(t,'INFO','fin de VSC annulee: nouvel incident',-1)
   end
+  -- Beta 1.60 (tranche E) : incident pendant le tour de formation : formation abandonnée, neutralisation ordinaire
+  -- (FCY, delta jugé), puis départ lancé au drapeau vert, dépassement interdit jusqu'à la ligne.
+  if t.formation then
+   t.formation=false; t.formationAborted=true; t.rollCall=false; t.neutralSince=now
+   note(t,'INFO','depart: tour de formation abandonne (incident), neutralisation '..t.neutralMode,-1)
+   if p.yellowMessage then message(t,'fcy',p.fcyDeltaPct) end
+  end
   -- Nouvel incident pendant le tour de rentrée : la voiture de sécurité reste en piste.
   if t.neutral and t.safetyPhase=='in' then
    t.safetyPhase='out'; t.safetySince=now; note(t,'INFO','voiture de securite: reste en piste',t.safety)
    if p.yellowMessage then message(t,'sc') end
   end
   t.neutralUntil=max(t.neutralUntil,now+p.neutralizationHold)
- elseif t.neutral and t.neutralMode=='sc' and t.safety>0 and (mode=='sc' or relaunch) and (t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' or t.safetyPhase=='in') and now-t.neutralSince<K.neutralMax then
+ elseif t.neutral and t.neutralMode=='sc' and t.safety>0 and (mode=='sc' or relaunch) and (t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' or t.safetyPhase=='in') and (now-t.neutralSince<K.neutralMax or t.safetyPhase=='in' or t.safetyPhase=='out' and t.safetyLeft and frame.cars[t.safety].valid and not frame.cars[t.safety].pit) then
   -- Incident dégagé : la voiture de sécurité rentre ce tour ; drapeau vert quand elle entre dans la voie des stands,
   -- dépassement interdit jusqu'à la ligne.
   local car=frame.cars[t.safety]
-  if t.safetyPhase=='out' and t.safetyLeft and now>=t.neutralUntil and now-t.safetySince>=K.scMinOut then
-   t.safetyPhase='in'; t.safetySince=now; note(t,'INFO','voiture de securite: rentre ce tour',t.safety); if p.yellowMessage then message(t,'scIn') end
+  -- Relecture du lot 3 (S4) : délai maximal de la neutralisation atteint, voiture de sécurité en piste : elle rentre
+  -- d'abord (vert à son entrée dans la voie des stands), jamais de vert avec elle en piste parmi des voitures lancées.
+  if t.safetyPhase=='out' and t.safetyLeft and (now>=t.neutralUntil and now-t.safetySince>=K.scMinOut or now-t.neutralSince>=K.neutralMax) then
+   -- Beta 1.60 : elle ne rentre qu'une fois le peloton regroupé derrière elle (au plus K.scBunchLaps tour(s) à
+   -- K.scNominalKmh d'attente : une voiture qui se traîne ne la retient pas indéfiniment).
+   local inTrain,total=0,0
+   local known=car.valid and not car.pit and car.splineValid and frame.length>0
+   if known then inTrain,total=train(t,frame,car.spline,frame.length,0,p) end
+   local late=now-t.safetySince>=K.scMinOut+min(K.scBunchMax,K.scBunchLaps*frame.length/(K.scNominalKmh/3.6)) or now-t.neutralSince>=K.neutralMax
+   if not known or inTrain>=total or late then
+    if known and inTrain<total then note(t,'INFO',string.format('voiture de securite: peloton non regroupe (%d / %d dans la file), rentre apres %.0f s',inTrain,total,now-t.safetySince),t.safety) end
+    t.safetyPhase='in'; t.safetySince=now; note(t,'INFO','voiture de securite: rentre ce tour',t.safety); if p.yellowMessage then message(t,'scIn') end
+   end
   end
   -- Beta 1.48 : ligne franchie sans rentrer (entrée des stands manquée) : drapeau vert, rappel à son stand.
   local crossed=t.safetyPhase=='in' and car.valid and not car.pit and car.splineValid and t.safetyLastSpline>0.5 and car.spline<0.5 and U.spline(car.spline-t.safetyLastSpline)>=0
   if t.safetyPhase=='in' and (car.pit or crossed or now-t.safetySince>=K.scInMax) then
    local relaunched=t.relaunch
+   if now-t.neutralSince>=K.neutralMax then t.neutralEnd=now end
    t.neutral=false; t.relaunch=false; t.safetyPhase=car.pit and 'parking' or 'parked'
    if not car.pit then t.safetyReturnAt=now end
    if not car.pit then note(t,'INFO',crossed and 'voiture de securite: ligne franchie sans rentrer, rappel a son stand apres le vert' or 'voiture de securite: rappel a son stand apres le vert',t.safety) end
@@ -622,6 +707,17 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
     t.restartSerial=(t.restartSerial or 0)+1
     t.greenUntil=now+K.greenShow; note(t,'INFO',(car.pit and 'drapeau vert: voiture de securite aux stands' or 'drapeau vert: voiture de securite non rentree, delai depasse')..(p.restartOvertake=='scIn' and ', depassement permis' or ''),t.safety)
     restartRule(t,frame,now,p)
+    -- Beta 1.60 : « dépassement interdit jusqu'à la ligne » pour la file derrière la voiture de sécurité seulement ;
+    -- une voiture ailleurs sur le circuit court aussitôt (avant : jusqu'à un tour entier sans dépassement ni drapeau
+    -- bleu, le meneur bloqué derrière une attardée).
+    local ref=car.valid and car.splineValid and car.spline or t.safetyLastSpline
+    if t.restart and ref and ref>=0 and frame.length>0 then
+     train(t,frame,ref,frame.length,K.scBunchGap,p)
+     local freed,any=0,false
+     for j=1,frame.count do local c=t.cars[j]; if c.restart and not c.inTrain then c.restart=false; freed=freed+1 end; any=any or c.restart end
+     t.restart=any
+     if freed>0 then note(t,'INFO',string.format('reprise: %d voiture(s) hors de la file, depassement permis aussitot',freed),-1) end
+    end
    end
   end
  elseif t.neutral and (not relaunch and (mode=='local' or mode~=t.neutralMode) or (formLap and lapDone or not formLap and now>=t.neutralUntil) or now-t.neutralSince>=K.neutralMax) then
@@ -634,13 +730,25 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   elseif forced or not t.ending or now>=t.endingUntil then
    -- Délai maximal : les incidents encore en piste ne relancent pas de neutralisation sans fin.
    if now-t.neutralSince>=K.neutralMax then t.neutralEnd=now; note(t,'INFO','neutralisation levee: delai maximal',-1) end
+   -- Lot 5 (course du 11 novembre : appelée à 1460 s, « rentrée à son stand » 35 s plus tard sans autre ligne) :
+   -- neutralisation levée avant sa sortie : dit au journal.
+   if t.neutralMode=='sc' and (t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place') then note(t,'INFO','voiture de securite: rappelee avant sa sortie (neutralisation levee)',t.safety) end
    t.neutral=false; t.ending=false; if t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' or t.safetyPhase=='in' then t.safetyPhase='parking' end
-   if relaunch and not forced and standing(t,frame,now,p,profile) then t.relaunch=false; note(t,'INFO','fin du tour de relance: formation de la grille',-1)
+   -- Beta 1.60 (tranche E) : fin du tour de formation du départ : grille (départ arrêté), sinon départ lancé.
+   local start=t.formation or t.formationAborted
+   local force=nil; if start then force=t.formation and t.formationKind=='formation' end
+   if relaunch and not forced and standing(t,frame,now,p,profile,force) then t.relaunch=false; t.formation=false; note(t,'INFO',start and 'fin du tour de formation: formation de la grille' or 'fin du tour de relance: formation de la grille',-1)
    else
     t.greenUntil=now+K.greenShow; note(t,'INFO','drapeau vert: fin de neutralisation',-1)
     -- Tour de relance terminé : dépassement interdit jusqu'à la ligne (ou dès le vert, Beta 1.34) ; fin de FCY ou de
     -- VSC : on court aussitôt.
-    if relaunch then t.relaunch=false; t.restartSerial=(t.restartSerial or 0)+1; restartRule(t,frame,now,p) elseif p.yellowMessage then message(t,'green') end
+    -- Beta 1.60 (tranche E) : départ lancé de la course : règle « jusqu'à la ligne » imposée (quel que soit
+    -- restartOvertake) ; le moteur lance le départ (t.rollGo : journal du départ, premier virage attentif).
+    if relaunch and start then
+     t.relaunch=false; t.formation=false; t.formationAborted=false; t.rollCall=false; t.rollGo=true
+     restart(t,frame,now,p); message(t,'rollGreen',0,-1)
+     note(t,'INFO','depart lance: drapeau vert a la ligne, depassement interdit jusqu a la ligne, premier virage attentif',-1)
+    elseif relaunch then t.relaunch=false; t.restartSerial=(t.restartSerial or 0)+1; restartRule(t,frame,now,p) elseif p.yellowMessage then message(t,'green') end
    end
   end
  end
@@ -663,7 +771,7 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
  end
  -- Entrée des stands fermée (règles GT et Endurance) : sous FCY, et pendant les premiers tours de voiture de sécurité.
  local closure=profile=='C' and t.neutral and p.pitsClosed or 'open'
- local scLap=frame.length/(p.safetyCarSpeedKmh/3.6)
+ local scLap=frame.length/(K.scNominalKmh/3.6)
  local closed=closure~='open' and (t.neutralMode=='fcy' or closure=='pitFcySc' and t.neutralMode=='sc' and now-t.neutralSince<K.scClosedLaps*scLap)
  if closed~=t.pitsClosed then t.pitsClosed=closed; note(t,'INFO',closed and 'stands fermes: neutralisation' or 'stands rouverts',-1) end
  -- Drapeau rouge (essais, qualifications, course) : accident grave, plusieurs voitures immobilisées en piste en même
@@ -743,16 +851,19 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
  end
  if t.safety>0 and t.safetyPhase=='exit' then
   local sc=frame.cars[t.safety]
+  -- Beta 1.60 (Bakou : 40 s à 0 km/h à son emplacement, peloton sous FCY) : toujours immobile à son emplacement
+  -- K.scLeaveStill s après sa libération : posée en piste sans attendre K.scLeaveMax s.
+  local stuck=not U.finite(t.exitLeftAt) and (now-t.safetySince>=K.scLeaveMax or now-t.safetySince>=K.scLeaveStill and sc.valid and sc.inPitBox and (sc.kmh or 0)<K.redStopSpeed)
   if sc.valid and not sc.inPitBox and not U.finite(t.exitLeftAt) then t.exitLeftAt=now; note(t,'INFO',string.format('voiture de securite: sortie de son stand apres %.1f s',now-t.safetySince),t.safety) end
   if sc.valid and not sc.pit and not sc.inPitBox and sc.splineValid and length>0 then
    t.safetyPhase='out'; t.safetySince=now; t.safetyLeft=true
    local who,near=scOut(t,frame,sc,length,p)
    note(t,'INFO',string.format('voiture de securite: sortie en piste%s',who>0 and string.format(' devant %s (%.0f m)',frame.cars[who].name,near) or ''),t.safety)
-  elseif sc.valid and now>=(t.exitLogAt or -math.huge) and not (not U.finite(t.exitLeftAt) and now-t.safetySince>=K.scLeaveMax or U.finite(t.exitLeftAt) and now-t.exitLeftAt>=K.scLaneMax) then
+  elseif sc.valid and now>=(t.exitLogAt or -math.huge) and not (stuck or U.finite(t.exitLeftAt) and now-t.exitLeftAt>=K.scLaneMax) then
    -- Beta 1.50 : état de la voiture de sécurité libérée, toutes les K.scExitLogPeriod s (audit de la sortie en jeu).
    t.exitLogAt=now+K.scExitLogPeriod
    note(t,'INFO',string.format('voiture de securite: sortie en cours %.0f s (%.0f km/h, emplacement %s, voie des stands %s)',now-t.safetySince,sc.kmh or 0,sc.inPitBox and 'oui' or 'non',sc.pit and 'oui' or 'non'),t.safety)
-  elseif not U.finite(t.exitLeftAt) and now-t.safetySince>=K.scLeaveMax or U.finite(t.exitLeftAt) and now-t.exitLeftAt>=K.scLaneMax then
+  elseif stuck or U.finite(t.exitLeftAt) and now-t.exitLeftAt>=K.scLaneMax then
    note(t,'WARN',string.format('voiture de securite: %s, posee en piste hors de la vue du joueur',U.finite(t.exitLeftAt) and 'restee dans la voie des stands' or 'ne quitte pas son emplacement'),t.safety)
    toPlace(t,now)
   end
@@ -819,18 +930,56 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
  else t.parkingSince=-math.huge end
  -- Allure de la voiture de sécurité : K.scLeadKmh km/h tant que la première voiture derrière elle est à plus de
  -- K.scLeadGap m, puis son allure réglée.
- t.safetySlow=false; t.safetyLastSpline=-1
+ t.scWasSlow=t.safetySlow; t.safetySlow=false; t.safetyLastSpline=-1; t.scHead=0
  local scar=t.safety>0 and frame.cars[t.safety] or nil
  if scar and scar.valid and not scar.pit and scar.splineValid and length>0 then
   t.safetyLastSpline=scar.spline
   if t.safetyPhase=='out' or t.safetyPhase=='in' then
    local who,near=queueHead(t,frame,scar,length)
-   t.safetySlow=near>K.scLeadGap
+   -- Relecture du lot 3 (S2) : hystérésis (lente au-delà de K.scLeadGap m, libre en deçà de K.scFreeGap m) : sans
+   -- elle, la limite et la main de l'applicateur basculaient à chaque passage des 120 m.
+   t.safetySlow=near>(t.scWasSlow and K.scFreeGap or K.scLeadGap); t.scHead=who
    -- Beta 1.50 : file formée derrière elle (première voiture à moins de K.scLeadGap m) : notée et annoncée une fois.
    if not t.safetySlow and who>0 and not t.scLeadAnnounced then
     t.scLeadAnnounced=true; note(t,'INFO',string.format('voiture de securite: en tete de la file (%s a %.0f m)',frame.cars[who].name,near),t.safety)
     if p.yellowMessage then message(t,'scLeading',who-1,near) end
    end
+  end
+ end
+ -- Beta 1.60 (Bakou, 11 novembre : le meneur a doublé la voiture de sécurité avant sa rentrée, sans une ligne au
+ -- journal) : surveillance sur la position le long de la piste (jamais sur le cap des voitures : dans un virage serré
+ -- la perception oublie la voiture de devant). Voiture vue derrière elle à moins de K.scWatch m, puis entièrement
+ -- devant : doublée (journal, sanction des IA par le moteur, place à rendre : limite de vitesse dans M.cap, au plus
+ -- K.scPassedMax s). Voiture devant elle sans l'avoir doublée (pose en piste derrière elle) : notée une fois.
+ local watching=scar~=nil and scar.valid and not scar.pit and scar.splineValid and length>0 and (t.safetyPhase=='out' or t.safetyPhase=='in')
+ -- Relecture du lot 3 (S1) : voiture de sécurité arrêtée, en tête-à-queue ou hors piste : la doubler n'est pas une
+ -- faute (ni ligne, ni sanction, voitures « vues derrière » oubliées).
+ if watching and (scar.kmh<K.scDownKmh or scar.offtrack or t.safetyStill>0) then watching=false end
+ t.scPasses=t.scPasses or {}
+ for j=1,frame.count do
+  local c=t.cars[j]; local b=frame.cars[j]
+  if not watching or j==t.safety then c.scBehind=false; c.scPassed=false; c.scAhead=false
+  elseif not b.valid or b.pit or b.finished or not b.splineValid or c.incident then c.scBehind=false; c.scPassed=false
+  else
+   local half=((b.length or K.length)+(scar.length or K.length))*0.5
+   local d=U.spline(scar.spline-b.spline)*length
+   if d>half and d<=K.scWatch then
+    if c.scPassed then c.scPassed=false; note(t,'INFO','voiture de securite: place rendue par '..b.name,j) end
+    c.scBehind=true
+   elseif d<-half and d>=-K.scWatch then
+    if c.scBehind then
+     c.scBehind=false; c.scPassed=true; c.scPassedAt=now; c.scAhead=true
+     if b.control and not b.player then t.scPasses[#t.scPasses+1]=j end
+     note(t,'WARN',string.format('voiture de securite: doublee par %s a %.0f m, place a rendre',b.name,scar.spline*length),j)
+    elseif not c.scPassed and not c.scAhead then
+     c.scAhead=true; note(t,'INFO',string.format('voiture de securite: %s roule devant elle (%.0f m) sans l avoir doublee',b.name,-d),j)
+    end
+   elseif d>K.scWatch or d<-K.scWatch then c.scBehind=false end
+   -- Relecture du lot 3 (N1) : voiture de sécurité retenue juste derrière celle qui l'a doublée (piste étroite, elle ne
+   -- peut pas repasser) : après K.scGiveStuck s, la place est laissée, plus de limite (les deux tombaient à 30 km/h).
+   if c.scPassed and d<-half and d>-half-K.scGiveNear and scar.kmh<K.scLeadKmh then c.scStuck=(c.scStuck or 0)+dt else c.scStuck=0 end
+   if c.scPassed and c.scStuck>=K.scGiveStuck then c.scPassed=false; c.scStuck=0; note(t,'INFO','voiture de securite: retenue derriere '..b.name..' qui l a doublee, place laissee',j) end
+   if c.scPassed and now-c.scPassedAt>=K.scPassedMax then c.scPassed=false; note(t,'INFO','voiture de securite: place non rendue par '..b.name..' (delai depasse)',j) end
   end
  end
  -- Ordre figé levé : reprise finie (ligne franchie par tous, vert sans règle jusqu'à la ligne, séance reprise).
@@ -886,7 +1035,7 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
  if t.safety==0 then t.safetyPhase='none' end
 end
 -- Commandes de la voiture de sécurité : garée sans pilote, libérée à vitesse limitée, rappelée aux stands.
-function M.safety(t,commands,p)
+function M.safety(t,commands,p,frame,d,states)
  if t.safety==0 then return end
  local cmd=commands[t.safety]
  -- Beta 1.48 : garée (à son emplacement, ramenée d'abord si elle est en piste) tant que son point n'est pas connu ;
@@ -894,8 +1043,34 @@ function M.safety(t,commands,p)
  -- pose s'applique : un indicateur de stands relu avant sa position la renverrait au stand).
  cmd.scPark=t.safetyPhase=='parked' or t.safetyPhase=='call' or t.safetyPhase=='place' and not U.finite(t.safetyPlaceSince)
  -- Beta 1.48 : allure réduite tant que le peloton est loin derrière elle.
- local lead=(t.safetyPhase=='out' or t.safetyPhase=='in') and t.safetySlow and min(K.scLeadKmh,p.safetyCarSpeedKmh)
- cmd.scSpeed=lead or (t.safetyPhase=='out' or t.safetyPhase=='in' or t.safetyPhase=='parking' or t.safetyHide) and p.safetyCarSpeedKmh or K.unlimitedSpeed
+ -- Beta 1.60 (décision du pilote, 11 novembre : « elle essaye toujours d'aller le plus vite possible ») : en tête de
+ -- la file, son allure libre (plus de vitesse réglée) ; jamais plus vite que le peloton ne peut la suivre : allure
+ -- de référence de la voiture juste derrière elle, plus lente de K.scPacePct % (inconnue : libre). Retour au stand
+ -- après le vert : allure nominale.
+ local out=t.safetyPhase=='out' or t.safetyPhase=='in'
+ local free=K.unlimitedSpeed
+ if out and not t.safetySlow and frame and d and states and (t.scHead or 0)>0 then
+  local sc=frame.cars[t.safety]
+  if sc.valid and sc.splineValid then
+   local v=Delta.reference(d,states,t.scHead,Delta.bin(sc.spline,d.bins),p.multiClass==true,K.scPacePct,0)
+   -- Relecture du lot 3 (S2) : allure du suiveur inconnue (premiers tours) : nombre fini, sous le rattrapage du
+   -- peloton (K.scNominalKmh+K.scCatchUp), jamais « sans limite ».
+   if v>0 then free=max(K.scLeadKmh,v*3.6) else free=K.scNominalKmh+K.scCatchUp-K.scFreeMargin end
+  end
+ end
+ -- Relecture du lot 3 (S3) : dans une zone d'incident en piste ou à son approche : allure nominale au plus (le
+ -- directeur ne la pilote pas, la limite de zone ne lui était jamais appliquée).
+ if out and frame and p.yellowEnabled and frame.length>0 and frame.cars[t.safety].valid and frame.cars[t.safety].splineValid then
+  local sc=frame.cars[t.safety]
+  for z=1,t.zoneCount do
+   local zone=t.zones[z]
+   if zone.onTrack and zone.slot~=t.safety then
+    local at=U.spline(sc.spline-zone.spline)*frame.length+p.yellowBefore
+    if at>=-K.yellowApproach and at<=p.yellowBefore+p.yellowAfter then free=min(free,K.scNominalKmh); break end
+   end
+  end
+ end
+ cmd.scSpeed=out and (t.safetySlow and K.scLeadKmh or free) or (t.safetyPhase=='parking' or t.safetyHide) and K.scNominalKmh or K.unlimitedSpeed
  cmd.rulePit=t.safetyPhase=='in' or t.safetyPhase=='parking' or t.safetyHide==true
  -- Beta 1.50 : rappel à son stand différé tant qu'elle est en vue du joueur (elle roule vers l'entrée des stands).
  cmd.scHideWait=t.safetyHide==true
@@ -906,6 +1081,27 @@ function M.safety(t,commands,p)
 end
 -- Position de la voiture depuis le début de la zone jaune de l'incident (négative avant la zone).
 local function position(a,zone,length,p) return U.spline(a.spline-zone.spline)*length+p.yellowBefore end
+-- Beta 1.60 (Bakou, 11 novembre) : voiture de sécurité en piste : jamais doublée. Derrière elle ou à sa hauteur (pas
+-- encore entièrement devant) : rattrapage borné puis son allure (à sa hauteur : K.scOverlapDrop km/h de moins, elle
+-- repasse devant ; la file du directeur lâchait une voiture dès 1 m de recouvrement). Voiture qui l'a doublée : sous son
+-- allure jusqu'à ce qu'elle soit de nouveau devant (c.scPassed, src/incidents.lua, M.update).
+local function scGuard(t,frame,i,a,target,p)
+ local sc=t.safety>0 and i~=t.safety and (t.safetyPhase=='out' or t.safetyPhase=='in') and frame.cars[t.safety] or nil
+ if not sc or not sc.valid or sc.pit or not sc.splineValid then return target end
+ if t.cars[i].scPassed then return min(target,max(K.scGiveFloor,sc.kmh-K.giveBackDrop)) end
+ local half=((a.length or K.length)+(sc.length or K.length))*0.5
+ local gap=U.spline(sc.spline-a.spline)*frame.length-half
+ if gap>-2*half and gap<K.scQueueGap then
+  if gap<0 then return min(target,max(K.trafficMinSpeed,sc.kmh-K.scOverlapDrop)) end
+  return min(target,max(K.trafficMinSpeed,sc.kmh+max(0,gap-K.queueKeep)*K.queueClose))
+ end
+ -- Relecture du lot 3 (S6) : enveloppe de freinage du rattrapage, de K.scQueueGap à K.scWatch m derrière elle.
+ if p and gap>=K.scQueueGap and gap<K.scWatch then
+  local v=sc.kmh/3.6
+  return min(target,max(K.trafficMinSpeed,math.sqrt(v*v+2*p.yellowDecel*(gap-K.queueKeep))*3.6))
+ end
+ return target
+end
 -- Limite de vitesse (km/h) et régime de drapeau jaune de la voiture i (IA) : la même référence que le temps delta du
 -- joueur (son allure libre, sinon celle de sa classe, plus lente du pourcentage du régime ; vitesse de repli si
 -- aucune n'est connue), moins une petite marge propre au pilote : les IA restent dans le vert.
@@ -947,10 +1143,21 @@ function M.cap(t,frame,i,p,d,states,margin)
   -- marge (elle rejoint un peloton déjà ralenti) ; en piste : son allure plus un rattrapage, puis la file (directeur).
   local merging=t.neutralMode=='sc' and (t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safety>0 and frame.cars[t.safety].pit)
   local target
-  if t.neutralMode=='sc' and not merging then target=p.safetyCarSpeedKmh+K.scCatchUp
+  if t.neutralMode=='sc' and not merging then
+   -- Beta 1.60 : voiture de sécurité à son allure libre : rattrapage à l'allure propre de la voiture, plus lente de
+   -- K.scCatchPct % (inconnue : l'ancienne limite fixe) ; derrière elle, garde propre (scGuard), puis la file (directeur).
+   local catch=Delta.pace(d,states,i,b,multi)>0 and Delta.reference(d,states,i,b,multi,K.scCatchPct,0)*slow or K.scNominalKmh+K.scCatchUp
+   target=scGuard(t,frame,i,a,catch,p)
   else
    target=Delta.reference(d,states,i,b,multi,t.neutralMode=='vsc' and p.vscDeltaPct or p.fcyDeltaPct,p.fcySpeedKmh)*slow
-   if merging then target=min(target,p.safetyCarSpeedKmh-K.scMergeMargin) end
+   -- Beta 1.60 (tranche E) : tour de formation : allure fixe de la tête (aucune allure apprise au départ).
+   if t.formation then
+    -- Relecture 1.62 (S2) : file étirée : seules les voitures devant le plus grand écart ralentissent.
+    local kmh=t.formationKmh
+    if t.formationSlowFrom and (a.lap or 0)+(a.spline or 0)>=t.formationSlowFrom then kmh=t.formationSlowKmh or kmh end
+    target=kmh*(1-(margin or 0))
+   end
+   if merging then target=min(target,K.scNominalKmh-K.scMergeMargin) end
   end
   cap=min(cap,max(K.trafficMinSpeed,target))
  end
@@ -976,6 +1183,7 @@ function M.hotspotNote(t,spline,length,now,index)
  t.hotspotN=t.hotspotN+1
  local spot=t.hotspots[t.hotspotN]; if not spot then spot={}; t.hotspots[t.hotspotN]=spot end
  spot.spline=spline; spot.at=now
+ t.hotspotArmedN=(t.hotspotArmedN or 0)+1; t.hotspotArmedAt=spline -- Beta 1.61 : lu par src/zonelearn.lua
  note(t,'INFO',string.format('point difficile: %.0f m (%d incidents en %.0f s au plus), prudence accrue pour les IA, aucun depassement commence',spline*length,count,K.hotspotWindow),-1)
 end
 -- Point difficile armé à moins de K.hotspotMeters m (devant ou derrière) ; les points oubliés sont retirés ici.

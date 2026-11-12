@@ -79,7 +79,7 @@ local function plan(t,e,frame,a,i,c,profile,now,first)
   if fit<1 then return false end
   if laps>fit then if profile=='Q' then return false end; laps=fit end
  end
- c.program=program; c.planned=laps; c.spoiled=false; c.second=false
+ c.program=program; c.planned=laps; c.spoiled=false; c.second=false; c.redone=0
  -- Pneus : le plus tendre (qualification, simulation, carburant, réglages), un autre composé classé (essai de pneus),
  -- celui monté (long relais) ; sans classement des gommes, celui monté (une ligne par modèle).
  local compound=-1
@@ -202,7 +202,14 @@ function M.update(e,frame,now)
     -- Tour lancé gâché (qualifications) : la voiture n'était plus lancée en piste pendant ce tour.
     if c.phase=='run' and e.quali and e.quali.active and not e.quali.push[i] then c.spoiled=true end
     if c.phase=='run' and done>=1+c.planned then
-     if profile=='Q' and c.spoiled and not c.second and U.unit(e.runtimeG.seed or 0,i,K.runsSalt+701+c.run)<K.runsSecondChance then
+     -- Beta 1.62 (décision 3 du pilote) : dernier tour lancé fautif (src/quali.lua : limites de piste ou drapeau jaune) :
+     -- toujours refait (au plus K.runsRedoMax fois par passage), sans tirage ; le temps reste au classement d'AC.
+     local qc=e.quali and e.quali.cars[i]
+     local faulty=profile=='Q' and qc and qc.faultyLap>=0 and qc.faultyLap==lap-1
+     if faulty and (c.redone or 0)<K.runsRedoMax then
+      c.redone=(c.redone or 0)+1; c.planned=c.planned+1; c.spoiled=false
+      if e.note then e.note('INFO',string.format('passage en piste: %s, tour rapide refait (tour fautif)',name(a)),i) end
+     elseif profile=='Q' and c.spoiled and not c.second and U.unit(e.runtimeG.seed or 0,i,K.runsSalt+701+c.run)<K.runsSecondChance then
       c.second=true; c.planned=c.planned+1; c.spoiled=false
       if e.note then e.note('INFO',string.format('passage en piste: %s, second tour rapide (premier tour gache)',name(a)),i) end
      else c.phase='in' end

@@ -20,7 +20,7 @@ function M.fill(out,seed,index,profile,p,stint)
  out.jitterPeriod2=U.lerp(K.jitterPeriodMin,K.jitterPeriodMax,r(19)); out.personalSide=r(20)<0.5 and -1 or 1
  -- Marge sous la référence du temps delta : chaque pilote reste un peu dans le vert.
  out.deltaMargin=U.lerp(K.aiDeltaMarginMin,K.aiDeltaMarginMax,r(21))
- out.laneBias=p.laneBiasEnabled and (1-out.paceRank)*p.laneBiasMax*(p.yieldSide=='left' and -1 or 1) or 0
+ out.laneBias=p.laneBiasEnabled and p.yieldSide~='line' and (1-out.paceRank)*p.laneBiasMax*(p.yieldSide=='left' and -1 or 1) or 0 -- Beta 1.62 : « line », aucun biais
  out.lapseInterval=U.lerp(p.lapseIntervalMin,p.lapseIntervalMax,r(14))
  out.lapseDuration=U.lerp(p.lapseDurMin,p.lapseDurMax,r(15))
  out.lapseDrop=U.lerp(p.lapseDropMin,p.lapseDropMax,r(16))/100
@@ -37,6 +37,8 @@ function M.fill(out,seed,index,profile,p,stint)
   out.reaction=K.neutralReaction; out.awareness=K.neutralAwareness; out.patience=1; out.courtesy=0.5; out.assertiveness=0.5
   out.brakeMargin=1; out.laneBias=0; out.holdAfter=(p.yieldHoldAfterMin+p.yieldHoldAfterMax)*0.5
  end
+ -- Beta 1.60 (tranche C) : style du pilote, de 0 (professionnel posé) à 1 (amateur), d'après le grade et l'assurance.
+ out.style=U.clamp(K.styleGradeShare*(out.grade-1)/3+(1-K.styleGradeShare)*(1-out.assertiveness),0,1)
  out.seed=seed; out.profile=profile; out.stint=stint or 0
  return out
 end

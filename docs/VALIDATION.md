@@ -74,6 +74,21 @@ The lists of Beta 1.46 and older were removed in Beta 1.52 to keep this page abo
 that still apply are under *Still open from earlier versions*, and the git history keeps the full lists. The points
 below have not been observed in game yet.
 
+### Beta 1.60
+
+- [ ] **Lateral offset per side (for everyone).** Practice or qualifying on a track where the line runs along an edge
+  (Silverstone, Monza): `cession finie:` lines show « atteint » close to « voulu » or to 4 m of the wide side, cars
+  visibly leave the line towards the side named (`vers la droite|gauche`), no car puts a wheel off the track while
+  yielding or passing, and « sans progres » endings fall.
+- [ ] **No brake-checking.** Race: `contact:` lines after a « radar avant … freine » of the car that was hit fall; front
+  contacts by a softened car do not rise.
+- [ ] `depassement rejuge` appears when a suspended car is caught again fast; fewer `cession refusee` between cars of
+  different pace; Monaco: far fewer attempts started.
+- [ ] Rear awareness, passing aid, collision blame, finer driving, dynamic personalities, wear pace, advanced strategy
+  and the formation lap or rolling start: each switch on in turn, with the checks listed in the changelog entry.
+- [ ] Collision blame with you involved: a change of line by the AI ahead is seen (`ligne droite changement de ligne`);
+  a contact right after the app is reloaded gives « indetermine », never a verdict against you.
+
 ### Beta 1.59.1
 
 - [ ] Practice with frequent offs at one corner: a car parked well off the track is logged `incident ecarte: arretee hors

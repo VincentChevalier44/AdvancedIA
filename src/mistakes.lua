@@ -7,7 +7,7 @@ local U=require('src/util')
 local K=require('src/config').K
 local abs,max=math.abs,math.max
 local M={}
-local function car() return {armedUntil=-math.huge,nextCheck=0,lastAt=-math.huge,cause='',lockWear=0,lockAsym=0,lockKm=0,lastFront=0,visit=-1} end
+local function car() return {armedUntil=-math.huge,nextCheck=0,lastAt=-math.huge,cause='',lockWear=0,lockAsym=0,lockKm=0,lastFront=0,visit=-1,slipSince=nil,slipDrawn=false,limitAt=-math.huge} end
 function M.new()
  local t={cars={},lastAt=-math.huge,calmUntil=-math.huge,counter=0}
  for i=1,K.maxCars do t.cars[i]=car() end
@@ -24,6 +24,8 @@ function M.rebase(t,amount)
   local c=t.cars[i]
   if U.finite(c.armedUntil) then c.armedUntil=c.armedUntil-amount end
   if U.finite(c.lastAt) then c.lastAt=c.lastAt-amount end
+  if U.finite(c.limitAt) then c.limitAt=c.limitAt-amount end
+  if c.slipSince then c.slipSince=c.slipSince-amount end
   c.nextCheck=c.nextCheck-amount
  end
 end
@@ -34,8 +36,9 @@ local function risk(s,p,frame,now)
  local r=U.clamp(1+(1-skill)*K.mistakeSkill,K.mistakeSkillMin,K.mistakeSkillMax)
  local fatigue=s.fatigue or 1
  local lapse=s.lapseUntil>now
- local wet=U.clamp(max(frame.wet or 0,frame.rain or 0),0,1)
- r=r*fatigue*(lapse and K.mistakeLapse or 1)*(1+K.mistakeWet*wet)
+ local wet=U.clamp(max(s.wxWet or frame.wet or 0,frame.rain or 0),0,1) -- Beta 1.61 : s.wxWet (src/wx.lua), champ absent : piste
+ -- Beta 1.60 (tranche C) : stress du pilote (src/mood.lua ; champ absent : neutre).
+ r=r*fatigue*(lapse and K.mistakeLapse or 1)*(1+K.mistakeWet*wet)*(s.moodRisk or 1)
  local cause=lapse and 'inattention' or fatigue>1 and 'fatigue' or wet>=K.mistakeWetCause and 'pluie' or skill<K.mistakeWeak and 'pilote moins fort' or 'erreur isolee'
  return r,cause
 end
@@ -65,8 +68,32 @@ function M.update(t,e,frame,p,profile,now)
    and now>=s.pitExitUntil and now>=(e.penalties.ai.slowUntil[i] or 0) and a.kmh>=K.mistakeMinKmh and a.splineValid
   -- Jamais à quelques dizaines de mètres du joueur, devant comme derrière : une erreur ne doit pas le percuter.
   if eligible and near and abs(U.spline(a.spline-player.spline))*frame.length<=K.mistakePlayerGap then eligible=false end
-  if not eligible then c.armedUntil=-math.huge
+  if not eligible then c.armedUntil=-math.huge; c.slipSince=nil; c.slipDrawn=false
   else
+   -- Beta 1.60 (tranche C, réglage fineInputs) : erreur à la limite. En sortie de virage, pied sur l'accélérateur, une
+   -- dérive tenue K.limitSlipTime s donne un tirage par épisode ; petit patinage (fonction native existante).
+   if p.fineInputs then
+    local sliding=a.gas>=K.mistakeGasPedal and (a.corner or 1)<K.mistakeCorner and a.kmh<=K.mistakeTractionKmh and (a.slip or 0)>=K.limitSlipDeg
+    if not sliding then c.slipSince=nil; c.slipDrawn=false
+    else
+     c.slipSince=c.slipSince or now
+     if now-c.slipSince>=K.limitSlipTime and not c.slipDrawn then
+      c.slipDrawn=true
+      if now-c.limitAt>=K.limitCooldown and now-t.lastAt>=K.mistakeGap then
+       t.counter=t.counter%K.counterMax+1
+       local r=risk(s,p,frame,now)
+       if U.unit(e.runtimeG.seed,i,K.mistakeSalt+t.counter)<K.limitChance*r then
+        local u=U.unit(e.runtimeG.seed,i,K.mistakeSalt+K.counterMax-t.counter)
+        cmd.mistakeId=cmd.mistakeId%K.counterMax+1; cmd.mistakeKind='traction'; cmd.mistakeCause='a la limite'
+        cmd.mistakeTime=U.lerp(K.limitTimeMin,K.limitTimeMax,u); cmd.mistakeSeverity=K.limitSeverity
+        c.limitAt=now; c.lastAt=now; t.lastAt=now; c.armedUntil=-math.huge
+        e.stats.limitMistake=(e.stats.limitMistake or 0)+1
+        events=events or {}; events[#events+1]=i
+       end
+      end
+     end
+    end
+   end
    if now>=c.nextCheck then
     c.nextCheck=now+K.mistakeCheck
     if c.armedUntil<now and now-c.lastAt>=K.mistakeCooldown then
@@ -91,7 +118,8 @@ function M.update(t,e,frame,p,profile,now)
    -- Armée : l'erreur survient au prochain gros freinage ou à la prochaine réaccélération en sortie de virage.
    if c.armedUntil>=now and now-t.lastAt>=K.mistakeGap then
     local kind
-    if a.brake>=K.mistakeBrakePedal and a.kmh>=K.mistakeBrakeKmh then kind='brake'
+    -- Beta 1.60 : jamais de blocage des roues avec une voiture collée derrière (s.rearClose, src/rear.lua).
+    if a.brake>=K.mistakeBrakePedal and a.kmh>=K.mistakeBrakeKmh and not s.rearClose then kind='brake'
     elseif a.gas>=K.mistakeGasPedal and (a.corner or 1)<K.mistakeCorner and a.kmh<=K.mistakeTractionKmh then kind='traction' end
     if kind then
      local u=U.unit(e.runtimeG.seed,i,K.mistakeSalt+K.counterMax-t.counter)

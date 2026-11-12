@@ -1,6 +1,8 @@
 local W=require('tests/workload')
 -- Même cache du compilateur JIT que l'app en jeu (fichier d'entrée) ; voitures pilotées comme en jeu.
 local jitTuned=pcall(require('jit').opt.start,'maxtrace=8000','maxmcode=16384')
+-- Beta 1.60 (lot 5) : mêmes limites de trace que l'app (AdvancedIA.lua).
+if jitTuned then pcall(require('jit').opt.start,'maxside=400','loopunroll=30','maxrecord=20000','maxirconst=2000','maxsnap=2000') end
 local E=require('src/engine')
 return function(clock,count,frames,profiling)
  local e,f=W.prepare(count); local dt=1/60; e.batchCars=jitTuned

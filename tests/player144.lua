@@ -72,10 +72,13 @@ tests.PLAYER_INVITE_GENTLE_CURVE_144=function()
   local t=engaged(e,f,s,6)
   assert(t and t<3,profile..': invitation followed in a gentle curve ('..s.state..')')
  end
- local e,f,s=scene('J',100,2.5,20,0.1,100,100)
+ -- Beta 1.62 : la journée circuit prend la règle de la course (dépasser en ligne droite) : géométrie hors course jugée en essais.
+ local e,f,s=scene('P',100,2.5,20,0.1,100,100)
  assert(not engaged(e,f,s,6),'offset explained by the curvature: not an invitation')
  -- Courbe serrée (plus de K.inviteLatAccel m/s²) : pas d'invitation, raison au journal.
- local e3,f3,s3=scene('J',100,6,20,0.3,100,100)
+ -- Beta 1.62 : 0,18 rad/s à 100 km/h (5 m/s², au-dessus de K.inviteLatAccel) ; 0,3 rad/s (8 m/s²) est désormais un virage
+ -- pour toutes les gardes (src/director.lua, M.cornerness).
+ local e3,f3,s3=scene('P',100,6,20,0.18,100,100)
  assert(not engaged(e3,f3,s3,6) and count(e3,'invitation du joueur non suivie: Driver_2')==1 and count(e3,': virage')==1,'tight curve: no invitation, explained')
  -- Course : règle de la ligne droite inchangée.
  local e2,f2,s2=scene('C',140,3,20,0.06,140,140)

@@ -129,6 +129,11 @@ tests.SANREV_MINORS=function()
  local w,fw=race(); local b=fw.cars[3]; out(fw,3,true); speed(fw,3,40)
  for _=1,8*60 do b.z=b.z-b.speed/60; b.spline=(b.z/fw.length)%1; F.tick(w,fw,1/60) end
  assert(not w.sanctions.cars[3].dq,'reversing off track is not the wrong way')
+ -- Beta 1.60 (contresens jugé sur l'orientation) : voiture retournée, nez en avant contre le sens, hors piste : jamais
+ -- sanctionnée (Beta 1.42m), même si elle avance vraiment à contresens.
+ local w2,fw2=race(); local b2=fw2.cars[3]; out(fw2,3,true); speed(fw2,3,40)
+ for _=1,8*60 do b2.lx=0; b2.lz=-1; b2.z=b2.z-b2.speed/60; b2.spline=(b2.z/fw2.length)%1; F.tick(w2,fw2,1/60) end
+ assert(not w2.sanctions.cars[3].dq,'nose-first the wrong way, off track: not sanctioned')
  local l,fl=race(); l.sanctions.pitSeen=true; fl.sessionLaps=10; fl.leaderLaps=10
  local c=l.sanctions.cars[2]; c.pending='drive'; c.pendingReason='jumpStart'; c.pendingLaps=5; c.could=true; c.issueLap=-5
  fl.cars[2].lap=fl.cars[2].lap+1; F.tick(l,fl,0.1)

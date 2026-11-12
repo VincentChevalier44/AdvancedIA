@@ -188,6 +188,8 @@ tests.QUALI_SOAK_151=function()
  f.length=math.pi*2000; f.commands=e.commands
  for i=1,f.count do local a=f.cars[i]; a.distance=(i-1)*f.length/f.count; a.pace=90+(i%5)*20; a.lap=0 end
  E.step(e,f,1/30)
+ -- Beta 1.62 : le préréglage active les vrais passages (qualiRuns) ; ce test garde le chemin 1.51 (tours de refroidissement prévus).
+ e.profiles.Q.qualiRuns=false; E.changed(e)
  local dt=1/30; local yields,cools,pushes,planned=0,0,0,0
  for n=1,20*60*30 do
   local t=n*dt

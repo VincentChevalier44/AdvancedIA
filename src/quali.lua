@@ -20,8 +20,12 @@ local M={}
 -- du dernier relevé), candAt (arrivée
 -- à qualiWarnTime s au plus), candOut (hors de portée depuis), candLogged (refus noté).
 local function car() return {seen=false,wasPit=false,out=false,outLap=-1,exitAt=-math.huge,cool=false,coolLap=-1,slow=0,warnAt=-math.huge,
- planned=false,pushLaps=0,lapSeen=-1,wasPush=false,coolAt=-math.huge,coolEnd=-math.huge,why='',
- catchT={},catchG={},catchN=0,catchBin=0,candAt=-math.huge,candOut=0,candLogged=false} end
+ planned=false,pushLaps=0,lapSeen=-1,wasPush=false,coolAt=-math.huge,coolEnd=-math.huge,why='',outEnd=-math.huge,outLogged=false,outPit=false,
+ catchT={},catchG={},catchN=0,catchBin=0,candAt=-math.huge,candOut=0,candLogged=false,
+ -- Beta 1.62 (règles des qualifications) : yellowLap (tour lancé passé sous drapeau jaune), faultyLap (dernier tour
+ -- lancé fautif, refait), gapDrop (baisse pour rouvrir l'écart en tour de sortie), jOut (tour de chauffe en journée
+ -- circuit), jExitAt, jEnd.
+ yellowLap=-1,faultyLap=-1,gapDrop=0,gapLogged=false,jOut=false,jExitAt=-math.huge,jEnd=-math.huge,jLap=-1,jWasPit=false,jCool=false,jCoolAt=-math.huge,jCoolEnd=-math.huge} end
 function M.new()
  local t={active=false,push={},cars={},logAt=-math.huge,playerAt={},playerBin=0}
  for i=1,K.maxCars do t.cars[i]=car(); t.push[i]=false end
@@ -40,7 +44,12 @@ function M.rebase(t,amount)
   if U.finite(c.warnAt) then c.warnAt=c.warnAt-amount end
   if U.finite(c.coolAt) then c.coolAt=c.coolAt-amount end
   if U.finite(c.coolEnd) then c.coolEnd=c.coolEnd-amount end
+  if U.finite(c.outEnd) then c.outEnd=c.outEnd-amount end
   if U.finite(c.candAt) then c.candAt=c.candAt-amount end
+  if U.finite(c.jExitAt) then c.jExitAt=c.jExitAt-amount end
+  if U.finite(c.jEnd) then c.jEnd=c.jEnd-amount end
+  if U.finite(c.jCoolAt) then c.jCoolAt=c.jCoolAt-amount end
+  if U.finite(c.jCoolEnd) then c.jCoolEnd=c.jCoolEnd-amount end
   for k=1,c.catchN do c.catchT[k]=c.catchT[k]-amount end
  end
 end
@@ -71,6 +80,8 @@ function M.update(t,e,frame,now,dt)
  if profile~='P' and profile~='Q' then
   for i=1,frame.count do
    local a=frame.cars[i]; local c=t.cars[i]
+   -- Beta 1.62 (règles de la journée circuit) : tour de chauffe progressif après une vraie sortie des stands.
+   if profile=='J' then M.trackDayOut(c,e,a,i,p,now) else c.jOut=false end
    c.wasPit=a.pit==true; c.lapSeen=a.lap or 0; c.seen=false; c.cool=false; c.planned=false; c.slow=0; c.pushLaps=0; c.wasPush=false; c.why=''
    t.push[i]=false; e.states[i].qualiNoLearn=false
   end
@@ -83,19 +94,24 @@ function M.update(t,e,frame,now,dt)
   if not c.seen then
    -- Première vue : voie des stands (tour de sortie à la sortie) ou déjà en piste (posée par l'app, rechargement) :
    -- tour de sortie jusqu'à la ligne.
-   c.seen=true; c.wasPit=a.pit==true; c.out=true; c.outLap=a.pit and -1 or lap; c.exitAt=now
+   -- Relecture (S10) : déjà en piste à la première vue (rechargement de l'app) : classée sans la baisse de niveau
+   -- du tour de chauffe (c.exitAt ancien : la rampe et le rendu de K.qualiOutLevel sont déjà passés).
+   c.seen=true; c.wasPit=a.pit==true; c.out=true; c.outLap=a.pit and -1 or lap; c.exitAt=now; c.noDrop=not a.pit
   end
   if a.pit then
    c.out=true; c.outLap=-1; c.cool=false; c.slow=0; c.planned=false; c.pushLaps=0
   elseif c.wasPit or a.teleport then
-   c.out=true; c.outLap=lap; c.exitAt=now; c.cool=false; c.slow=0
+   c.out=true; c.outLap=lap; c.exitAt=now; c.cool=false; c.slow=0; c.outPit=c.wasPit==true; c.noDrop=false
   end
   c.wasPit=a.pit==true
   if c.out and not a.pit and c.outLap>=0 and lap>c.outLap then
    -- Ligne passée juste après la sortie (ligne placée après la sortie des stands) : le tour de sortie continue.
-   if now-c.exitAt<K.qualiOutGrace then c.outLap=lap else c.out=false end
+   if now-c.exitAt<K.qualiOutGrace then c.outLap=lap else c.out=false; c.outEnd=now; c.outLogged=false; c.outPit=false end
   end
+  -- Beta 1.62 (décision 3 du pilote) : tour lancé passé sous drapeau jaune (relevé pour le tour en cours).
+  if c.wasPush and not a.player and s.yellow then c.yellowLap=lap end
   -- Tour de refroidissement (ou tour abandonné) : nettement plus lente que sa référence ici, jusqu'à la ligne.
+  local prevLap=c.lapSeen
   local crossed=c.lapSeen>=0 and lap>c.lapSeen
   c.lapSeen=lap
   if not c.out and not a.pit then
@@ -108,7 +124,14 @@ function M.update(t,e,frame,now,dt)
    -- prévu seulement avec l'onglet Général (sans lui, le niveau n'est pas commandé : la voiture roulerait un tour entier
    -- à pleine vitesse sans être lancée).
    if crossed and not c.wasPush then c.pushLaps=0 end
-   if crossed and c.wasPush then
+   -- Beta 1.62 (décision 3 du pilote) : qualifications, IA pilotée : tour lancé fautif (tour invalidé par les limites de
+   -- piste, src/sanctions.lua, ou passé sous drapeau jaune) : il ne compte pas dans la série, la voiture refait un tour
+   -- lancé au lieu de son refroidissement ; son temps reste au classement d'AC (l'app ne peut pas l'effacer).
+   local why=crossed and c.wasPush and profile=='Q' and t.active and a.control and not a.player and M.faulty(c,e,i,prevLap) or nil
+   if why then
+    c.faultyLap=prevLap; e.stats.qualiRedo=(e.stats.qualiRedo or 0)+1
+    U.log(e.log,now,'INFO',string.format('tour refait: %s (%s), un autre tour lance',name(a),why),i)
+   elseif crossed and c.wasPush then
     c.pushLaps=c.pushLaps+1
     if t.active and profile=='Q' and p.qualiCoolLaps and not p.qualiRuns and p.section_general and a.control and not a.player and c.pushLaps>=M.target(e.runtimeG.seed,i) and timeForCool(frame,a) then
      c.cool=true; c.planned=true; c.coolLap=lap; c.coolAt=now; c.pushLaps=0
@@ -140,6 +163,37 @@ function M.update(t,e,frame,now,dt)
   if t.active and c.planned and c.cool then drop=K.qualiCoolLevel*min(1,(now-c.coolAt)/K.qualiCoolRamp)
   elseif now-c.coolEnd<K.qualiCoolRelease then drop=K.qualiCoolLevel*(1-(now-c.coolEnd)/K.qualiCoolRelease) end
   if drop>0 and a.control and not a.player then cmd.levelScale=(cmd.levelScale or 1)*(1-drop) end
+  -- Beta 1.60 (lot 3, demande du pilote : tours de chauffe impossibles à distinguer des tours lancés) : tour de sortie
+  -- des essais et qualifications (de la sortie des stands à la ligne), IA pilotée, onglet Général : niveau abaissé de
+  -- K.qualiOutLevel (montée en K.qualiOutRamp s, rendu en K.qualiCoolRelease s après la ligne) ; s'ajoute à la chauffe
+  -- des pneus (réglage outLapLevelPct). Jamais dans la voie des stands ; tours lancés coupés : rendu par la même rampe.
+  local outNow=t.active and c.out and c.outLap>=0 and not a.pit
+  if not outNow and c.outLogged then c.outEnd=now; c.outLogged=false end
+  -- Relecture du lot 3 (N8) : tours lancés rétablis après une coupure (drapeau rouge) : la baisse reprend du niveau
+  -- où le rendu en était (avant : d'un coup, la rampe était mesurée depuis l'ancienne sortie des stands).
+  if outNow and not c.outOn and c.outEnd and c.outEnd>c.exitAt then
+   local f=now-c.outEnd<K.qualiCoolRelease and 1-(now-c.outEnd)/K.qualiCoolRelease or 0
+   c.outFrom=now-f*K.qualiOutRamp
+  end
+  c.outOn=outNow
+  local outDrop=0
+  if outNow and c.noDrop then outDrop=0
+  elseif outNow then outDrop=K.qualiOutLevel*min(1,(now-max(c.exitAt,c.outFrom or -math.huge))/K.qualiOutRamp)
+  elseif now-c.outEnd<K.qualiCoolRelease then outDrop=K.qualiOutLevel*(1-(now-c.outEnd)/K.qualiCoolRelease) end
+  if outDrop>0 and a.control and not a.player and p.section_general then
+   cmd.levelScale=(cmd.levelScale or 1)*(1-outDrop)
+   if outNow and not c.outLogged then
+    c.outLogged=true; e.stats.qualiOut=(e.stats.qualiOut or 0)+1
+    -- Une ligne par vraie sortie des stands (voitures vues en piste au début de la séance ou au rechargement : aucune
+    -- ligne, vingt lignes dans la même seconde videraient le quota du journal).
+    if c.outPit then U.log(e.log,now,'INFO',string.format('tour de chauffe: %s (niveau -%.0f %%)',name(a),K.qualiOutLevel*100),i) end
+   end
+  end
+  -- Beta 1.62 (décision 4 du pilote) : tour de sortie, voiture devant à moins de K.qualiExitGap s : baisse de niveau
+  -- bornée pour rouvrir l'écart avant le tour lancé, seulement dans la première partie du tour (avant K.qualiGapUntil
+  -- du tour) et jamais avec une voiture lancée qui arrive derrière (jamais de ralenti dans le dernier secteur). Baisse
+  -- totale du tour de sortie au plus K.qualiOutMaxDrop (pas de ralenti inutile).
+  M.exitGap(t,e,a,c,i,cmd,outNow and not c.noDrop and p.section_general,outDrop,now,dt)
   t.push[i]=t.active and a.valid and not a.pit and not a.finished and not a.safetyCar and not c.out and not c.cool and not inLap
    and not s.abnormal and a.kmh>=K.qualiCoolMinKmh or false
   c.wasPush=t.push[i]
@@ -228,6 +282,73 @@ function M.update(t,e,frame,now,dt)
   end
  end
 end
+-- Beta 1.62 (décision 3) : cause d'un tour lancé fautif (nil sinon) : tour invalidé par les limites de piste
+-- (src/sanctions.lua, même numéro de tour) ou passé sous drapeau jaune.
+function M.faulty(c,e,i,lap)
+ local sc=e.sanctions and e.sanctions.cars and e.sanctions.cars[i]
+ if sc and sc.invalidLap==lap and lap>=0 then return 'tour invalide, limites de piste' end
+ if c.yellowLap==lap and lap>=0 then return 'drapeau jaune' end
+ return nil
+end
+-- Beta 1.62 (décision 4) : écart en temps (s) à la voiture devant (perception), ou nil.
+local function aheadTime(e,i,a)
+ local row=e.perception.rows[i]
+ if not row or row.front<=0 then return nil end
+ local r=row.neighbors[row.front]
+ local b=e.frame.cars[r.index]
+ if not b or b.pit or not b.valid or r.gap<0 then return nil end
+ return r.gap/max(a.speed,K.qualiGapMinSpeed)
+end
+function M.exitGap(t,e,a,c,i,cmd,eligible,outDrop,now,dt)
+ local want=0
+ if eligible and t.active and a.control and not a.player and a.splineValid and (a.spline%1)<K.qualiGapUntil then
+  local gap=aheadTime(e,i,a)
+  local row=e.perception.rows[i]
+  local flying=M.follower(t,e,i,row)
+  if gap and gap<K.qualiExitGap and not flying then want=max(0,min(K.qualiGapLevel,K.qualiOutMaxDrop-(outDrop or 0))) end
+ end
+ local rate=K.qualiGapLevel/K.qualiOutRamp*dt
+ if want>c.gapDrop then c.gapDrop=min(want,c.gapDrop+rate) else c.gapDrop=max(want,c.gapDrop-rate) end
+ if c.gapDrop>0 then
+  cmd.levelScale=(cmd.levelScale or 1)*(1-c.gapDrop)
+  if want>0 and not c.gapLogged then
+   c.gapLogged=true; e.stats.qualiGap=(e.stats.qualiGap or 0)+1
+   U.log(e.log,now,'INFO',string.format('tour de sortie: %s laisse filer la voiture devant (ecart vise %.0f s)',name(a),K.qualiExitGap),i)
+  end
+ elseif want==0 then c.gapLogged=false end
+end
+-- Beta 1.62 (règles de la journée circuit) : tour de chauffe progressif après une vraie sortie des stands (réglage
+-- outLapEnabled, onglet Général) : niveau abaissé de K.qualiOutLevel (montée K.qualiOutRamp s) jusqu'à la ligne, rendu
+-- en K.qualiCoolRelease s. Voitures posées en piste au début de la séance : aucune baisse.
+function M.trackDayOut(c,e,a,i,p,now)
+ local cmd=e.commands[i]
+ if not (p.outLapEnabled and p.section_general and a.control and not a.player) then c.jOut=false; c.jWasPit=a.pit==true; return end
+ if a.pit then c.jOut=false
+ elseif c.jWasPit then c.jOut=true; c.jExitAt=now; c.jLap=a.lap or 0
+  e.stats.trackDayOut=(e.stats.trackDayOut or 0)+1
+  U.log(e.log,now,'INFO',string.format('tour de chauffe: %s (niveau -%.0f %%)',name(a),K.qualiOutLevel*100),i)
+ elseif c.jOut and (a.lap or 0)>c.jLap then
+  if now-c.jExitAt<K.qualiOutGrace then c.jLap=a.lap or 0 else c.jOut=false; c.jEnd=now end
+ end
+ c.jWasPit=a.pit==true
+ local drop=0
+ if c.jOut then drop=K.qualiOutLevel*min(1,(now-c.jExitAt)/K.qualiOutRamp)
+ elseif now-c.jEnd<K.qualiCoolRelease then drop=K.qualiOutLevel*(1-(now-c.jEnd)/K.qualiCoolRelease) end
+ -- Beta 1.62 (journée circuit : « tour de refroidissement avant de rentrer ») : appelée aux stands (règles, sanction,
+ -- stratégie, demande d'AC) : allure de refroidissement jusqu'à la voie des stands ; au damier l'app rend déjà les
+ -- voitures à AC (session finie) (même niveau et mêmes rampes que le refroidissement des qualifications) ; une ligne par voiture.
+ local cooling=not a.pit and not a.finished and (cmd.rulePit or cmd.sanCalled or cmd.stratCalled or a.requestingPit==true)
+ if cooling then
+  if not c.jCool then
+   c.jCool=true; c.jCoolAt=now; e.stats.trackDayCool=(e.stats.trackDayCool or 0)+1
+   U.log(e.log,now,'INFO',string.format('tour de refroidissement: %s avant les stands (niveau -%.0f %%)',name(a),K.qualiCoolLevel*100),i)
+  end
+  drop=max(drop,K.qualiCoolLevel*min(1,(now-c.jCoolAt)/K.qualiCoolRamp))
+ elseif c.jCool then c.jCool=false; c.jCoolEnd=now
+ end
+ if not c.jCool and now-c.jCoolEnd<K.qualiCoolRelease then drop=max(drop,K.qualiCoolLevel*(1-(now-c.jCoolEnd)/K.qualiCoolRelease)) end
+ if drop>0 then cmd.levelScale=(cmd.levelScale or 1)*(1-drop) end
+end
 -- Voiture lancée la plus proche derrière la voiture i pas lancée (à qualiYieldTime s au plus, qui se rapproche) : la
 -- voisine (perception), ou nil. Une voiture lente plus proche ne la masque pas.
 function M.follower(t,e,i,row)
@@ -238,7 +359,9 @@ function M.follower(t,e,i,row)
   if r.long<0 and r.gap>=0 and t.push[r.index] and math.abs(r.lat)<=K.latYield and (r.sa>=K.qualiYieldSa or r.gap<=K.qualiYieldNear and r.sa>=-K.blueSlack) then
    local b=e.frame.cars[r.index]
    local time=r.gap/max(b.speed,1)
-   if time<=K.qualiYieldTime and time<gapTime then best,gapTime=r,time end
+   -- Beta 1.60 (lot 3) : voiture lancée vue plus tôt (K.qualiYieldLead s) : la voiture qui chauffe ses pneus quitte la
+   -- trajectoire avant son arrivée.
+   if time<=math.max(K.qualiYieldTime,K.qualiYieldLead) and time<gapTime then best,gapTime=r,time end
   end
  end
  return best,gapTime

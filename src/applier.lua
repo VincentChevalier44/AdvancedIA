@@ -399,6 +399,7 @@ local function weather(a,s,car,cmd,now)
   -- Gomme inadaptée dans la voie des stands : changée aussitôt, même en roulant (les IA apparaissent souvent aux stands
   -- en intermédiaires sur piste sèche et repartent avant le contrôle suivant).
   local lane=car.pit and cmd.weatherCompound>=0 and car.compoundIndex~=cmd.weatherCompound
+  if not car.pit then s.weatherLaneNoted=nil end
   if now>=s.weatherAt or lane then
    s.weatherAt=now+K.weatherPeriod
    if cmd.weatherCompound>=0 and (car.pit or cmd.weatherGrid and car.kmh<=K.tyreStopSpeed) and car.compoundIndex~=cmd.weatherCompound and now>=s.tyreAt and a.caps.tyres.available then
@@ -406,8 +407,13 @@ local function weather(a,s,car,cmd,now)
     if Caps.call(a.caps,'tyres',car.index,cmd.weatherCompound) then
      s.tyreAt=now+K.tyreWriteGap
      local names=car.tyreNames or {}
+     -- Fusion 1.61 (Zandvoort, 11 novembre : cinq lignes en 25 s pour la même voiture) : une ligne par passage aux
+     -- stands et par gomme demandée ; la consigne, elle, reste redonnée tant que la gomme montée n'a pas changé.
+     local laneKey=car.pit and cmd.weatherCompound or nil
+     if laneKey==nil or s.weatherLaneNoted~=laneKey then s.weatherLaneNoted=laneKey
      note(a,'INFO',string.format('pneus adaptes a la meteo %s: %s -> %s (%s)',car.inPitBox and 'aux stands' or car.pit and 'dans la voie des stands' or 'a l arret au depart',
       tostring(names[before] or before),tostring(names[cmd.weatherCompound] or cmd.weatherCompound),cmd.weatherRain and 'pluie' or 'sec'),car.index+1)
+     end
     end
    end
   end
@@ -870,7 +876,9 @@ local function safety(a,s,car,cmd,now)
  end
  -- Aucune commande dans la voie des stands (règle D12) : le limiteur natif s'y applique déjà.
  -- Garée, sa limite reste posée (sans effet à l'arrêt) jusqu'à la restitution générale.
- if cmd.scSpeed<K.unlimitedSpeed and not car.pit then send(a,s,'speed',car.index,cmd.scSpeed,K.levelEpsilon) end
+ if cmd.scSpeed<K.unlimitedSpeed and not car.pit then send(a,s,'speed',car.index,cmd.scSpeed,K.levelEpsilon)
+ -- Beta 1.60 : voiture de sécurité à son allure libre : limite d'allure rendue à AC (elle restait posée à 80 km/h).
+ elseif car.safetyCar and not cmd.scPark and not car.pit and s.speed~=nil and Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil; a.recoveryDirty=true end
 end
 -- Dépannage : une IA immobile en piste est ramenée une seule fois jusqu'à son stand (jamais le joueur).
 local function recover(a,s,car,cmd)
@@ -1245,9 +1253,32 @@ function M.watchGui(fn)
  local ok,d=pcall(ac.onCSPConfigChanged,ac.CSPModuleID.GUI,fn)
  return ok and d or nil
 end
+-- Beta 1.60 (tranche C, recherche seulement) : sonde en LECTURE SEULE de ai.ini, journal détaillé allumé, une ligne par
+-- modèle de voiture, une voiture par image. Dit si les valeurs d'origine (anticipation, freinage, pneus) sont lisibles
+-- sur les voitures du pilote : condition de toute écriture future. Rien n'est écrit dans le jeu.
+local function aiIniValue(ini,section,key)
+ local ok,value=pcall(ini.get,ini,section,key,-1)
+ if not ok or type(value)~='number' or value~=value or value<0 then return 'absent' end
+ return string.format('%.3g',value)
+end
+function M.aiIniProbe(a,frame)
+ a.aiIniSeen=a.aiIniSeen or {}
+ local i=a.aiIniNext or 1
+ if i>frame.count then a.aiIniDone=true; return end
+ a.aiIniNext=i+1
+ local car=frame.cars[i]
+ if not (car.valid and car.control and not car.player) or car.id==nil or car.id=='' or a.aiIniSeen[car.id] then return end
+ a.aiIniSeen[car.id]=true
+ if not (ac.INIConfig~=nil and callable(ac.INIConfig.carData)) then note(a,'INFO','sonde ai.ini: lecture indisponible (CSP)',-1); a.aiIniDone=true; return end
+ local ok,ini=pcall(ac.INIConfig.carData,car.index,'ai.ini')
+ if not ok or ini==nil or not callable(ini.get) then note(a,'INFO',string.format('sonde ai.ini: %s illisible',car.id),i); return end
+ note(a,'INFO',string.format('sonde ai.ini: %s LOOKAHEAD BASE %s GAS_BRAKE %s ; PEDALS BRAKE_HINT %s ; TYRES HINT %s',car.id,
+  aiIniValue(ini,'LOOKAHEAD','BASE'),aiIniValue(ini,'LOOKAHEAD','GAS_BRAKE_LOOKAHEAD'),aiIniValue(ini,'PEDALS','BRAKE_HINT'),aiIniValue(ini,'TYRES','HINT')),i)
+end
 function M.apply(a,frame,commands,g,now)
  if not a.allowed or frame.online or frame.replay or frame.paused then return end
  a.g=g; a.offsetSign=g.offsetSign
+ if g.debugLog and not a.aiIniDone then M.aiIniProbe(a,frame) end
  for i=1,frame.count do
   local car=frame.cars[i]; local cmd=commands[i]; local s=a.cars[i]
   -- Erreur de pilotage décidée par le moteur : servie une seule fois, à une IA en piste, qu'elle soit commandée ou non
@@ -1388,18 +1419,36 @@ function M.nextSession(a,frame)
  a.session=frame.session
 end
 function M.clipboard(text) if ac.setClipboardText then return pcall(ac.setClipboardText,text) end return false end
+-- Affinage 1.62 (coût, AUDIT_FPS cause 7) : ligne de chaque voiture refaite seulement quand l'une de ses valeurs change
+-- (avant : jusqu'à 61 string.format à 19 champs au moins chaque seconde) ; texte écrit identique, et l'écriture est sautée
+-- quand le texte complet n'a pas changé depuis la dernière écriture réussie.
+local function rowFlags(s)
+ return (s.level and 1 or 0)+(s.aggression and 2 or 0)+(s.caution and 4 or 0)+(s.grip and 8 or 0)+(s.brake>0 and 16 or 0)
+  +(s.speed and 32 or 0)+(s.rainHint~=nil and 64 or 0)+(s.rainHint==true and 128 or 0)+(s.originalRain and 256 or 0)
+  +(s.pitRequest and 512 or 0)+(s.stop and 1024 or 0)+(s.parked and 2048 or 0)+(s.scHeld and 4096 or 0)
+end
 function M.checkpoint(a,frame,force)
  if not ac.store or not (a.recoveryDirty or force) or frame.replay then return end
+ local cache=a.rowCache; if not cache then cache={}; a.rowCache=cache end
  local rows={tostring(frame.session)..(a.flagOverride and ';F' or '')..(a.drsAny and ';D' or '')}
  for i=1,K.maxCars do
   local s=a.cars[i]
   if s.owned and s.id:match('^[%w_%-]*$') then
    -- Beta 1.52 : deux colonnes ajoutées à la fin (une ligne plus ancienne reste lue) : carburant demandé (litres, -1
    -- sans demande) et voiture de sécurité retenue par l'attente d'AC ; rendus à AC par l'instance suivante.
-   rows[#rows+1]=string.format('%d,%s,%.9g,%.9g,%.9g,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d',i,s.id,s.originalLevel,s.originalAggression,s.offset,s.level and 1 or 0,s.aggression and 1 or 0,s.caution and 1 or 0,s.grip and 1 or 0,s.brake>0 and 1 or 0,s.speed and 1 or 0,s.rainHint~=nil and 1 or 0,s.rainHint==true and 1 or 0,s.originalRain and 1 or 0,s.pitRequest and 1 or 0,s.stop and 1 or 0,s.parked and 1 or 0,s.fuelRequested>=0 and math.floor(s.fuelRequested) or -1,s.scHeld and 1 or 0)
+   local flags=rowFlags(s); local fuel=s.fuelRequested>=0 and math.floor(s.fuelRequested) or -1
+   local c=cache[i]
+   if not c or c.id~=s.id or c.level~=s.originalLevel or c.aggression~=s.originalAggression or c.offset~=s.offset or c.flags~=flags or c.fuel~=fuel then
+    if not c then c={}; cache[i]=c end
+    c.id=s.id; c.level=s.originalLevel; c.aggression=s.originalAggression; c.offset=s.offset; c.flags=flags; c.fuel=fuel
+    c.row=string.format('%d,%s,%.9g,%.9g,%.9g,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d',i,s.id,s.originalLevel,s.originalAggression,s.offset,s.level and 1 or 0,s.aggression and 1 or 0,s.caution and 1 or 0,s.grip and 1 or 0,s.brake>0 and 1 or 0,s.speed and 1 or 0,s.rainHint~=nil and 1 or 0,s.rainHint==true and 1 or 0,s.originalRain and 1 or 0,s.pitRequest and 1 or 0,s.stop and 1 or 0,s.parked and 1 or 0,fuel,s.scHeld and 1 or 0)
+   end
+   rows[#rows+1]=c.row
   end
  end
- local ok=pcall(ac.store,'humanai:recovery',table.concat(rows,'\n')); if ok then a.recoveryDirty=false end
+ local text=table.concat(rows,'\n')
+ if text==a.recoveryText then a.recoveryDirty=false; return end
+ local ok=pcall(ac.store,'humanai:recovery',text); if ok then a.recoveryDirty=false; a.recoveryText=text end
 end
 function M.recover(a,frame)
  if not ac.load then return end
@@ -1477,6 +1526,34 @@ function M.companionInstalled(name)
  end)
  return ok and yes==true
 end
+-- Beta 1.60 : version d'une app compagne, lue dans son manifest.ini (section [ABOUT], ligne VERSION=X.Y.Z : trois
+-- nombres, sans préfixe). M.manifestVersion : texte du manifeste -> {X,Y,Z} ou nil. M.versionBelow : comparaison
+-- nombre par nombre (1.3.10 est au-dessus de 1.3.4). M.companionVersion : une lecture du fichier, au lancement
+-- seulement (jamais par image) ; fichier ou ligne illisible : nil.
+function M.manifestVersion(text)
+ if type(text)~='string' then return nil end
+ -- Relecture (N6) : marque d'ordre des octets UTF-8 en tête du fichier tolérée ([ABOUT] est souvent la première ligne).
+ if text:sub(1,3)=='\239\187\191' then text=text:sub(4) end
+ local about=false
+ for line in (text..'\n'):gmatch('([^\r\n]*)\r?\n') do
+  local section=line:match('^%s*%[([^%]]+)%]')
+  if section then about=section:upper()=='ABOUT'
+  elseif about then
+   local a,b,c=line:match('^%s*VERSION%s*=%s*(%d+)%.(%d+)%.(%d+)%s*$')
+   if a then return {tonumber(a),tonumber(b),tonumber(c)} end
+  end
+ end
+ return nil
+end
+function M.versionBelow(version,minimum)
+ for k=1,3 do if version[k]~=minimum[k] then return version[k]<minimum[k] end end
+ return false
+end
+function M.companionVersion(name)
+ if not M.companionInstalled(name) or type(io.load)~='function' then return nil end
+ local ok,text=pcall(function() return io.load(ac.getFolder(ac.FolderID.ACAppsLua)..'\\'..name..'\\manifest.ini') end)
+ return ok and M.manifestVersion(text) or nil
+end
 -- Deux structures partagées entre apps Lua (ac.connect), décrites par src/bridge_layout.lua ; la clé de chacune (champ
 -- « key ») évite toute collision. Sans ac.connect (autre version de CSP, bancs de mesure) : nil et la raison, rien n'est
 -- publié.
@@ -1549,6 +1626,69 @@ function M.presetFileRead()
    end
    local ok,text=pcall(io.load,path)
    if ok and type(text)=='string' then return text,place[2] end
+  end
+ end
+ return nil
+end
+-- Beta 1.61 (étape de base) : fichiers par circuit (src/trackfile.lua ; zones : K.zoneFolder, allure : K.paceFolder),
+-- sous Documents\Assetto Corsa\AdvancedIA, repli sur le dossier de l'app dans CSP comme le fichier des préréglages.
+-- Seuls accès aux fichiers de ces deux dossiers. folder : l'un des deux noms ; key : clé du circuit (TrackFile.key).
+local function trackPath(dir,folder,key)
+ if not dir or (folder~=K.zoneFolder and folder~=K.paceFolder) then return nil end
+ if type(key)~='string' or key=='' or #key>K.trackKeyMax or not key:match('^[%w_%-]+$') then return nil end
+ return dir..'\\'..folder..'\\'..key..'.ini'
+end
+-- Lecture : le texte et 'docs' ou 'state' ; nil s'il n'y a pas de fichier ; nil et 'big' au-delà de maxBytes (taille
+-- demandée à CSP avant la lecture quand il la donne, puis vérifiée sur le texte).
+function M.trackFileRead(folder,key,maxBytes)
+ if not io or not callable(io.load) then return nil end
+ local limit=maxBytes or K.trackFileMaxBytes
+ for _,place in ipairs(presetPlaces()) do
+  local path=trackPath(place[1],folder,key)
+  if presetExists(path) then
+   if callable(io.fileSize) then
+    local okSize,size=pcall(io.fileSize,path)
+    if okSize and type(size)=='number' and size>limit then return nil,'big' end
+   end
+   local ok,text=pcall(io.load,path)
+   if ok and type(text)=='string' then if #text>limit then return nil,'big' end return text,place[2] end
+  end
+ end
+ return nil
+end
+-- Finition 1.61 (relecture) : fichier refusé à la lecture (syntaxe, circuit, taille…) mis de côté sous
+-- <clé>.refused.ini (puis .refused-2 … .refused-9), jamais effacé ni écrasé par l'écriture suivante : les zones écrites
+-- à la main par le pilote restent récupérables. Rend le nom donné, ou nil (rien à mettre de côté, ou impossible).
+function M.trackFileSetAside(folder,key)
+ if not io or not callable(io.move) then return nil end
+ for _,place in ipairs(presetPlaces()) do
+  local path=trackPath(place[1],folder,key)
+  if path and presetExists(path) then
+   local stem=path:sub(1,-5)
+   for n=1,9 do
+    local target=stem..(n==1 and '.refused' or '.refused-'..n)..'.ini'
+    if not presetExists(target) then
+     local ok,moved=pcall(io.move,path,target)
+     if ok and moved~=false then return key..(n==1 and '.refused' or '.refused-'..n)..'.ini' end
+     return nil
+    end
+   end
+   return nil
+  end
+ end
+ return nil
+end
+-- Écriture sûre (fichier temporaire puis remplacement, reste .bak effacé) : 'docs', 'state' (repli) ou nil.
+function M.trackFileWrite(folder,key,text)
+ if type(text)~='string' or #text>K.trackFileMaxBytes or not io or not callable(io.save) then return nil end
+ for _,place in ipairs(presetPlaces()) do
+  local dir=place[1]; local path=trackPath(dir,folder,key)
+  if path then
+   if callable(io.createDir) then pcall(io.createDir,dir); pcall(io.createDir,dir..'\\'..folder) end
+   -- Beta 1.61 (tranche B) : durée de l'écriture en ms rendue en second (os.clock ; 0 si l'horloge manque).
+   local clock=type(os)=='table' and callable(os.clock) and os.clock or nil
+   local before=clock and clock() or 0
+   if saveClean(path,text) then return place[2],clock and (clock()-before)*1000 or 0 end
   end
  end
  return nil

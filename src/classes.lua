@@ -19,17 +19,21 @@ function M.update(self,cars,states,count,p,now)
   for j=1,#self.patterns do local pat=self.patterns[j]
    if cars[i].id:lower():find(pat.pattern,1,true) then s.class=pat.class; s.classified=true; s.manualClass=true; break end
   end
-  if s.paceCount>=K.paceMinBins and cars[i].valid then
+  -- Beta 1.61 (tranche B) : tant que la voiture n'a pas appris assez d'endroits, la moyenne de l'allure gardée du
+  -- circuit (s.priorMean, src/pacemap.lua) en tient lieu : les classes existent dès le premier virage.
+  local mean=s.paceCount>=K.paceMinBins and s.paceMean or (s.priorMean or 0)
+  s.classMean=mean
+  if (s.paceCount>=K.paceMinBins or mean>0) and cars[i].valid then
    n=n+1; self.order[n]=i; local at=n
-   while at>1 and states[self.order[at-1]].paceMean<s.paceMean do self.order[at]=self.order[at-1]; at=at-1 end
+   while at>1 and states[self.order[at-1]].classMean<mean do self.order[at]=self.order[at-1]; at=at-1 end
    self.order[at]=i
   end
  end
  local class,previous=1,0
  for rank=1,n do
   local s=states[self.order[rank]]
-  if previous>0 and (previous-s.paceMean)/math.max(1,previous)>p.classGapPct/100 then class=math.min(K.classMax,class+1) end
-  previous=s.paceMean
+  if previous>0 and (previous-s.classMean)/math.max(1,previous)>p.classGapPct/100 then class=math.min(K.classMax,class+1) end
+  previous=s.classMean
   if not s.manualClass then
    if s.classCandidate==class then s.classCycles=math.min(K.classCycles,s.classCycles+1) else s.classCandidate=class; s.classCycles=1 end
    if s.classCycles>=K.classCycles then s.class=class; s.classified=true end

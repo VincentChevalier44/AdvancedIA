@@ -11,20 +11,23 @@ M.sections={
  human={{'humanReact',{'reactMin','reactMax','awMin','awMax'}},
   {'humanLine',{'paceDriftPct','personalLineJitter','laneBiasEnabled','laneBiasMax'}},
   {'humanLapse',{'lapseEnabled','lapseIntervalMin','lapseIntervalMax','lapseDurMin','lapseDurMax','lapseDropMin','lapseDropMax'}},
-  {'humanMistakes',{'mistakesEnabled','mistakeRate'}}},
+  {'humanMistakes',{'mistakesEnabled','mistakeRate','fineInputs'}},
+  {'humanMood',{'dynamicPersona'}}},
  lateral={{'lateralSpeed',{'rampSpeed','rampAccel','lowPassTau'}},
-  {'lateralLimits',{'maxSideOffset','cornerMin','cornerYawRef','lateralCooldown','emergencyReleaseFactor'}}},
- start={{'startStanding',{'startDelay','startCautionMult','startAggrMult','startRelax','startLaneHold','firstLapCare'}}},
+  {'lateralLimits',{'maxSideOffset','cornerMin','cornerYawRef','lateralCooldown','emergencyReleaseFactor'}},
+  {'lateralRear',{'rearAwareness'}}},
+ start={{'startStanding',{'startDelay','startCautionMult','startAggrMult','startRelax','startLaneHold','firstLapCare'}},
+  {'startProcedure',{'raceStart','startRealism'}}},
  yield={{'yieldOrdinary',{'yieldEnabled','yieldSide','yieldOffset','yieldDetectBehind','yieldBehindMargin','yieldHorizon','confirmTime'}},
   {'yieldHold',{'yieldHoldMin','yieldHoldAfterMin','yieldHoldAfterMax','yieldMaxHold'}},
   {'yieldSlow',{'yieldSlowdownPct','inviteSlowdownPct'}},
   {'yieldPressure',{'pressureEnabled','pressureGap','pressureTime'}},
   {'yieldQuali',{'qualiTraffic','qualiCoolLaps','qualiRuns'}}},
- blue={{'blueFlags',{'blueFlagEnabled','blueFlagRange','blueFlagSide'}}},
+ blue={{'blueFlags',{'blueFlagEnabled','blueFlagRange','blueFlagSide','classNuance'}}},
  flash={{'flashPlayer',{'flashMode','flashRange','flashMinAdvantage','flashCloseAdvantage','flashRequestTTL'}},
   {'flashAI',{'flashObliviousPct','flashMaxReactors','hornEnabled','aiFlashEnabled'}}},
  overtake={{'overtakeTrigger',{'overtakeEnabled','overtakeSide','overtakeDetectAhead','overtakeAheadMargin','overtakeHorizon','stuckTime','stuckPaceRatio'}},
-  {'overtakeMove',{'overtakeOffset','pullOutGapBase','pullOutGapPerMps','overtakeClearMargin','overtakeRestTime','overtakeChain','slipstreamEnabled'}},
+  {'overtakeMove',{'overtakeOffset','pullOutGapBase','pullOutGapPerMps','overtakeClearMargin','overtakeRestTime','overtakeChain','slipstreamEnabled','passAid'}},
   {'overtakeDefense',{'defenseEnabled','defenseMaxOffset','defenseCooldown','defenseTriggerGap'}},
   {'overtakeAero',{'towBreakEnabled','towBreakRange','towBreakStraight','dirtyAirEnabled','dirtyAirGap','dirtyAirLiftPct'}},
   {'overtakeFinal',{'finalLapsEnabled','finalLaps','finalAggressionPct','finalDefensePct'}}},
@@ -37,12 +40,12 @@ M.sections={
   {'accPenalties',{'playerPenalties','deltaTolerance','penaltySeconds','penaltyDisqualify','aiPenalties'}}},
  endurance={{'endOverlay',{'enduranceOverlay','stintLevelSwing','stintDegradationPct'}},
   {'endClasses',{'multiClass','classGapPct','classYieldMargin'}}},
- weather={{'weatherRain',{'weatherAdaptation','weatherTyresEnabled','rainGripBoostPct'}},
+ weather={{'weatherRain',{'weatherAdaptation','weatherTyresEnabled','rainGripBoostPct','weatherLive'}},
   {'weatherOutLap',{'outLapEnabled','outLapLevelPct'}},
-  {'weatherWear',{'lockWearEnabled','lockWearGain','lockFlatSpotKm'}},
+  {'weatherWear',{'lockWearEnabled','lockWearGain','lockFlatSpotKm','wearPace'}},
   {'weatherMessages',{'weatherMessage'}}},
  -- Beta 1.42 : stratégie des IA (course) et sanctions des IA (essais, qualifications et course).
- strategy={{'strategyPlan',{'strategyEnabled','strategyTyreWearPct','strategyFuelMarginLaps','strategyUndercut','strategyStartVariety'}},
+ strategy={{'strategyPlan',{'strategyEnabled','strategyTyreWearPct','strategyFuelMarginLaps','strategyUndercut','strategyStartVariety','strategySmart'}},
   {'strategyCharacter',{'strategyRiskPct','strategySpreadPct'}},
   {'strategyFailures',{'failuresEnabled','failureRate','failureLossPct'}}},
  sanctions={{'sanctionsTrack',{'sanTrackLimits','sanTrackWarnings','sanCutPenalty','sanCutSeconds'}},
@@ -52,7 +55,8 @@ M.sections={
   {'sanctionsDisplay',{'sanMessages','sanReport'}},
   -- Beta 1.59 : réglages de la 1.56 rangés dans leurs intertitres (plus sous « Autres réglages »), à la même place.
   {'sanctionsEscalation',{'sanEscalation','sanEscalationStep','sanEscalationMax'}},
-  {'sanctionsPlayer',{'sanPlayerTrackLimits','sanPlayerSession','sanPlayerPenalty'}}},
+  {'sanctionsPlayer',{'sanPlayerTrackLimits','sanPlayerSession','sanPlayerPenalty','sanPlayerContact'}},
+  {'sanctionsContact',{'sanContact'}}},
  -- Panneaux lumineux (Beta 1.37) : l'état du circuit est dessiné à part, en tête de la section.
  lights={{'lightsColours',{'lightsYellow','lightsRed','lightsBlue','lightsWhite','lightsOrange','lightsGreen'}},
   {'lightsDurations',{'lightsGreenTime','lightsHold'}}},
@@ -69,10 +73,12 @@ M.sections={
  rules_stops={{'stopsWindow',{'pitWindowOpenPct','pitWindowClosePct','pitMessage'}},
   {'stopsEach',{'pitTyres','pitRepair','pitCompoundChange','minPitTime','maxStintMin'}},
   {'stopsFuel',{'pitFuel','pitsClosed'}}},
- rules_safety={{'safetyOut',{'safetyCarEscalation','safetyCarSpeedKmh','restartOvertake'}}}}
+ rules_safety={{'safetyOut',{'safetyCarEscalation','restartOvertake'}}}}
 -- Beta 1.59 : réglages jamais montrés (valeur gardée sans effet) : lightsYellow est figé à vrai (M.validate), la case
 -- n'avait rien à régler.
 M.hidden={lightsYellow=true}
+-- Beta 1.60 : réglages en attente de leur tranche (src/config.lua, M.pendingKeys), jamais montrés non plus.
+for key in pairs(require('src/config').pendingKeys) do M.hidden[key]=true end
 -- Liste des groupes affichés d'une section : chaque entrée {id=, controls={...}} ; controls d'après la liste fournie
 -- (contrôles de la section, dans l'ordre du schéma). Le résultat est mémorisé par section (même liste de contrôles).
 local built={}

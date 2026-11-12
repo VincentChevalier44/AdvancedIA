@@ -144,7 +144,7 @@ tests.REPORT_CSV_156=function()
  t.cars[3].finishAt=11; t.cars[3].finishPos=2; t.cars[3].corrected=1; t.cars[3].finishLaps=5
  local lines=Sanctions.report(t,e,f,false)
  assert(lines[1]:find('# AdvancedIA '..C.release..', {date}, test, ',1,true) and lines[1]:find('complete=0',1,true),'first line')
- local header=select(2,lines[2]:gsub(',',','))+1; assert(header==21,'21 columns')
+ local header=select(2,lines[2]:gsub(',',','))+1; assert(header==22,'22 columns (Beta 1.60 : colonne contacts ajoutée à la fin)')
  assert(lines[3]:find('^1,2,"Dupont, ""JP""",car_3,'),'quoted, corrected order: '..lines[3])
  assert(lines[4]:find('^2,1,Driver_2,',1),'second')
  assert(#lines==6 and lines[5]:find(',0,1,',1,true) or lines[6]:find(',0,1,',1,true),'unfinished cars last, player flagged')

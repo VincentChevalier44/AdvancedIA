@@ -40,7 +40,13 @@ local function car()
   -- demandée à AC pour vos limites de piste (décision, instant) ; compteurs du rapport de course (jamais lus par une
   -- décision) : avertissements, coupures des gaz, drive-through, stop-and-go, purgées, places dues et rendues, temps non
   -- purgé, drapeau noir ; nom et modèle relevés pendant la course.
-  trackN=0,trackTime=0,cutRequest=0,cutAt=0,rWarn=0,rCut=0,rDrive=0,rStopgo=0,rServed=0,rOwed=0,rGiven=0,rUnserved=0,rBlack='',rName='',rModel=''}
+  trackN=0,trackTime=0,cutRequest=0,cutAt=0,
+  -- Beta 1.60 : collisions (src/blame.lua) : contacts en tort, avertissements, coupure des gaz demandée à AC (vous).
+  contacts=0,contactWarn=0,contactRequest=0,contactAt=0,lastX=0,lastZ=0,
+  -- Beta 1.62 (décision 5 du pilote) : drapeaux bleus ignorés de suite (remis à zéro quand elle cède), drapeaux de
+  -- l'épisode en cours déjà comptés.
+  blueN=0,blueEpN=0,blueBy=0,blueDone=false,
+  rWarn=0,rCut=0,rDrive=0,rStopgo=0,rServed=0,rOwed=0,rGiven=0,rUnserved=0,rBlack='',rName='',rModel=''}
 end
 local function clearCar(c,identity)
  local watch,hits=c.watch,c.lineHits
@@ -104,10 +110,11 @@ end
 local function reasonText(key) return L.sanctionTexts.reasons[key] or L.sanctions142.reasons[key] or key end
 -- Raison au journal (sans accents, comme le reste du journal).
 local journalReasons={trackLimits='limites de piste',cut='virage coupe',jumpStart='faux depart',pitSpeed='exces de vitesse dans les stands',
- pitExit='ligne de sortie des stands',wrongWay='contresens',ignored='penalite non purgee',giveBack='place non rendue',repeated='trop d infractions'}
+ pitExit='ligne de sortie des stands',wrongWay='contresens',ignored='penalite non purgee',giveBack='place non rendue',repeated='trop d infractions',
+ contact='contact',blueFlags='drapeaux bleus ignores'}
 local kindJournal={drive='drive-through',stopgo='stop-and-go'}
 -- Réglage de la source d'une pénalité aux stands (coupé : pénalité annulée).
-local sourceOff={jumpStart='sanJumpStart',pitSpeed='sanPitSpeed',pitExit='sanPitExit'}
+local sourceOff={jumpStart='sanJumpStart',pitSpeed='sanPitSpeed',pitExit='sanPitExit',contact='sanContact'}
 local function event(t,text,kind)
  local list=t.events
  table.insert(list,1,{text=text,kind=kind or 'text'})
@@ -130,7 +137,9 @@ end
 -- Annonce à l'écran : une à la fois (au plus une toutes les K.sanNoticeGap s), drapeau noir toujours.
 local function notice(t,e,kind,text,now,force,what,driver,x,y)
  -- Beta 1.56 : vos limites de piste toujours annoncées (sanMessages : annonces des IA seulement).
+ if kind~='playerContact' then -- Beta 1.60 : vos contacts en tort toujours annoncés, comme vos limites de piste
  if not e.run.sanMessages and kind~='playerSanction' then return end
+ end
  if not force and now-t.noticeAt<K.sanNoticeGap then return end
  Incidents.message(e.incidents,kind,0,0,text)
  if e.incidents.messageKind==kind and e.incidents.messageText==text then
@@ -162,16 +171,18 @@ local function addTime(t,e,frame,i,seconds,reason,now,why)
  local c=t.cars[i]; local a=frame.cars[i]
  c.time=c.time+seconds; t.classDirty=true
  -- Relecture : les limites de piste ne comptent pas vers le drapeau noir (penaltyDisqualify).
- local counted=reason~='trackLimits'
+ local counted=reason~='trackLimits' and reason~='blueFlags'
  if counted then c.count=c.count+1 end
  -- Beta 1.56 : rang de la pénalité de limites de piste (récidive) et total, rendus avec une zone ignorée.
  if reason=='trackLimits' then c.trackN=c.trackN+1; c.trackTime=c.trackTime+seconds end
  local text=string.format(L.sanctionTexts.time,name(a),seconds,reasonText(reason))
  -- Beta 1.56 : vos limites de piste (seul cas où le joueur reçoit du temps de l'app), annoncées comme les vôtres.
  if a.player then
-  U.log(e.log,now,'WARN',string.format('limites de piste joueur: penalite de temps +%.0f s%s, total +%.0f s',seconds,why or '',c.time),i)
+  -- Beta 1.60 : vos contacts en tort (sanPlayerContact) : même chemin, annoncés sous leur propre titre.
+  local contact=reason=='contact'
+  U.log(e.log,now,'WARN',string.format('%s: penalite de temps +%.0f s%s, total +%.0f s',contact and 'contact joueur' or 'limites de piste joueur',seconds,why or '',c.time),i)
   -- Ligne de session de l'overlay (comme vos autres pénalités), jamais le panneau des sanctions des IA.
-  event(t,text,'warn'); notice(t,e,'playerSanction',text,now,true)
+  event(t,text,'warn'); notice(t,e,contact and 'playerContact' or 'playerSanction',text,now,true)
   return
  end
  U.log(e.log,now,'WARN',string.format('sanction IA: %s penalite de temps +%.0f s (%s%s), total +%.0f s',name(a),seconds,journalReasons[reason] or reason,why or '',c.time),i)
@@ -480,9 +491,11 @@ local function wrongWay(t,e,frame,i,a,c,now,dt)
  local p=e.run
  -- Relecture : jamais hors piste ni pendant un tête-à-queue ou un arrêt (le contresens lui-même est aussi un incident).
  local ic=e.incidents.cars[i]
- if a.splineValid and not a.pit and not a.offtrack and not (ic.incident and (ic.wrong or 0)<K.wrongWayTime) and a.kmh>=K.sanWrongWayKmh and c.lastSpline>=0 and U.spline(a.spline-c.lastSpline)<0 then c.wrongFor=c.wrongFor+dt
+ if a.splineValid and not a.pit and not a.offtrack and not (ic.incident and (ic.wrong or 0)<K.wrongWayTime) and a.kmh>=K.sanWrongWayKmh and c.lastSpline>=0 and U.spline(a.spline-c.lastSpline)<0
+  -- Beta 1.60 (correctif) : nez en premier seulement (une IA qui recule pour quitter un mur n'est pas à contresens).
+  and Incidents.noseFirst(a,c.lastX,c.lastZ) then c.wrongFor=c.wrongFor+dt
  else c.wrongFor=max(0,c.wrongFor-2*dt) end
- c.lastSpline=a.splineValid and not a.pit and a.spline or -1
+ c.lastSpline=a.splineValid and not a.pit and a.spline or -1; c.lastX=a.x; c.lastZ=a.z
  if p.sanWrongWay and c.wrongFor>=p.sanWrongWaySeconds and not e.incidents.red then blackFlag(t,e,frame,i,'wrongWay',now) end
 end
 -- Voie des stands : excès de vitesse (après K.sanPitSpeedGrace s dans la voie, au-delà de la marge, K.sanPitSpeedDwell
@@ -628,6 +641,34 @@ local function giveBack(t,e,frame,i,a,c,cmd,now)
 end
 -- Tour bouclé : tours écoulés pour purger une pénalité (un tour sans aucun moment où elle était possible ne compte pas) ; au-delà
 -- de sanServeLaps, drapeau noir. Tour invalidé d'avance (dernier secteur du tour précédent).
+-- Beta 1.62 (décision 5 du pilote, course) : drapeaux bleus ignorés. Une IA qui garde derrière elle une voiture qui lui
+-- prend un tour (journal des drapeaux bleus entre IA de src/director.lua : s.blueAiLate après K.blueLogTime s) reçoit un
+-- drapeau de plus toutes les K.blueIgnoreStep s ; au K.blueIgnoreMax-ième de suite, pénalité de temps (comptée vers
+-- le drapeau noir). Elle cède : compte remis à zéro. Sous l'option des sanctions des IA (sanContact), sans nouveau
+-- réglage.
+local function blueFlags(t,e,frame,i,a,c,now)
+ local s=e.states[i]
+ if not e.run.sanContact or not s then c.blueN=0; c.blueEpN=0; c.blueBy=0; c.blueDone=false; return end
+ if s.blueAiYield then c.blueN=0; c.blueEpN=0; c.blueDone=false; return end
+ -- Beta 1.62 (relecture M1) : un épisode = la même voiture qui prend un tour ; une seule pénalité par épisode, hors du
+ -- compte du drapeau noir ; seul le temps passé sans veto du directeur (s.blueAiFree) compte.
+ if (s.blueAiBy or 0)~=(c.blueBy or 0) then c.blueBy=s.blueAiBy or 0; c.blueN=0; c.blueEpN=0; c.blueDone=false end
+ if c.blueDone then return end
+ if not s.blueAiLate then c.blueEpN=0; return end
+ local free=s.blueAiFree or 0
+ if free<K.blueLogTime then return end
+ local n=1+floor((free-K.blueLogTime)/K.blueIgnoreStep)
+ if n<=c.blueEpN then return end
+ c.blueN=min(K.blueIgnoreMax,c.blueN+(n-c.blueEpN)); c.blueEpN=n
+ -- Beta 1.62 (dernier lot) : une seule ligne par épisode, au drapeau qui donne la pénalité (33 lignes par minute à 60 IA
+ -- avec « Realistic race » quand chaque drapeau était journalisé).
+ if c.blueN>=K.blueIgnoreMax then
+  local by=frame.cars[s.blueAiBy or 0]
+  U.log(e.log,now,'INFO',string.format('drapeau bleu IA ignore: %s (%d / %d) devant %s',name(a),c.blueN,K.blueIgnoreMax,by and name(by) or '?'),i)
+  c.blueN=0; c.blueDone=true; e.stats.blueIgnored=(e.stats.blueIgnored or 0)+1
+  addTime(t,e,frame,i,e.run.sanTimeSeconds,'blueFlags',now)
+ end
+end
 local function lap(t,e,frame,i,a,c,now)
  local p=e.run
  if c.pending~='' then
@@ -661,6 +702,61 @@ local function resume(t,e,frame)
   end
  end
  t.classDirty=true
+end
+-- Beta 1.60 (src/blame.lua) : voiture jugée en tort dans un contact. serious : contact grave (l'autre voiture a perdu
+-- le contrôle, est sortie ou a perdu K.blamePlaces places) ; out : l'autre voiture est restée arrêtée K.blameOutTime s.
+-- IA (sanContact) : léger, K.blameWarnings avertissements puis pénalité de temps ; grave, pénalité de temps ; grave et
+-- l'autre hors course, drive-through (ou son équivalent en temps, règles existantes) ; essais et qualifications :
+-- avertissements seulement. Vous (sanPlayerContact, course seulement) : K.blameWarnings avertissements, puis la
+-- pénalité choisie pour vos limites de piste (sanPlayerPenalty) : du temps au classement corrigé, ou la coupure des gaz
+-- native d'AC ; jamais de drapeau noir, jamais de disqualification, rien d'autre sur votre voiture.
+function M.contact(t,e,frame,i,serious,out,now)
+ local c=t.cars[i]; local a=frame.cars[i]; local p=e.run
+ if not a or not a.valid or c.dq or a.finished or a.safetyCar or t.off then return end
+ local race=e.profile=='C'
+ if a.player then
+  if not race or not p.sanPlayerContact then return end
+  c.contacts=c.contacts+1
+  if c.contactWarn<K.blameWarnings then
+   c.contactWarn=c.contactWarn+1
+   U.log(e.log,now,'INFO',string.format('contact joueur: avertissement %d / %d',c.contactWarn,K.blameWarnings),i)
+   local text=string.format(L.sanctionTexts.contactWarning,name(a),c.contactWarn,K.blameWarnings)
+   event(t,text,'text'); notice(t,e,'playerContact',text,now,true)
+   return
+  end
+  local why=nil
+  if p.sanPlayerPenalty=='throttle' then
+   local id=e.penaltyCap and Penalties.requestContact(e.penalties,p.sanTimeSeconds,now)
+   if id then
+    c.contactRequest=id; c.contactAt=now
+    U.log(e.log,now,'WARN',string.format('contact joueur: coupure des gaz %.0f s demandee a AC',p.sanTimeSeconds),i)
+    event(t,string.format(L.sanctionTexts.contactThrottle,name(a),p.sanTimeSeconds),'warn')
+    return
+   end
+   why=', coupure des gaz refusee par AC'
+  end
+  addTime(t,e,frame,i,p.sanTimeSeconds,'contact',now,why)
+  return
+ end
+ if not p.sanContact or not a.control or e.penalties.ai.dq[i] then return end
+ c.contacts=c.contacts+1
+ if not race or not serious and c.contactWarn<K.blameWarnings then
+  c.contactWarn=c.contactWarn+1
+  local of=max(c.contactWarn,K.blameWarnings)
+  U.log(e.log,now,'INFO',string.format('sanction IA: %s avertissement contact %d / %d',name(a),c.contactWarn,of),i)
+  event(t,string.format(L.sanctionTexts.contactWarning,name(a),c.contactWarn,of),'text')
+  return
+ end
+ if serious and out then issue(t,e,frame,i,'drive','contact',now) else addTime(t,e,frame,i,p.sanTimeSeconds,'contact',now) end
+end
+-- Coupure des gaz demandée à AC pour un contact : écrite par l'applicateur (confirmée), sinon du temps à la place,
+-- jamais les deux (comme pour vos limites de piste).
+local function contactConfirm(t,e,frame,i,c,now)
+ if e.penaltyWritten==c.contactRequest then c.contactRequest=0
+ elseif not e.penaltyCap or now-c.contactAt>=K.sanPlayerCutConfirm then
+  e.penalties.cancelled=c.contactRequest; c.contactRequest=0
+  addTime(t,e,frame,i,e.run.sanTimeSeconds,'contact',now,', coupure des gaz refusee par AC')
+ end
 end
 -- À chaque image, à la fin de Engine.step (après les sanctions sous drapeau). Essais et qualifications : tours
 -- invalidés et contresens ; course : tout. Journée circuit et hotlap : rien (section masquée).
@@ -700,7 +796,11 @@ function M.update(t,e,frame,now,dt)
  local jumps=e.grid.aiJump
  if jumps then
   for i=1,K.maxCars do
-   if jumps[i]==true then jumps[i]='taken'; if race and p.sanJumpStart and i<=frame.count and not frame.cars[i].player then issue(t,e,frame,i,p.sanProcedureKind,'jumpStart',now) end end
+   if jumps[i]==true then jumps[i]='taken'; if race and p.sanJumpStart and i<=frame.count and not frame.cars[i].player then
+     issue(t,e,frame,i,p.sanProcedureKind,'jumpStart',now)
+     -- Beta 1.61 (tranche D) : faux départ flagrant, compté deux fois vers le drapeau noir.
+     if p.startRealism and e.grid.aiJumpGrade[i]=='flagrant' then t.cars[i].count=t.cars[i].count+1; escalate(t,e,frame,i,now) end
+    end end
   end
  end
  -- Relecture 1.42 (après correctifs) : appels aux stands déjà donnés (règles, stratégie, pénalités tenues) : même limite
@@ -722,7 +822,7 @@ function M.update(t,e,frame,now,dt)
    c.pending=''; c.asked=false; t.dirty=true
   end
   -- Beta 1.56 : rapport de course : nom et modèle relevés pendant la course (gardés après un changement de session).
-  if race and p.sanReport and a.valid then c.rName=name(a); c.rModel=a.id or '' end
+  if race and p.sanReport and a.valid then c.rName=a.baseName or name(a); c.rModel=a.id or '' end
   if a.valid and a.control and not a.player and not a.safetyCar and not a.finished and not c.dq and not e.penalties.ai.dq[i] then
    local cmd=e.commands[i]
    if c.lastLap>=0 and a.lap>c.lastLap then lap(t,e,frame,i,a,c,now) end
@@ -739,6 +839,7 @@ function M.update(t,e,frame,now,dt)
     cmd.penaltyPass=c.entry and a.pit==true
     throttle(t,e,frame,i,a,c,cmd,now,dt)
     giveBack(t,e,frame,i,a,c,cmd,now)
+    blueFlags(t,e,frame,i,a,c,now)
    end
   elseif a.player and a.valid and p.sanPlayerTrackLimits and not a.finished and not c.dq then
    -- Beta 1.56 : vos limites de piste (option), jamais le chemin des IA ; votre voiture n'est jamais pilotée.
@@ -746,6 +847,7 @@ function M.update(t,e,frame,now,dt)
    c.lastLap=a.lap
    playerLimits(t,e,frame,i,a,c,now,dt,race,ready)
   else c.cutLimit=1; c.outFor=0; c.wasPit=a.pit==true end
+  if c.contactRequest>0 then contactConfirm(t,e,frame,i,c,now) end
  end
  if race and p.sanReport and frame.started then t.raceSeen=true end
  t.junction=e.merge.spline; t.junctionSamples=e.merge.samples
@@ -828,7 +930,7 @@ end
 -- guillemets, guillemets doublés). Première ligne « # » d'information, en-tête, puis une ligne par voiture dans l'ordre
 -- corrigé (voitures non arrivées ensuite, dans l'ordre d'AC). complete : course finie (1) ou interrompue (0).
 local reportHeader='corrected_pos,ac_pos,driver,car,class,laps,finished,player,track_warnings,track_penalties,track_time_s,laps_invalidated,'
- ..'throttle_cuts,drive_throughs,stop_and_gos,served,unserved_added_s,give_back_owed,give_back_given,time_added_s,black_flag'
+ ..'throttle_cuts,drive_throughs,stop_and_gos,served,unserved_added_s,give_back_owed,give_back_given,time_added_s,black_flag,contacts'
 local function csv(v)
  v=tostring(v)
  if v:find('[,"\r\n]') then return '"'..(v:gsub('"','""'))..'"' end
@@ -862,7 +964,7 @@ function M.report(t,e,frame,complete)
   local st=e.states[i]; local class=e.run.multiClass and st and st.classified and tostring(st.class) or ''
   lines[#lines+1]=table.concat({finished and c.corrected or '',finished and c.finishPos or (a.position or ''),csv(driver),csv(model),class,
    finished and c.finishLaps or a.lap or 0,finished and 1 or 0,a.player and 1 or 0,c.rWarn,c.trackN,seconds(c.trackTime),c.invalid,
-   c.rCut,c.rDrive,c.rStopgo,c.rServed,seconds(c.rUnserved),c.rOwed,c.rGiven,seconds(c.time),csv(c.rBlack~='' and (journalReasons[c.rBlack] or c.rBlack) or '')},',')
+   c.rCut,c.rDrive,c.rStopgo,c.rServed,seconds(c.rUnserved),c.rOwed,c.rGiven,seconds(c.time),csv(c.rBlack~='' and (journalReasons[c.rBlack] or c.rBlack) or ''),c.contacts},',')
  end
  return lines
 end

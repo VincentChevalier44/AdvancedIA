@@ -33,6 +33,8 @@ function M.rebase(t,amount)
  if t.playerNoticeUntil>-math.huge then t.playerNoticeUntil=t.playerNoticeUntil-amount end
  if t.openedAt>-math.huge then t.openedAt=t.openedAt-amount end
  if t.remindAt then t.remindAt=t.remindAt-amount end; if t.hintAt then t.hintAt=t.hintAt-amount end
+ -- Relecture 1.62 (S4) : retenue de sortie d'emplacement décalée aussi.
+ if t.release then for _,r in pairs(t.release) do if r.since>=0 then r.since=r.since-amount end; if (r.readyAt or -1)>=0 then r.readyAt=r.readyAt-amount end end end
 end
 -- Avancement de la course de 0 à 1 : tours du leader, sinon temps d'une course chronométrée ; -1 inconnu.
 function M.progress(frame)
@@ -354,5 +356,42 @@ function M.restore(t,text,session)
  t.restoredSession=session
  -- Relecture 1.52 : un seul arrêt obligatoire depuis la 1.51.
  for identity,stops in text:gmatch('\n([%w_%-]+),(%d+)') do t.restored[identity]=math.min(1,tonumber(stops)) end
+end
+-- Beta 1.62 (règles de la course : priorité dans la voie des stands) : une IA arrêtée à son emplacement attend
+-- (cmd.pitHold) qu'une voiture déjà lancée dans la voie (plus de K.boxLaneKmh km/h, hors emplacement) et à moins de
+-- K.boxReleaseGap m derrière l'emplacement soit passée ; au plus K.boxReleaseMax s par passage à l'emplacement. Appelé
+-- après les autres modules (dernier à écrire cmd.pitHold) ; tous les profils.
+function M.releaseGuard(t,frame,cmds,now,log)
+ if frame.length<=0 then return end
+ local rel=t.release; if not rel then rel={}; t.release=rel end
+ for i=1,frame.count do
+  local a=frame.cars[i]; local cmd=cmds[i]
+  local r=rel[i]; if not r then r={since=-1,readyAt=-1,logged=false}; rel[i]=r end
+  if not (a.valid and a.inPitBox) then r.since=-1; r.readyAt=-1; r.logged=false
+  elseif a.control and not a.player and not a.safetyCar and a.splineValid and not cmd.pitHold then
+   -- Beta 1.62 (relecture 162v, point 3) : la voiture est prête à partir dès qu'elle bouge à son emplacement (fin du
+   -- service d'AC) ; pendant le service, immobile, aucune retenue et aucun temps compté. La retenue la reprend jusqu'à
+   -- K.boxReleaseCatch km/h, au plus K.boxReleaseMax s à partir de la première voiture vue dans la voie.
+   if r.readyAt<0 and a.kmh>K.boxReleaseStill then r.readyAt=now end
+   if r.readyAt>=0 and a.kmh<=K.boxReleaseCatch then
+   local who=0
+   for j=1,frame.count do
+    local b=frame.cars[j]
+    if j~=i and b.valid and b.pit and not b.inPitBox and b.splineValid and b.kmh>=K.boxLaneKmh then
+     local d=U.spline(a.spline-b.spline)*frame.length
+     if d>0 and d<=K.boxReleaseGap then who=j; break end
+    end
+   end
+   if who>0 then
+    if r.since<0 then r.since=now end
+    if now-r.since<K.boxReleaseMax then
+     cmd.pitHold=true
+     if not r.logged then r.logged=true; U.log(log,now,'INFO',string.format('voie des stands: %s attend que %s passe avant de quitter son emplacement',a.name,frame.cars[who].name),i) end
+    end
+   else r.since=-1 -- Relecture 1.62 (S4) : personne dans la voie : la retenue suivante repart de zéro
+   end
+   end
+  end
+ end
 end
 return M

@@ -124,7 +124,11 @@ function M.publish(b,out,e,frame)
  text(b,out,'safetyPhase',(t.safetyPhase=='place' or t.safetyPhase=='exit') and 'call' or t.safetyPhase); out.safetyFailed=bool(t.safetyFailed); out.safetyCar=index(t.safety)
  out.red=bool(t.red); out.reds=int(t.reds); out.greenLeft=left(t.greenUntil,now)
  out.restart=bool(t.restart); out.playerRestart=bool(t.playerRestart)
- text(b,out,'standing',t.standing); out.gridLit=int(t.gridLit); out.gridSlot=int(t.gridSlot); out.gridGap=num(t.gridGap)
+ -- Beta 1.60 (tranche E) : tour de formation du départ ('form'), appel du départ lancé ('roll') ; sinon comme avant.
+ -- Beta 1.60 (contrat avec SpotterEnginer, qui juge sur les fronts) : « form » (puis « roll » à l'appel du départ lancé)
+ -- monte dans la même image que neutral et relaunch, et ne retombe jamais avant eux : un tour de formation abandonné
+ -- sur incident reste « form » tant que sa neutralisation dure (FCY, puis départ lancé au drapeau vert).
+ text(b,out,'standing',(t.formation or t.formationAborted and t.neutral) and (t.rollCall and 'roll' or 'form') or t.standing); out.gridLit=int(t.gridLit); out.gridSlot=int(t.gridSlot); out.gridGap=num(t.gridGap)
  out.gridPlaced=bool(t.gridPlaced); out.gridPassed=bool(t.gridPassed); out.jumpLeft=left(t.jumpUntil,now)
  out.pitsClosed=bool(t.pitsClosed); out.slipperyLeft=left(t.slipperyUntil,now)
  out.zone=bool(t.playerZone); out.zoneInside=bool(t.playerInside); out.zoneDouble=bool(t.playerZoneDouble)

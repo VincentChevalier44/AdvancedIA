@@ -159,10 +159,10 @@ tests.SUMMARY_FIELDS_155=function()
  local line=J.summary(e)
  assert(line:find('annules 4 (',1,true),'cancelled total includes the new aborts')
  assert(line:find('drapeau pluie de CSP 1',1,true))
- local tail=' | abandons : sans progres 2, tentative trop longue 1 | fins de cession : duree max 2, jaune 0, autres 1 | cessions refusees (suiveur pas plus rapide) 3 | appels de phares suspendus 1, retenus apres abandon 2'
+ local tail=' | abandons : sans progres 2, tentative trop longue 1, priorite au virage 0, maintien trop long 0 | fins de cession : duree max 2, jaune 0, autres 1 | cessions refusees (suiveur pas plus rapide) 3 | appels de phares suspendus 1, retenus apres abandon 2'
  assert(line:sub(-#tail)==tail,line)
  local en=J.english(line)
- local entail=' | aborts: no progress 2, attempt too long 1 | yield ends: max duration 2, yellow 0, other 1 | yields refused (follower not faster) 3 | headlight flashes suspended 1, held after an abort 2'
+ local entail=' | aborts: no progress 2, attempt too long 1, corner priority 0, held too long 0 | yield ends: max duration 2, yellow 0, other 1 | yields refused (follower not faster) 3 | headlight flashes suspended 1, held after an abort 2'
  assert(en:sub(-#entail)==entail and en:find('CSP rain flag 1',1,true),en)
 end
 -- Gommes de chaque modèle au journal, une fois par session, avec la classe retenue (piste sèche, intermédiaire, pluie,

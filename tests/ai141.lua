@@ -187,6 +187,8 @@ tests.YIELD_TOP_SPEED_141=function()
  local s=e.states[2]
  local function hold()
   s.state='YIELD_HOLD'; s.target=3; s.targetSide=1; s.followers[3]=true; s.yieldStart=e.time; s.holdUntil=e.time+60; s.yieldDetection=100; s.yieldMargin=5
+ -- Beta 1.60 (lot 3) : suiveur tenu hors dépassement (sinon passage franc et lever de pied franc : tests/review160w.lua)
+  e.states[3].restUntil=e.time+10
  end
  for _=1,3*60 do hold(); F.tick(e,f,1/60) end
  -- Beta 1.59 : hors course, aussi sous la vitesse du suiveur (150 km/h ici) de K.yieldPassDeltaKmh km/h.

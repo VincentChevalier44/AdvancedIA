@@ -4,7 +4,8 @@
 -- roulant, une IA par image (a.damageScan), au plus toutes les K.damagePitScanPeriod s par IA. Champs de CSP lus :
 -- damage[] (carrosserie, km/h d'impact), suspensionDamage[] (0 à 1), gearboxDamage (0 à 1), engineLifeLeft (1000 neuf).
 -- Appel quand un seuil est dépassé pendant K.damagePitConfirm s : jamais sous drapeau rouge ; jamais sous drapeau jaune,
--- neutralisation ou stands fermés, sauf voiture dangereuse (suspension ou boîte) ; en course, jamais dans les
+-- neutralisation ou stands fermés, sauf voiture dangereuse (suspension) ; la boîte n'appelle pas, elle est
+-- seulement écrite au journal (décision de la 1.59) ; en course, jamais dans les
 -- K.damagePitMinLapsLeft derniers tours ; dans la limite d'appels partagée (compté comme cmd.slowCalled par
 -- src/pits.lua et src/strategy.lua). Réparée à son emplacement : en course, même sans réparations réglementaires ;
 -- hors course, par la réparation des IA endommagées à leur emplacement (src/engine.lua). Un appel par épisode ; après

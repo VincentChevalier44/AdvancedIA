@@ -67,7 +67,7 @@ function M.create(native110,options)
  rawset(_G,'vec3',function(x,y,z) return {x=x or 0,y=y or 0,z=z or 0} end)
  rawset(_G,'vec4',function(x,y,z,w) return {x=x or 0,y=y or 0,z=z or 0,w=w or 0} end)
  ac.getAppWindows=function() return h.windows end
- ac.FolderID={ScriptOrigin=1,Logs=7,ContentCars=13,ContentTracks=15,ExtCfgSys=17,ExtCfgUser=18,ExtCfgState=25}; ac.getFolder=function(id) return id==7 and 'logs' or id==13 and 'cars' or id==15 and 'tracks' or id==17 and 'cfgsys' or id==18 and 'cfgext' or id==25 and 'cfgstate' or 'local' end
+ ac.FolderID={ScriptOrigin=1,Logs=7,ContentCars=13,ContentTracks=15,ExtCfgSys=17,ExtCfgUser=18,ExtCfgState=25,ACDocuments=3,ScriptConfig=26}; ac.getFolder=function(id) return id==7 and 'logs' or id==13 and 'cars' or id==15 and 'tracks' or id==17 and 'cfgsys' or id==18 and 'cfgext' or id==25 and 'cfgstate' or id==3 and 'docs' or id==26 and 'appstate' or 'local' end
  h.guiWatchers={}
  ac.onCSPConfigChanged=function(id,fn) assert(id=='gui' and type(fn)=='function'); h.guiWatchers[#h.guiWatchers+1]=fn
   return function() for k,f in ipairs(h.guiWatchers) do if f==fn then table.remove(h.guiWatchers,k) end end end end
@@ -86,7 +86,24 @@ function M.create(native110,options)
  -- Fichier d'état dans le dossier d'état du moment (aussi celui de l'imitation de la mise à jour, tests/updatefake.lua).
  local gui='cfgext\\gui.ini'
  local function isState(path) local root=ac.getFolder(ac.FolderID.ExtCfgState); return root~=nil and (path==root..'\\ACAdvancedIA-cspgui.ini' or path==root..'\\ACAdvancedIA-cspgui.ini.bak') end
+ -- Beta 1.61 : fichiers par circuit (zones et allure), dans les deux dossiers de l'app sous Documents ou sous son
+ -- dossier d'état dans CSP ; h.trackReadonly : écriture refusée. Rien d'autre n'est permis.
+ local function isTrackFile(path)
+  for _,id in ipairs({'ACDocuments','ScriptConfig'}) do
+   local root=ac.FolderID[id] and ac.getFolder(ac.FolderID[id])
+   if root then for _,folder in ipairs({'tracks','pace'}) do
+    local head=root..(id=='ACDocuments' and '\\AdvancedIA\\' or '\\')..folder..'\\'
+    local rest=path:sub(1,#head)==head and path:sub(#head+1) or ''
+    if rest:match('^[%w_%-]+%.ini$') or rest:match('^[%w_%-]+%.ini%.bak$') then return true end
+   end end
+  end
+  return false
+ end
  io.save=function(path,data,ensure)
+  if isTrackFile(path) then
+   assert(type(data)=='string' and ensure==true,'track file write'); if h.trackReadonly then return false end
+   if h.files[path]~=nil then h.files[path..'.bak']=h.files[path] end; h.files[path]=data; h.trackWrites=(h.trackWrites or 0)+1; return true
+  end
   assert((path=='cfgext\\new_behaviour.ini' or path==gui or isState(path)) and type(data)=='string' and ensure==true,'write outside the CSP user config: '..tostring(path))
   if path==gui and h.guiReadonly or isState(path) and h.stateReadonly then return false end
   if ensure and h.files[path]~=nil then h.files[path..'.bak']=h.files[path] end; h.files[path]=data
@@ -95,7 +112,7 @@ function M.create(native110,options)
  end
  -- Comme io.replaceFile de CSP : l'ancien contenu reste en .bak ; seul ce reste peut être effacé (Beta 1.38).
  io.deleteFile=function(path)
-  assert(path=='cfgext\\new_behaviour.ini.bak' or path==gui or path==gui..'.bak' or isState(path),'delete outside the CSP user config: '..tostring(path))
+  assert(path=='cfgext\\new_behaviour.ini.bak' or path==gui or path==gui..'.bak' or isState(path) or isTrackFile(path),'delete outside the CSP user config: '..tostring(path))
   h.files[path]=nil
   if path=='cfgext\\new_behaviour.ini.bak' then h.bakDeleted=(h.bakDeleted or 0)+1 end
   return true
@@ -107,6 +124,8 @@ function M.create(native110,options)
   return {write=function(_,text) h.files[path]=h.files[path]..text end,close=function() end}
  end
  io.fileExists=function(path) return h.files[path]~=nil end
+ io.fileSize=function(path) local data=h.files[path]; return data and #data or -1 end -- Beta 1.61
+ io.createDir=function(path) assert(type(path)=='string'); h.dirs=h.dirs or {}; h.dirs[path]=true; return true end -- Beta 1.61
  io.move=function(from,to) h.files[to]=h.files[from]; h.files[from]=nil; return true end
  ac.readDataFile=function(path) assert(path=='local/tracks/test.lua'); return 'return {zones={}}' end
  -- Comme CSP : une clé absente du stockage vaut la valeur du gabarit.

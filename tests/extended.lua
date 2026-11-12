@@ -137,7 +137,17 @@ tests.HORN_WITHOUT_FLASH_CALIBRATION=function()
 end
 tests.ENDURANCE_PRESET_TRACKDAY=function()
  local p={}; C.preset('Endurance','J',p)
- assert(p.enduranceOverlay and p.multiClass and p.yieldEnabled and p.yieldSide=='right')
+ -- Beta 1.62 (audit des règles, I2) : base « Journée circuit » (côtés libres), plus la base Nordschleife partout.
+ assert(p.enduranceOverlay and p.multiClass and p.yieldEnabled and p.yieldSide=='line' and p.overtakeSide=='auto')
+ -- Relecture 1.62 (S8) : sur la Nordschleife, la base Nordschleife (serrer à droite) ; ailleurs, « Journée circuit ».
+ local n={}; C.preset('Endurance','J',n,'ks_nordschleife',20800)
+ local base={}; C.preset('Nordschleife','J',base)
+ local o={}; C.preset('Endurance','J',o,'ks_imola',4900)
+ -- Relecture 1.62 : chargé par le moteur ou la fenêtre (applyBuiltin) avec le circuit de la session.
+ local g={}; for k,v in pairs(C.globalDefaults) do g[k]=v end; local profiles={J=C.defaults('J')}
+ C.applyBuiltin(g,profiles,'Endurance','J',true,{},'ks_nordschleife',20800)
+ assert(profiles.J.yieldSide==base.yieldSide,'applyBuiltin passes the track: '..tostring(profiles.J.yieldSide))
+ assert(n.yieldSide==base.yieldSide and n.yieldSide~='line' and o.yieldSide=='line','Nordschleife base on the Nordschleife only: '..tostring(n.yieldSide))
 end
 tests.BUILTIN_PRESET_ACTIVATIONS=function()
  local cases={{'Nordschleife','J'},{'Course','C'},{'Endurance','J'},{'Endurance','C'}}
@@ -176,7 +186,8 @@ tests.OPTIONS_FALSE_PRESERVED=function()
   -- Jaune des panneaux : toujours actif (Beta 1.37).
   assert(run.lightsYellow==true,'yellow always on')
   for _,s in ipairs(C.schema) do
-   if type(p[s.key])=='boolean' and s.key~='lightsYellow' then assert(run[s.key]==false,profile..':'..s.key) end
+   -- Beta 1.62 : réglage masqué hors course (C.raceOnlyKeys) : valeur par défaut gardée, sans effet hors course.
+   if type(p[s.key])=='boolean' and s.key~='lightsYellow' and not (profile~='C' and C.raceOnlyKeys[s.key]) then assert(run[s.key]==false,profile..':'..s.key) end
   end
  end
 end
@@ -433,7 +444,8 @@ end
 tests.BLUE_SIDE_AND_OVERTAKE_CHOICES=function()
  for _,profile in ipairs(C.profiles) do
   for _,side in ipairs({'left','right'}) do
-   local e,f=F.scene(profile); e.p.overtakeSide=side; e.p.personalLineJitter=0; e.p.laneBiasEnabled=false; E.changed(e)
+   -- Beta 1.60 (lot 3) : cible qui ne cède pas (une cible qui s'écarte du côté réglé fait changer de côté : tests/review160w.lua).
+   local e,f=F.scene(profile); e.p.overtakeSide=side; e.p.yieldEnabled=false; e.p.personalLineJitter=0; e.p.laneBiasEnabled=false; E.changed(e)
    F.front(e,f,15,35); F.tick(e,f,2)
    assert(F.passing(e.states[2].state) and e.states[2].targetSide==(side=='left' and -1 or 1),profile..':'..side)
   end
@@ -558,7 +570,7 @@ tests.SIDE_ORIENTATION_CALIBRATED_SIGN=function()
  for _,sign in ipairs({1,-1}) do
   for _,profile in ipairs(C.profiles) do
    for _,side in ipairs({'left','right'}) do
-    local e,f=F.scene(profile); e.g.offsetSign=sign; e.p.overtakeSide=side; e.p.personalLineJitter=0; e.p.laneBiasEnabled=false; E.changed(e)
+    local e,f=F.scene(profile); e.g.offsetSign=sign; e.p.overtakeSide=side; e.p.yieldEnabled=false; e.p.personalLineJitter=0; e.p.laneBiasEnabled=false; E.changed(e)
     F.front(e,f,15,35); F.tick(e,f,2)
     assert(F.passing(e.states[2].state) and e.states[2].targetSide*sign==(side=='left' and -1 or 1),'overtake '..profile..':'..side..':'..sign)
    end
@@ -809,7 +821,8 @@ tests.INCIDENT_STOP_HOLD=function()
  crash(e2,f2,2)
  local c2=e2.incidents.cars[2]; F.tick(e2,f2,c2.holdUntil-e2.time+1)
  assert(c2.holding,'waits while a car arrives behind')
- F.tick(e2,f2,C.K.rejoinWaitMax+1); assert(not c2.holding,'hold bounded')
+ -- Beta 1.62 (règles de la journée circuit) : en journée circuit, attente de la piste libre au plus K.rejoinWaitMaxJ s.
+ F.tick(e2,f2,C.K.rejoinWaitMaxJ+1); assert(not c2.holding,'hold bounded')
  -- Sans l'option : aucune retenue.
  local e3,f3=F.scene('J',3); e3.profiles.J.incidentStop=false; E.changed(e3); F.place(f3,2,0,150)
  crash(e3,f3,2); assert(not e3.incidents.cars[2].holding)
@@ -1079,8 +1092,9 @@ tests.SAFETY_CAR_CYCLE=function()
  F.place(f,3,20,150); e.states[2].nextPerception=0; F.tick(e,f,4)
  assert(e.commands[2].yellowLimit>=150-1e-6 and e.commands[2].yellowLimit<=150+(20-4.4-C.K.queueKeep)*C.K.queueClose+1e-6,'queue: never faster than the car ahead, beyond a slight closing')
  F.place(f,4,5000,150)
- F.tick(e,f,62); assert(e.incidents.safetyPhase=='in' and e.commands[5].rulePit and e.incidents.neutral and e.incidents.messageKind=='scIn','in this lap')
- f.cars[5].pit=true; F.tick(e,f,0.5)
+ F.tick(e,f,C.K.scMinOut+C.K.scBunchLaps*f.length/(C.K.scNominalKmh/3.6)+2); assert(e.incidents.safetyPhase=='in' and e.commands[5].rulePit and e.incidents.neutral and e.incidents.messageKind=='scIn','in this lap')
+ -- Beta 1.60 : la file est juste derrière elle quand elle rentre (règle « jusqu'à la ligne » pour la file seulement).
+ F.place(f,5,100,80); F.tick(e,f,0.1); f.cars[5].pit=true; F.tick(e,f,0.5)
  assert(not e.incidents.neutral and e.incidents.messageKind=='restart' and e.incidents.safetyPhase=='parking','green at the pit entry')
  assert(e.fl.kind=='relance','Beta 1.47: careful first lap armed at the green flag')
  assert(e.incidents.restart and e.incidents.cars[2].restart and e.states[2].yellow,'no overtaking until the line')
@@ -1186,8 +1200,9 @@ tests.JOURNAL_MINUTE_COUNTERS=function()
  F.place(f,4,60,0); F.tick(e,f,3); assert(J.summary(e):match('sur la minute.*incidents (%d+)')=='1','incident counted')
 end
 -- Dépassement lent (5 km/h d'écart) : après le côte à côte, l'IA termine et le dépassement est compté réussi.
-local function slowPass(after)
- local e,f=F.scene('C',4); C.preset('Course','C',e.profiles.C); e.profiles.C.defenseEnabled=false; E.changed(e)
+local function slowPass(after,prof)
+ prof=prof or 'C'
+ local e,f=F.scene(prof,4); if prof=='C' then C.preset('Course','C',e.profiles.C); e.profiles.C.defenseEnabled=false end; E.changed(e)
  local a=F.place(f,2,0,105); local b=F.place(f,3,30,100); F.place(f,4,5000,100)
  -- Fin du premier dépassement seulement (un éventuel dépassement enchaîné ensuite n'est pas jugé ici).
  local reasons={}; local first
@@ -1206,7 +1221,8 @@ tests.OVERTAKE_FINISHES_AFTER_ALONGSIDE=function()
  -- Couloir fermé par une troisième voiture après le côte à côte : l'IA termine quand même.
  local _,closed=slowPass(function(e,f,_,b)
   local s=e.states[2]
-  if s.passAlongside and f.cars[4].z>1000 then F.place(f,4,b.z+40,100,s.offset*5) end
+  -- 90 km/h : depuis l'affinage 1.61, une voiture plus loin devant au moins aussi rapide ne ferme pas le couloir.
+  if s.passAlongside and f.cars[4].z>1000 then F.place(f,4,b.z+40,90,s.offset*5) end
  end)
  assert((closed.clear or closed.chain) and not aborted(closed),'no abort once side by side (success, possibly chained)')
  -- La cible repasse devant et s'éloigne : abandon réel.
@@ -1214,6 +1230,9 @@ tests.OVERTAKE_FINISHES_AFTER_ALONGSIDE=function()
   if e.states[2].passAlongside then a.kmh=85; a.speed=85/3.6 end
  end)
  assert(lost.abort_slow,'abort when the target pulls away again')
+ -- Hors course (écart en temps jugé dès K.abortTgGrow) : cible déjà derrière, jamais jugée « plus rapide ».
+ local _,practice=slowPass(nil,'P')
+ assert(practice.clear and not aborted(practice),'practice: slow pass completed, a target already behind never aborts it')
 end
 -- Pendant le retour, une voiture à hauteur : l'IA reste en retour (pas de nouveau maintien) et ne se rabat pas vers elle.
 tests.OVT_OUT_NO_REENTRY=function()
@@ -1288,9 +1307,12 @@ tests.CORNER_FLASH_YIELD_HELD=function()
  p.aiFlashEnabled=true; p.pressureEnabled=false; p.multiClass=false; E.changed(e)
  local a=F.place(f,2,0,100); local b=F.place(f,3,29.4,100)
  local s=e.states[2]; for k=1,C.K.paceBins do s.pace[k]=50 end; s.paceCount=C.K.paceBins; s.paceMean=50
+ -- Beta 1.62 : « ligne droite » jugée aussi sur l'accélération latérale : à 0,3 rad/s et 100 km/h (0,85 g) la
+ -- cession attend une portion droite pour commencer (moins de temps cédé qu'avant sur 20 s : la cession est perdue
+ -- quand le suiveur, figé ici, ne se rapproche pas) ; elle n'est jamais coupée par le plafond anti-zigzag.
  local turn=cornerYaw({a,b},3,0.05); local yielded=0
  for _=1,20*60 do turn(e.time); F.tick(e,f,1/60); if F.yielding(e.states[3].state) then yielded=yielded+1 end end
- assert(e.commands[2].flashEvent>0 and yielded>10*60,'flash-requested yield held in corners: '..yielded)
+ assert(e.commands[2].flashEvent>0 and yielded>4*60,'flash-requested yield held in corners: '..yielded)
  assert((e.stats.direction_limit or 0)==0,'never interrupted by the zigzag cap')
 end
 -- Journal : manœuvre interrompue par le plafond comptée sur la minute.
@@ -1312,7 +1334,7 @@ tests.TIPS_COMPLETE=function()
   for _,word in ipairs({' the ',' and ',' when ',' with ',' default '}) do assert(not text:lower():find(word,1,true),'English word in '..name) end
  end
  for _,s in ipairs(C.schema) do check(T.settings[s.key],s.key) end
- for _,key in ipairs({'levelMode','useGripBoost','useBrakeAssist','overrideAwareness','debugLog','occLatMin','occLatMax','occMargin','occSpeedGain','gripPerLevelPct','seed'}) do check(T.globals[key],key) end
+ for _,key in ipairs({'levelMode','useGripBoost','useBrakeAssist','overrideAwareness','debugLog','occLatMin','occLatMax','occMargin','occSpeedGain','gripPerLevelPct','seed','trackMemory'}) do check(T.globals[key],key) end
  for _,group in ipairs(C.sections) do assert(T.tabs[group] and T.sections[group],'tab tooltips: '..group) end
  for _,profile in ipairs(C.profiles) do assert(T.profiles[profile],'profile tooltip: '..profile) end
  for _,name in ipairs(C.ruleCategories) do assert(T.rules[name],'rule tooltip: '..name) end
@@ -1332,8 +1354,10 @@ tests.RED_FLAG_PROCEDURE=function()
  F.block(f,{3,4,5},600)
  -- Beta 1.48 : classement au drapeau rouge (figé) : la voiture 6 mène, la 2 est cinquième, le joueur sixième.
  f.cars[6].position=1; f.cars[5].position=2; f.cars[4].position=3; f.cars[3].position=4; f.cars[2].position=5; f.cars[1].position=6
- F.tick(e,f,C.K.redIncidentStill+3)
+ F.tick(e,f,C.K.redIncidentStill-3)
  local t=e.incidents
+ assert(not t.red,'Beta 1.47: no red flag before the cars have been still K.redIncidentStill s')
+ F.tick(e,f,6)
  assert(t.red and t.onTrack==3,'red flag on three immobilised cars')
  assert(t.redOrderN==6 and t.redRank[6]==1 and t.redRank[2]==5 and t.redRank[1]==6,'order frozen, player included')
  assert(e.commands[2].rulePit and e.commands[6].rulePit,'every AI called to the pits')
@@ -1539,7 +1563,7 @@ tests.SAFETY_CAR_STAYS_OUT=function()
  assert(e.incidents.safetyPhase=='place' and e.commands[5].place>=0)
  f.cars[5].pit=false; f.cars[5].inPitBox=false; F.place(f,5,e.commands[5].place*f.length,120); F.tick(e,f,0.1)
  F.place(f,5,1000,120); F.tick(e,f,0.9)
- F.place(f,4,5000,150); F.tick(e,f,62); assert(e.incidents.safetyPhase=='in','in this lap')
+ F.place(f,4,5000,150); F.tick(e,f,C.K.scMinOut+C.K.scBunchLaps*f.length/(C.K.scNominalKmh/3.6)+2); assert(e.incidents.safetyPhase=='in','in this lap')
  F.place(f,3,8000,0); F.tick(e,f,18)
  assert(e.incidents.safetyPhase=='out' and e.incidents.neutral and e.incidents.messageKind=='sc','new major incident: safety car stays out')
 end
@@ -1654,7 +1678,8 @@ tests.OVT_ARM_WAITS=function()
 end
 -- 1.6.0 : la prudence ne remonte jamais dans l'aspiration (plancher de 0,6 seulement pour une baisse).
 tests.SLIPSTREAM_NEVER_RAISES_CAUTION=function()
- local e,f=F.scene('J',3); e.profiles.J.caution=0.5; e.profiles.J.cautSpreadPct=0; E.changed(e); F.tick(e,f,1/60); e.p.personalLineJitter=0
+ -- Beta 1.62 : en essais (en journée circuit, la règle « ne jamais coller » relève la prudence à moins de K.jFollowTime s).
+ local e,f=F.scene('P',3); e.profiles.P.caution=0.5; e.profiles.P.cautSpreadPct=0; E.changed(e); F.tick(e,f,1/60); e.p.personalLineJitter=0
  for i=1,3 do e.states[i].persona.cautSpread=0; e.states[i].persona.brakeMargin=1 end
  F.place(f,2,0,200); F.place(f,3,25,200); F.tick(e,f,4)
  assert(e.commands[2].caution<0.595,'slipstream never raises caution to its floor: '..e.commands[2].caution)
@@ -1856,6 +1881,12 @@ tests.PLAYER_PENALTY_PASS=function()
  local e=run(40); assert(e.penalties.count==1 and e.penalties.reason=='pass' and e.incidents.messageKind=='penaltyPass','overtake under yellow, place kept: penalty at the deadline')
  assert(run(40,true).penalties.count==0,'place given back: no penalty')
  assert(run(10).penalties.count==0,'passing a crawling car is allowed')
+ -- La règle de la voiture au pas seule (ni incident, ni difficulté, ni accident récent) : doublable.
+ local Pn=require('src/penalties'); local e2=F.scene('C',2)
+ local c={incident=false,holding=false,trouble=false,clearedAt=-math.huge,lastCrash=-math.huge}
+ local b={valid=true,pit=false,offtrack=false,kmh=e2.p.obstacleSpeedKmh-5}
+ assert(Pn.passable(b,c,e2.p,100),'a car crawling under the obstacle speed is passable on its own')
+ b.kmh=e2.p.obstacleSpeedKmh+40; assert(not Pn.passable(b,c,e2.p,100),'a car at pace is not')
 end
 -- 1.6.0 : FCY : délai pour ralentir avant de compter un excès de vitesse.
 tests.PLAYER_PENALTY_NEUTRAL_GRACE=function()
@@ -2042,7 +2073,8 @@ tests.LET_PASS_INVITATION=function()
  assert(not run('J',0),'player centred, nothing learned: no forced pass')
  assert(not run('C',3,0.1),'race, long curve: invitation on straights only')
  -- Beta 1.44 : hors course, courbe douce, écart net (3 m pour 0,7 m dû à la courbure) : invitation.
- assert(run('J',3,0.1),'track day, gentle curve with a clear offset: invitation')
+ -- Beta 1.62 (journée circuit : dépasser seulement en ligne droite) : plus d'invitation en courbe douce en journée circuit.
+ assert(not run('J',3,0.1),'track day, gentle curve: passes on straights only')
  assert(not run('J',3,0,50),'player catching another car: not an invitation')
  assert(run('J',3,0,50,100),'car ahead of the player at its pace (an AI that already passed): invitation still possible')
  local first3,s3=run('C',3); assert(first3 and first3<2.5 and s3.targetSide==side,'race: invitation too, on the freed side ('..s3.state..')')
@@ -2090,10 +2122,18 @@ tests.OVT_ARM_PULL_OUT_RULES=function()
  assert(s.state=='OVT_ARM','nose to tail: still waiting ('..s.state..')')
  F.place(f,3,20,100,0); f.cars[2].brake=0.5; e.states[2].nextPerception=0; F.tick(e,f,0.2)
  assert(s.state=='OVT_ARM','no pull-out under braking ('..s.state..')')
- f.cars[2].brake=0; F.place(f,3,20,100,2); e.states[2].nextPerception=0; F.tick(e,f,0.2)
+ -- Cible un peu décalée du côté visé (1,5 m : sous K.inviteLat) : attente, jamais vers elle.
+ f.cars[2].brake=0; F.place(f,3,20,100,1.5); e.states[2].nextPerception=0; F.tick(e,f,0.2)
  assert(s.state=='OVT_ARM','no pull-out towards a target already on that side ('..s.state..')')
  F.place(f,3,20,100,0); e.states[2].nextPerception=0; F.tick(e,f,0.2)
  assert(s.state=='OVT_IN','pull-out once clear ('..s.state..')')
+ -- Affinage 1.62 (12 novembre) : cible déjà écartée de K.inviteLat m du côté visé : plus d'attente, déboîtement
+ -- aussitôt du côté qu'elle a libéré (jamais vers elle).
+ local e2,f2=F.scene('C',3); e2.p.personalLineJitter=0
+ F.place(f2,2,0,150); F.place(f2,3,20,100,2); F.tick(e2,f2,0.1)
+ local s2=e2.states[2]; s2.state='OVT_ARM'; s2.target=3; s2.targetSide=1; s2.passAlongside=false; s2.nextPerception=0; F.tick(e2,f2,0.2)
+ local lat=require('src/perception').find(e2.perception.rows[2],3).lat
+ assert(s2.state=='OVT_IN' and s2.targetSide==(lat>0 and 1 or -1) and s2.targetSide~=1,'pull-out on the freed side, never towards the target ('..s2.state..' '..s2.targetSide..')')
 end
 -- 1.8.0 (relecture) : dépassement sans rapprochement abandonné au lieu de rester déboîté indéfiniment.
 tests.PASS_STALL_ABORT=function()
@@ -2484,7 +2524,7 @@ tests.DELTA_SC_MERGE=function()
  local s=e.states[2]; for b=1,#s.pace do s.pace[b]=300/3.6 end; s.paceCount=400
  F.place(f,2,0,250); F.place(f,4,5000,0); F.tick(e,f,35)
  assert(e.incidents.neutral and e.incidents.neutralMode=='sc' and f.cars[5].pit,'called, safety car still in the pit lane')
- assert(e.commands[2].yellowLimit<=e.run.safetyCarSpeedKmh-C.K.scMergeMargin+1e-6,'pack slower than the safety car: '..e.commands[2].yellowLimit)
+ assert(e.commands[2].yellowLimit<=C.K.scNominalKmh-C.K.scMergeMargin+1e-6,'pack slower than the safety car: '..e.commands[2].yellowLimit)
 end
 -- Relevé en jeu : 8 sanctions d'IA juste après une zone jaune. La plus proche de la zone ralentissait d'abord, celle de
 -- derrière (limite d'approche plus haute) la rattrapait et la doublait. En file : jamais plus vite que la voiture de
@@ -3018,7 +3058,7 @@ tests.PITS_CLOSED=function()
  local e2,f2=F.scene('C',4); f2.length=2000; C.applyRules('Endurance',e2.profiles); E.changed(e2)
  local t=e2.incidents; t.neutral=true; t.relaunch=true; t.neutralMode='sc'; t.neutralSince=e2.time; t.neutralUntil=e2.time+1e4; t.safetyPhase='out'
  F.tick(e2,f2,1); assert(t.pitsClosed,'WEC: closed in the first laps behind the safety car')
- t.neutralSince=e2.time-C.K.scClosedLaps*f2.length/(e2.run.safetyCarSpeedKmh/3.6)-1; F.tick(e2,f2,0.1)
+ t.neutralSince=e2.time-C.K.scClosedLaps*f2.length/(C.K.scNominalKmh/3.6)-1; F.tick(e2,f2,0.1)
  assert(not t.pitsClosed,'open after three laps')
 end
 -- Beta 1.4 : drapeau rouge : pneus changés et arrêt compté en F1 ; aucune intervention en GT. F1 : course mouillée, le
@@ -3122,7 +3162,7 @@ tests.DELTA_REVERSE_SC_CALL_ZONE_PENALTY=function()
  local s=e.states[1]; for b=1,#s.pace do s.pace[b]=400/3.6 end; s.paceCount=400
  inc.neutralMode='sc'; inc.safetyPhase='call'; inc.safety=3
  local d2=Delta.new(); now=0; z=1000
- for _=1,60*30 do now=now+1/60; z=z+(p.safetyCarSpeedKmh-C.K.scMergeMargin+15)/3.6/60; F.place(f,1,z,p.safetyCarSpeedKmh-C.K.scMergeMargin+15); Delta.update(d2,f,p,inc,e.states,now,1/60,false); if d2.infraction then break end end
+ for _=1,60*30 do now=now+1/60; z=z+(C.K.scNominalKmh-C.K.scMergeMargin+15)/3.6/60; F.place(f,1,z,C.K.scNominalKmh-C.K.scMergeMargin+15); Delta.update(d2,f,p,inc,e.states,now,1/60,false); if d2.infraction then break end end
  assert(d2.kind=='scCall' and d2.infraction,'safety car called: reference capped below its speed')
  -- Pénalité de zone : le delta de zone repart à +1 s.
  local d3=Delta.new(); d3.zone.on=true; d3.zone.delta=-2; Delta.penalized(d3)
@@ -3235,11 +3275,11 @@ tests.SAFETY_CAR_PIT_EXIT=function()
  F.place(f,5,1000+C.K.scPlaceLeader,80); f.cars[5].pit=false; f.cars[5].inPitBox=false; F.tick(e,f,0.5)
  assert(t.safetyPhase=='out' and t.safetyLeft and logged(e,'voiture de securite: posee en piste a 1200 m, 200 m devant Driver_2 (meneur)'),'on track, logged')
  assert(e.commands[5].scSpeed==C.K.scLeadKmh,'Beta 1.48: slow while the field is far behind')
- F.place(f,2,1150,120); F.tick(e,f,0.5); assert(e.commands[5].scSpeed==e.run.safetyCarSpeedKmh,'its pace once the field is close')
- F.tick(e,f,C.K.scMinOut+5)
+ F.place(f,2,1150,120); F.tick(e,f,0.5); assert(e.commands[5].scSpeed==C.K.scNominalKmh+C.K.scCatchUp-C.K.scFreeMargin,'Beta 1.60: its own free pace once the field is close (lot 5: a finite pace while the pace of the field is unknown)')
+ F.tick(e,f,C.K.scMinOut+C.K.scBunchLaps*f.length/(C.K.scNominalKmh/3.6)+2)
  assert(t.safetyPhase=='in' and t.neutral,'on track: in this lap')
  -- Ligne franchie sans rentrer : drapeau vert, rappel à son stand.
- F.place(f,5,f.length-50,120); F.tick(e,f,0.1); F.place(f,5,f.length+20,120); F.tick(e,f,0.1)
+ F.place(f,2,f.length-100,120); F.place(f,5,f.length-50,120); F.tick(e,f,0.1); F.place(f,5,f.length+20,120); F.tick(e,f,0.1)
  assert(not t.neutral and t.restart and t.safetyPhase=='parked' and e.commands[5].scPark,'line crossed without pitting: green, sent back to its box')
  -- Seconde intervention : délai de pose reparti de zéro.
  F.place(f,5,0,0); f.cars[5].pit=true; f.cars[5].inPitBox=true; F.tick(e,f,1)
@@ -3377,6 +3417,11 @@ end
 -- sans avance de vitesse (relevé à Spa : les IA restaient en file derrière la voiture qui s'écartait).
 tests.RACE_PASS_ON_YIELD=function()
  -- Voiture qui cède légèrement décalée d'un côté puis de l'autre : le côté de passage suit sa cession, pas sa position.
+ -- Beta 1.61 : aussi passage franc neutralisé (décalage exigé hors d'atteinte) : l'invitation de la cession suffit seule.
+ local K=C.K; local frankOff=K.frankOffM
+ for run=1,2 do
+ K.frankOffM=run==1 and frankOff or 1e9
+ local ok,err=pcall(function()
  for _,x in ipairs({1.5,-1.5}) do
   local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); E.changed(e); F.tick(e,f,1/60); e.p.personalLineJitter=0
   F.place(f,1,-2000,100); F.place(f,2,0,104); F.place(f,3,30,100,x); f.cars[2].lap=f.cars[3].lap+1
@@ -3388,7 +3433,11 @@ tests.RACE_PASS_ON_YIELD=function()
    if yieldSide and (s2.state=='OVT_IN' or s2.state=='OVT_HOLD') then passed=s2.targetSide; break end
   end
   assert(yieldSide,'lapped car yields to the blue flag')
-  assert(passed==-yieldSide,'pass engaged at once on the freed side ('..s2.state..', x '..x..')')
+  assert(passed==-yieldSide,'pass engaged at once on the freed side ('..s2.state..', x '..x..', run '..run..')')
+ end
+ end)
+ K.frankOffM=frankOff
+ if not ok then error(err,0) end
  end
 end
 -- Beta 1.7 : une cession ou un dépassement ne commence que si le plafond anti-zigzag permet encore un changement de
@@ -3935,7 +3984,9 @@ tests.PRESET_BEHAVIOUR_MATRIX=function()
   {'Qualifications','Q',{yield='right',pass='left',flash='always',chain=false,penalties=true,blue=false,red=true,traffic=false,start=false,multi=true,overlay=false,mistakes=true}},
   {'Course','C',{yield='no',flash='lapped',chain=true,penalties=true,blue=true,red=true,traffic=false,start=false,multi=true,overlay=false,mistakes=true}},
   {'Endurance','C',{yield='no',flash='lapped',chain=true,penalties=true,blue=true,red=true,traffic=false,start=false,multi=true,overlay=true,mistakes=true}},
-  {'Endurance','J',{yield='right',pass='left',flash='always',penalties=false,red=false,traffic=true,multi=true,overlay=true,mistakes=true}},
+  -- Beta 1.62 : en journée circuit hors Nordschleife, l'endurance prend la base « Journée circuit » (yieldSide « line ») :
+  -- la voiture lente garde sa ligne, la rapide passe du côté qui a le plus de place (largeurs égales : droite).
+  {'Endurance','J',{yield='place',pass='right',flash='always',penalties=false,red=false,traffic=true,multi=true,overlay=true,mistakes=true}},
  }
  for _,row in ipairs(expected) do
   local got=observe(row[1],row[2])
@@ -4162,8 +4213,8 @@ tests.SAFETY_CAR_ESCALATION=function()
  f.cars[6].pit=false; f.cars[6].inPitBox=false; F.place(f,6,e.commands[6].place*f.length,120); F.tick(e,f,0.1)
  F.place(f,6,1000,120); F.place(f,4,5000,150); F.place(f,5,3000,150)
  F.tick(e,f,5); assert(t.neutral and t.neutralMode=='sc' and t.safetyPhase=='out','incident cleared: the safety car stays out')
- F.tick(e,f,60); assert(t.neutral and t.safetyPhase=='in' and t.messageKind=='scIn','in this lap')
- f.cars[6].pit=true; F.tick(e,f,0.5)
+ F.tick(e,f,C.K.scMinOut+C.K.scBunchLaps*f.length/(C.K.scNominalKmh/3.6)+2); assert(t.neutral and t.safetyPhase=='in' and t.messageKind=='scIn','in this lap')
+ F.place(f,6,3100,80); F.tick(e,f,0.1); f.cars[6].pit=true; F.tick(e,f,0.5)
  assert(not t.neutral and t.messageKind=='restart' and t.restart and not t.escalated,'green at the pit entry, no overtaking until the line')
  -- Voiture de sécurité immobilisée en piste : la neutralisation continue en FCY jusqu'au bout de sa durée minimale.
  e,f,t=scene(true); F.place(f,5,3000,0); F.tick(e,f,28)
@@ -4657,7 +4708,8 @@ tests.RECOVERY_RESPECTS_RULES=function()
  f4.cars[2].collided=false; f4.cars[2].kmh=0; f4.cars[2].speed=0
  local c=e4.incidents.cars[2]; assert(c.holding,'held off track')
  F.tick(e4,f4,34); assert(c.holding and not e4.commands[2].recover,'a car waiting to rejoin is not towed')
- F.tick(e4,f4,8); assert(not c.holding and e4.commands[2].recover,'towed once the wait is over')
+ -- Beta 1.62 : attente plus longue en journée circuit (K.rejoinWaitMaxJ au lieu de K.rejoinWaitMax).
+ F.tick(e4,f4,8+C.K.rejoinWaitMaxJ-C.K.rejoinWaitMax); assert(not c.holding and e4.commands[2].recover,'towed once the wait is over')
 end
 -- Beta 1.25 : lancement du départ : collé derrière la voiture de devant en ligne droite, ni prudence de suivi ni
 -- anticipation du radar ; freinage seulement à un contact vraiment imminent. Après le départ, comportement habituel.
@@ -5300,7 +5352,9 @@ tests.DIRECTION_CLAMP_129=function()
  local now=e.time
  for k=1,30 do
   local narrow=k%2==0
-  a.leftWidth=narrow and 1.1 or 6; a.rightWidth=6
+  -- Relecture finale 1.61 : depuis la 1.60 la borne est par côté ; c'est le côté visé (signe -1 : -0.7 vise la droite)
+  -- qui se rétrécit dans les virages.
+  a.leftWidth=6; a.rightWidth=narrow and 1.1 or 6
   now=now+2; D.lateral(s,-0.7,row,a,e.p,e.g,1/60,now)
   assert(not s.newDirectionLimit and now>=s.driveUntil,'same side held through the corners: no limit (step '..k..')')
  end
@@ -5549,14 +5603,19 @@ tests.GRID_SLOTS_134=function()
  assert(select(2,G.resolve(nodes,10000,4))=='calculees','too few nodes for the field: computed')
  local far={{spline=1-(K.gridNodeRange+200)/10000,lateral=0}}; assert(select(2,G.resolve(far,10000,1))=='calculees','node far from the line rejected')
  local disorder={{spline=1-26/10000,lateral=0},{spline=1-10/10000,lateral=0}}; assert(select(2,G.resolve(disorder,10000,2))=='calculees','nodes out of order rejected')
- local off={{spline=1-10/10000,lateral=1.4}}; assert(select(2,G.resolve(off,10000,1))=='calculees','node off the track rejected')
- local after={{spline=10/10000,lateral=0}}; assert(select(2,G.resolve(after,10000,1))=='calculees','node past the line rejected')
+ -- Correctif 1.61 (Spa) : un emplacement un peu au-delà de la trajectoire est ramené, trop loin il est refusé ; une
+ -- grille après la ligne est acceptée jusqu'à K.gridNodeAfter m.
+ local off={{spline=1-10/10000,lateral=1.4}}; assert(select(2,G.resolve(off,10000,1))=='AC_START','node slightly off the AI line clamped')
+ local far2={{spline=1-10/10000,lateral=K.gridNodeLatMax+0.2}}; assert(select(2,G.resolve(far2,10000,1))=='calculees','node off the track rejected')
+ local after={{spline=10/10000,lateral=0}}; assert(select(2,G.resolve(after,10000,1))=='AC_START','node past the line accepted (grid after the line)')
+ local beyond={{spline=(K.gridNodeAfter+50)/10000,lateral=0}}; assert(select(2,G.resolve(beyond,10000,1))=='calculees','node far past the line rejected')
  assert(G.resolve(nil,0,3)==nil,'no track length: no grid')
 end
 -- Formation, retenue, feux, faux départ, extinction, sanction ; voitures arrêtées à leur place sans incident.
 tests.GRID_STANDING_START_134=function()
  local K=C.K; local U=require('src/util'); local L=require('src/lang')
- local e,f=F.scene('C',5); C.preset('Course','C',e.profiles.C); e.profiles.C.redRestart='standing'; E.changed(e); e.gridCaps=true
+ -- Beta 1.62 : « Realistic race » active les départs réalistes (faux départ rejugé) ; ce test garde la règle de base.
+ local e,f=F.scene('C',5); C.preset('Course','C',e.profiles.C); e.profiles.C.redRestart='standing'; e.profiles.C.startRealism=false; E.changed(e); e.gridCaps=true
  local pos={[2]=1,[3]=2,[1]=3,[4]=4,[5]=5}
  local function slotZ(k) return -(K.gridFirst+(k-1)*K.gridPitch) end
  for i=1,5 do f.cars[i].position=pos[i]; F.place(f,i,slotZ(pos[i])-150,60) end
@@ -5850,9 +5909,10 @@ end
 tests.JUMP_ARMED_WHEN_PLACED_135=function()
  local K=C.K
  local e,f=standingScene(3); F.place(f,1,slotZ(1)-400,60); F.place(f,2,slotZ(2),0); F.place(f,3,slotZ(3),0)
- F.tick(e,f,0.2); e.incidents.standing='grid'; F.tick(e,f,K.gridMax+0.5)
+ -- Beta 1.62 (dernier lot) : joueur pas en place, IA prêtes : feux après l'attente propre au joueur (K.gridPlayerWait s).
+ F.tick(e,f,0.2); e.incidents.standing='grid'; F.tick(e,f,K.gridPlayerWait+0.5)
  local g=e.grid
- assert(e.incidents.standing=='lights','lights on timeout')
+ assert(e.incidents.standing=='lights','lights after the player wait')
  F.place(f,1,slotZ(1)-390,60); F.tick(e,f,1)
  assert(not g.jump and not g.refSet,'not in place: no reference, no jump')
  F.place(f,1,slotZ(1),0); F.tick(e,f,0.2); assert(g.refSet,'reference taken once in place and still')
@@ -6163,7 +6223,40 @@ for name,test in pairs(require('tests/review159hc')) do assert(tests[name]==nil,
 for name,test in pairs(require('tests/review159r')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture des tranches H fusionnées)
 for name,test in pairs(require('tests/review159t')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (trafic des journées circuit, préréglage Journée circuit)
 for name,test in pairs(require('tests/review159u')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59 (relecture de la tranche trafic)
+for name,test in pairs(require('tests/review160')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 (étape de base : réglages, priorité partagée, modules vides)
+for name,test in pairs(require('tests/review160a')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 A (conscience de l'arrière, aide au dépassement)
+for name,test in pairs(require('tests/review160b')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 B (responsabilité des collisions, contresens)
+for name,test in pairs(require('tests/review160c')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 C (humeur, pilotage plus fin)
+for name,test in pairs(require('tests/review160d')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 D (usure, stratégie avancée)
+for name,test in pairs(require('tests/review160e')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 E (départ de la course)
+for name,test in pairs(require('tests/review160m')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 (fusion des tranches)
+for name,test in pairs(require('tests/review160m2')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 (tranche A, borne par côté, relecture)
 for name,test in pairs(require('tests/review159n')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.59.1 (rapport de bedstyboi)
+for name,test in pairs(require('tests/review160s')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60 (voiture de sécurité : allure libre, jamais doublée, file regroupée)
+for name,test in pairs(require('tests/review160w')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60, lot 3 (passage franc, tours de chauffe)
+for name,test in pairs(require('tests/review160x')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60, lot 4 (cible plus rapide, tests des relectures)
+for name,test in pairs(require('tests/review160y')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.60, lot 5 (course, drapeaux bleus entre IA, voiture de sécurité)
+for name,test in pairs(require('tests/review161')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 (étape de base : réglages, codec des fichiers par circuit, modules vides)
+for name,test in pairs(require('tests/review161a')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 A (zones)
+for name,test in pairs(require('tests/review161b')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 B (mémoire des circuits)
+for name,test in pairs(require('tests/review161c')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 C (retardataires et classes)
+for name,test in pairs(require('tests/review161d')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 D (départs)
+for name,test in pairs(require('tests/review161e')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 E (météo en direct)
+for name,test in pairs(require('tests/review161m')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 (fusion des tranches)
+for name,test in pairs(require('tests/review161f')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 (finition : tests des relectures)
+for name,test in pairs(require('tests/review161g')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 (finition, seconde relecture)
+for name,test in pairs(require('tests/review161t')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.61 (affinage du 11 novembre)
+for name,test in pairs(require('tests/review161u')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 1.61 (coût en jeu)
+for name,test in pairs(require('tests/review161v')) do assert(tests[name]==nil,name); tests[name]=test end -- Correctif 1.61 (grille après le tour de formation)
+for name,test in pairs(require('tests/review162a')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (règles par session, pilotage)
+for name,test in pairs(require('tests/review162b')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (règles par session, partie R2)
+for name,test in pairs(require('tests/review162c')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (règles par session, fusion)
+for name,test in pairs(require('tests/review162f')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (relecture indépendante)
+for name,test in pairs(require('tests/review162h')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (relecture d'ensemble)
+for name,test in pairs(require('tests/review162p')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (options dans les préréglages)
+for name,test in pairs(require('tests/review162y')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.62 (dernier lot)
+for name,test in pairs(require('tests/review162q')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 1.62 (sessions du 12 novembre)
+for name,test in pairs(require('tests/review162s')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 1.62 (recherche de l'aspiration)
 -- Beta 1.50 : pose en piste de la voiture de sécurité (Beta 1.48) gardée en repli ; ces scènes l'exercent avec une voiture
 -- de sécurité qui ne quitte jamais son emplacement, libérée dès la fin de l'appel, sans règle de vue du joueur (testées
 -- dans tests/start150.lua).

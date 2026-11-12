@@ -9,6 +9,7 @@ local C=require('src/config')
 local L=require('src/lang')
 local P=require('src/perception')
 local Classes=require('src/classes')
+local Nuance=require('src/nuance')
 local K=C.K
 local M={}
 function M.new() return {kind='none',key='',title='',detail='',raw='',noPass=false,passed=false,drsBlocked=false,drsUsed=false,short='',passOk='',passBad='',infractions=-1,infractionMax=-1,notice='',noticeUntil=-math.huge,at=-math.huge,
@@ -35,6 +36,11 @@ local function blue(rel,frame,p,profile,held)
  return best
 end
 M.blue=blue
+local function fasterClass(p,a,b) return p.multiClass and a.classified and b.classified and a.class<b.class end
+function M.nuanceBlue(panel,e,frame,p,profile,now)
+ local gap,advise,class=Nuance.playerBlue(e.nuance,e,frame,p,profile,now,panel.kind=='blue',fasterClass)
+ return gap,gap and (class==2 and 2 or advise==1 and 1) or 0
+end
 -- Drapeaux et pénalités natifs d'AC (Beta 1.11) : repris par le panneau, leur affichage d'origine étant masqué dans
 -- CSP. Renvoie le genre et sa valeur (tours ou secondes), ou nil ; le jaune que l'app impose au joueur n'est pas repris.
 local function native(panel,frame,now)
@@ -59,7 +65,8 @@ local function native(panel,frame,now)
 end
 -- Genre affiché (couleur, sigle, titre) de chaque genre décidé.
 local shownKinds={scCall='sc',penaltyDrive='penalty',penaltyTeleport='penalty',penaltySlow='penalty',nativeBlue='blue',start='green',finish='checkered',giveBack='warning',
- rollingIn='rolling',rollingGreen='rolling',standingLap='standing',standingPit='standing'}
+ rollingIn='rolling',rollingGreen='rolling',standingLap='standing',standingPit='standing',
+ formationLap='standing',formationRoll='rolling',formationCall='rolling',formationOff='rolling'}
 -- Drapeau retenu : genre affiché, horodatage du changement, textes refaits seulement quand le genre ou la valeur change.
 -- profile : essais et qualifications parlent de séance, pas de course (drapeau rouge, reprise).
 -- Beta 1.49 : textes de l'arrêt obligatoire en F1 (composés nommés), refaits seulement quand ils changent.
@@ -68,10 +75,17 @@ local function joinOr(list,word)
  if n==0 then return '' elseif n==1 then return list[1] end
  return table.concat(list,', ',1,n-1)..word..list[n]
 end
-local function pitTexts(panel,t,extra,value)
+-- Beta 1.60 (tranche D) : raison du conseil de SpotterEnginer (« undercut sur X »), nil sans conseil valable.
+local function seWhy(t)
+ local mode=t.seStrategyMode or ''
+ if mode=='' or not L.seStrategy[mode] then return nil end
+ local who=t.seStrategyTarget or ''
+ return who~='' and string.format(L.seStrategy[mode],who) or L.seStrategy.alone[mode]
+end
+local function pitTexts(panel,t,extra,value,plain)
  local others=t.playerTyreOthers or {}
  local tyre=t.playerTyre or ''
- local sig=extra..'|'..value..'|'..tyre..'|'..#others..'|'..(t.playerPitFrom or '')..'|'..(t.playerPitTo or '')..'|'..(t.playerPlan or '')..'|'..(t.playerPlanned or '')
+ local sig=extra..'|'..value..'|'..tyre..'|'..#others..'|'..(t.playerPitFrom or '')..'|'..(t.playerPitTo or '')..'|'..(t.playerPlan or '')..'|'..(t.playerPlanned or '')..'|'..(t.seStrategyMode or '')..'|'..(t.seStrategyTarget or '')
  if sig==panel.pitSig then return end
  panel.pitSig=sig
  local H=L.pitHint; local short,detail
@@ -88,6 +102,10 @@ local function pitTexts(panel,t,extra,value)
  elseif extra==4 then short=string.format(H.counted,t.playerPitFrom or '?',t.playerPitTo or '?'); detail=short
  elseif extra==6 then short=string.format(H.planFixed,(t.playerPlanned or '')~='' and t.playerPlanned or '?'); detail=short
  else short=planSame; detail=planSameDetail end
+ -- Beta 1.60 (tranche D) : raison donnée par SpotterEnginer (undercut, overcut…) à la suite du rappel du panneau ;
+ -- jamais dans le texte des annonces du pont (plain).
+ local why=not plain and (extra==1 or extra==2) and seWhy(t)
+ if why then detail=string.format(L.seStrategy.join,detail,why) end
  panel.pitShort=short; panel.pitDetail=detail; panel.pitExplain=extra==4 and '' or L.flagExplain.pitCompound
 end
 -- Texte d'une annonce de l'arrêt F1 (pont des apps compagnes), celui de la consigne du panneau ; nil pour une autre.
@@ -98,7 +116,7 @@ function M.pitAnnounce(t,kind)
  local scratch={}
  local saved=t.playerPlan
  if kind=='pitCompound' then t.playerPlan='' end
- pitTexts(scratch,t,extra,t.playerPitDue or 0)
+ pitTexts(scratch,t,extra,t.playerPitDue or 0,true)
  t.playerPlan=saved
  return scratch.pitDetail or ''
 end
@@ -117,6 +135,7 @@ local function show(panel,kind,value,double,gap,now,profile,extra)
  local ours=kind=='black' and panel.infractionMax>=0 and panel.infractions>panel.infractionMax
  local key=kind..'|'..value..'|'..extra..'|'..(double and 1 or 0)..(session and '|s' or '')..(ours and '|'..panel.infractions or '')
  if kind=='pit' and extra>0 then key=key..'|'..(panel.pitSig or '') end
+ if kind=='pit' and extra==0 and panel.pitWhy then key=key..'|'..panel.pitWhy end
  if key~=panel.key then
   panel.key=key
   -- Départ arrêté (Beta 1.35) : place et distance lues par la case de l'overlay.
@@ -140,12 +159,16 @@ local function show(panel,kind,value,double,gap,now,profile,extra)
     or kind=='green' and session and 'greenSession' or kind=='yellow' and double and 'yellow2'
     -- Beta 1.38 : départ hors course (séance), cinq feux allumés : consignes propres (maquette).
     or kind=='start' and profile~=nil and profile~='C' and 'startSession' or kind=='lights' and value>=K.gridLights and 'lightsAll'
+    -- Beta 1.61 (classNuance) : annonce, ou classe plus rapide (textes absents : la consigne du drapeau bleu).
+    or kind=='blue' and extra==1 and L.flagShort.blueAdvise and 'blueAdvise' or kind=='blue' and extra==2 and L.flagShort.blueClass and 'blueClass'
     or kind=='black' and ours and 'blackCount' or kind
    panel.short=string.format(L.flagShort[short],short=='blackCount' and panel.infractions or value,extra)
    -- Explication de ce qui se passe (Beta 1.25), sous la consigne : jaune, double jaune, neutralisations, rouge...
    local explain=kind=='yellow' and double and 'yellow2' or kind=='red' and (session and 'redSession' or 'red') or kind
    panel.explain=L.flagExplain[explain] or ''
    if kind=='pit' and extra>0 and panel.pitShort then panel.raw=panel.pitDetail; panel.detail=U.wrapText(panel.pitDetail,K.panelWrap); panel.short=panel.pitShort; panel.explain=panel.pitExplain end
+   -- Beta 1.60 (tranche D) : rappel simple de l'arrêt obligatoire suivi de la raison donnée par SpotterEnginer.
+   if kind=='pit' and extra==0 and panel.pitWhy then panel.raw=string.format(L.seStrategy.join,detail,panel.pitWhy); panel.detail=U.wrapText(panel.raw,K.panelWrap) end
   else panel.explain='' end
  end
 end
@@ -197,7 +220,6 @@ local function initials(name)
  if not first or rest=='' then return name end
  return (first:match('^[%z\1-\127\194-\244][\128-\191]*') or '')..'. '..rest
 end
-M.initials=initials
 -- Beta 1.48 : indicateur de reprise après un drapeau rouge (place de l'ordre figé, voiture à suivre) : case « REPRISE »
 -- aux stands, consigne de la bande (rester, attendre, sortir), pastille en piste (place tenue ou à reprendre). Textes
 -- refaits seulement quand l'état ou le drapeau change ; une consigne remplacée est rendue au drapeau d'abord.
@@ -223,7 +245,7 @@ local function restartInfo(panel,t,frame,kind)
  if kind=='red' then panel.explain=string.format(t.safety>0 and R.explainSc or R.explain,r); panel.restartShort=true end
 end
 -- lights : état des panneaux lumineux (véhicule lent devant, dégâts du joueur), facultatif.
-function M.update(panel,t,frame,p,profile,now,lights)
+function M.update(panel,t,frame,p,profile,now,lights,e)
  if not p.flagPanel or panel.ownOnly then return M.native(panel,frame,now,p,profile) end
  if now<panel.at then return end
  panel.at=now+K.panelPeriod
@@ -238,11 +260,17 @@ function M.update(panel,t,frame,p,profile,now,lights)
  local gap=nil
  local nk,nv=native(panel,frame,now)
  local extra=0
+ -- Beta 1.61 (classNuance) : drapeau bleu nuancé jugé à chaque image (clé annexe tenue à jour même sous un autre drapeau).
+ local nGap,nExtra=nil,0
+ if p.classNuance and e then nGap,nExtra=M.nuanceBlue(panel,e,frame,p,profile,now) end
  if t.red then kind='red'; value=a and a.pit and 1 or 0
  -- Drapeau noir et pénalités d'AC : propres au joueur, avant toute neutralisation.
  elseif nk=='black' or nk=='penalty' or nk=='penaltyDrive' or nk=='penaltyTeleport' or nk=='penaltySlow' then kind=nk; value=nv
  -- Tour de relance d'un drapeau rouge (Beta 1.34) : départ lancé (RS) ou arrêté (SS) annoncé, voiture de sécurité qui
  -- rentre ce tour, dépassement à la ligne ou dès le vert.
+ -- Beta 1.60 (tranche E) : tour de formation du départ de la course, puis départ arrêté ou lancé ; abandonné sur incident.
+ elseif t.neutral and t.formation then kind=t.formationKind=='formation' and 'formationLap' or t.rollCall and 'formationCall' or 'formationRoll'; value=math.floor((t.formationKmh or 0)+0.5)
+ elseif t.neutral and t.formationAborted then kind='formationOff'
  elseif t.neutral and t.relaunch and profile=='C' then
   if p.redRestart=='standing' and t.gridReady then kind='standingLap'
   else kind=t.safetyPhase~='in' and 'rolling' or p.restartOvertake=='scIn' and 'rollingGreen' or 'rollingIn' end
@@ -279,7 +307,10 @@ function M.update(panel,t,frame,p,profile,now,lights)
   kind='warning'; if panel.warnPending then panel.warnPending=false; panel.warnUntil=now+K.warningShow end
  elseif now<(t.slipperyUntil or -math.huge) then kind='slippery'
  else
-  gap=blue(panel.rel,frame,p,profile,panel.kind=='blue')
+  -- Beta 1.61 (réglage classNuance) : drapeau bleu en deux temps (annonce, ordre), aussi pour une classe plus rapide
+  -- dans le même tour, jamais juste après un départ ou une relance (src/nuance.lua) ; extra : 1 annonce, 2 classe.
+  if p.classNuance and e then gap,extra=nGap,nExtra
+  else gap=blue(panel.rel,frame,p,profile,panel.kind=='blue') end
   if gap then kind='blue'
   elseif nk=='nativeBlue' then kind='nativeBlue'
   -- Voiture endommagée (drapeau noir à disque orange) : à l'apparition du dégât, quelques secondes.
@@ -302,6 +333,7 @@ function M.update(panel,t,frame,p,profile,now,lights)
   elseif now<panel.updateUntil then kind='update'; value=panel.updateVersion end
  end
  if kind=='pit' and extra>0 then pitTexts(panel,t,extra,value) end
+ panel.pitWhy=kind=='pit' and extra==0 and seWhy(t) or nil
  show(panel,kind,value,double,gap,now,profile,extra)
  restartInfo(panel,t,frame,kind)
  -- Départ arrêté (Beta 1.35) : joueur à sa place (à l'arrêt) ou au-delà, lus par la case de l'overlay.

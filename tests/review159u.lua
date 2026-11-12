@@ -74,6 +74,8 @@ tests.YIELD_CAP_REFERENCE_159U=function()
  local s=e.states[2]; local start=e.time-1; local lowest=math.huge
  for k=1,9*60 do
   s.state='YIELD_HOLD'; s.target=3; s.targetSide=1; s.followers[3]=true; s.yieldStart=start; s.holdUntil=e.time+60; s.yieldDetection=100; s.yieldMargin=5
+ -- Beta 1.60 (lot 3) : suiveur tenu hors dépassement (sinon passage franc et lever de pied franc : tests/review160w.lua)
+  e.states[3].restUntil=e.time+10
   local bend=(k%180)>120
   local cap=e.commands[2].speedLimit or K.unlimitedSpeed
   local v=bend and 120 or math.min(170,cap)

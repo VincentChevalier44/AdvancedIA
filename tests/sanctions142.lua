@@ -159,7 +159,7 @@ end
 -- Contresens : drapeau noir après sanWrongWaySeconds s au-dessus de K.sanWrongWayKmh km/h (course et essais).
 tests.SAN_WRONG_WAY_142=function()
  local function back(e,f,i,kmh,seconds)
-  local a=f.cars[i]; speed(f,i,kmh)
+  local a=f.cars[i]; speed(f,i,kmh); a.lz=-1 -- Beta 1.60 : contresens = nez en premier contre le sens de la piste (voiture retournée)
   for _=1,math.floor(seconds*60+0.5) do a.z=a.z-a.speed/60; a.spline=(a.z/f.length)%1; F.tick(e,f,1/60) end
  end
  local e,f=race()
@@ -307,7 +307,7 @@ tests.SAN_WORKLOAD_142=function()
  for frame=1,3600 do
   local t=e.time; W.animate(f,t,dt)
   for i=2,f.count do local a=f.cars[i]; local off=(frame+i*37)%900<40; a.wheelsOut=off and 4 or 0; a.offtrack=off end
-  local w=f.cars[7]; if frame>1800 and frame<2400 then w.distance=w.distance-2*w.speed*dt; w.spline=(w.distance/f.length)%1 end
+  local w=f.cars[7]; if frame>1800 and frame<2400 then w.distance=w.distance-2*w.speed*dt; w.spline=(w.distance/f.length)%1; w.lx=-w.lx; w.lz=-w.lz end
   E.step(e,f,dt)
   assert(e.errors==0,'no car error')
   for i=1,f.count do low=math.min(low,e.commands[i].throttleLimit) end

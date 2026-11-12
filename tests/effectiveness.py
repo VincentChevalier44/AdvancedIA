@@ -76,16 +76,20 @@ def main():
             ends = (True, False)
         a, b = scene(key, ends[0], profile), scene(key, ends[1], profile)
         moved = a != b
-        status = 'live' if readers and moved else 'targeted' if readers and named else 'ui' if key in UI_ONLY else 'fixed' if key in FIXED else 'DEAD'
+        # Beta 1.60: a setting whose slice is not delivered (config.pendingKeys) is hidden and held at its default: reported, never dead.
+        status = 'pending' if config['pendingKeys'][key] else 'live' if readers and moved else 'targeted' if readers and named else 'ui' if key in UI_ONLY else 'fixed' if key in FIXED else 'DEAD'
         if status == 'DEAD':
             dead.append(key)
         rows.append({'key': key, 'profile': profile, 'ends': [str(x) for x in ends], 'readers': readers,
                      'tests': named[:6], 'scene_changes': moved, 'status': status})
-    counts = {k: sum(1 for r in rows if r['status'] == k) for k in ('live', 'targeted', 'ui', 'fixed', 'DEAD')}
+    # Beta 1.61: a pending GLOBAL setting (config.pendingGlobals) is reported too.
+    for key in sorted(config['pendingGlobals']):
+        rows.append({'key': key, 'status': 'pending', 'readers': [], 'tests': [], 'profile': 'global'})
+    counts = {k: sum(1 for r in rows if r['status'] == k) for k in ('live', 'targeted', 'ui', 'fixed', 'pending', 'DEAD')}
     (APP/'tests/effectiveness-results.json').write_text(json.dumps({'ok': not dead, 'counts': counts, 'dead': dead, 'rows': rows},
                                                                     ensure_ascii=False, indent=1)+'\n', encoding='utf-8')
     print(f"{len(rows)} settings: {counts['live']} change the generic scene, {counts['targeted']} covered by a targeted test, "
-          f"{counts['ui']} interface only, {counts['fixed']} fixed on purpose, {counts['DEAD']} dead{(': '+', '.join(dead)) if dead else ''}")
+          f"{counts['ui']} interface only, {counts['fixed']} fixed on purpose, {counts['pending']} pending (hidden), {counts['DEAD']} dead{(': '+', '.join(dead)) if dead else ''}")
     assert not dead, 'dead settings: '+', '.join(dead)
 
 
