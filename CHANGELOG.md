@@ -67,7 +67,7 @@ guide shows how it all works: https://vincentchevalier44.github.io/AdvancedIA/
 #### Companion apps: bridge v2
 - The read-only bridge for companion apps moves to version 2: it now tells which AI retired, the reason for each
   AI's last sanction, and the track-limit and penalty-serving thresholds. Companion apps need their bridge-v2 update
-  (SpotterEnginer 1.3.9 or later). AdvancedIA never depends on them.
+  (SpotterEnginer Beta 2.0.0 or later). AdvancedIA never depends on them.
 
 ### Details: the 2.0.0 work after the first test builds
 
