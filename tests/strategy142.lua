@@ -137,7 +137,9 @@ end
 -- Arrêt obligatoire aligné sur l'arrêt prévu par le stratège, s'il tombe plus tard dans la fenêtre.
 tests.STRATEGY_142_MANDATORY_ALIGNED=function()
  local function scene(strategy)
-  local e,f=race(3,20,16,{mandatoryStops=1,pitWindowOpenPct=10,pitWindowClosePct=100,strategyEnabled=strategy})
+  -- Affinage 1.63 (course courte) : 22 tours, ouverture a 2 % (la fenetre se ferme avant le dernier tour ; en 20 tours,
+  -- le plan du tour 18 tomberait dans la marge de fin de fenetre ; l'appel des regles reste avant le plan, comme avant).
+  local e,f=race(3,22,16,{mandatoryStops=1,pitWindowOpenPct=2,pitWindowClosePct=100,strategyEnabled=strategy})
   local a=f.cars[2]; e.states[2].persona.strategyRisk=0.5
   local c=e.strategy.cars[2]; c.lap=15; c.lapWear=0.3; c.wearRate=0.15; c.wearLaps=3
   -- Plan fait avant l'ouverture de la fenêtre (leader au premier tour), puis fenêtre ouverte.
@@ -149,7 +151,7 @@ tests.STRATEGY_142_MANDATORY_ALIGNED=function()
  local e,_,c=scene(true)
  -- Lot 5 (N7) : plan limité par les pneus : avancé de 0 à K.planSpreadLaps tours selon la voiture, jamais avant le tour suivant.
  local at=math.max(17,18-(2%(K.planSpreadLaps+1)))
- assert(c.planned and c.nextLap==18 and math.abs(e.commands[2].stratPlanAt-at/20)<1e-9,'planned around lap 18, brought forward for this car: '..tostring(e.commands[2].stratPlanAt))
+ assert(c.planned and c.nextLap==18 and math.abs(e.commands[2].stratPlanAt-at/22)<1e-9,'planned around lap 18, brought forward for this car: '..tostring(e.commands[2].stratPlanAt))
  assert(not e.commands[2].rulePit,'mandatory stop waits for the planned stop')
 end
 -- Tour de sortie : après un vrai passage à l'emplacement, niveau abaissé jusqu'à la ligne, puis rendu en douceur ;

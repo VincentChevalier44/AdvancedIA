@@ -193,31 +193,31 @@ tests.DAMAGE_PIT_THRESHOLDS_159HB=function()
  run(e,f,0,WAIT)
  assert(not e.commands[2].damageCalled,'below every threshold: not called')
  -- Confirmation : pas avant K.damagePitConfirm s au-dessus du seuil.
- e,f=bench(); f.cars[2].damageBody=120
+ e,f=bench(); f.cars[2].damageBody=K.damagePitBody+40
  run(e,f,0,K.damagePitConfirm-0.5)
  assert(not e.commands[2].damageCalled,'not before the confirmation time')
 end
 tests.DAMAGE_PIT_GUARDS_159HB=function()
  local function lines(e,text) local n=0; for i=1,e.log.limit do if e.log[i].message:find(text,1,true) then n=n+1 end end return n end
  -- Neutralisation : elle attend (une ligne) ; voiture dangereuse : appelée quand même.
- local e,f=bench(); local a=f.cars[2]; a.damageBody=120
+ local e,f=bench(); local a=f.cars[2]; a.damageBody=K.damagePitBody+40
  e.incidents.neutral=true
  local t=run(e,f,0,WAIT)
  assert(not e.commands[2].damageCalled and lines(e,'degats: Driver_2 attend la fin du drapeau pour rentrer')==1,'waits under a neutralisation, one line')
  a.damageSuspension=K.damagePitUnsafe; t=run(e,f,t,K.damagePitScanPeriod+0.5)
  assert(e.commands[2].damageCalled,'unsafe car called even under a neutralisation')
  -- Drapeau jaune local, stands fermés : attend ; drapeau rouge : jamais (le drapeau rouge rappelle tout le monde).
- e,f=bench(); f.cars[2].damageBody=120; e.states[2].yellow=true; run(e,f,0,WAIT); assert(not e.commands[2].damageCalled,'local yellow: waits')
- e,f=bench(); f.cars[2].damageBody=120; e.incidents.pitsClosed=true; run(e,f,0,WAIT); assert(not e.commands[2].damageCalled,'pits closed: waits')
- e,f=bench(); f.cars[2].damageBody=120; run(e,f,0,WAIT,true); assert(not e.commands[2].damageCalled,'red flag: never')
+ e,f=bench(); f.cars[2].damageBody=K.damagePitBody+40; e.states[2].yellow=true; run(e,f,0,WAIT); assert(not e.commands[2].damageCalled,'local yellow: waits')
+ e,f=bench(); f.cars[2].damageBody=K.damagePitBody+40; e.incidents.pitsClosed=true; run(e,f,0,WAIT); assert(not e.commands[2].damageCalled,'pits closed: waits')
+ e,f=bench(); f.cars[2].damageBody=K.damagePitBody+40; run(e,f,0,WAIT,true); assert(not e.commands[2].damageCalled,'red flag: never')
  -- Derniers tours de la course : jamais ; hors course, sans condition de tours.
- e,f=bench(); f.cars[2].damageBody=120; e.race.lapsLeft=K.damagePitMinLapsLeft-1; run(e,f,0,WAIT)
+ e,f=bench(); f.cars[2].damageBody=K.damagePitBody+40; e.race.lapsLeft=K.damagePitMinLapsLeft-1; run(e,f,0,WAIT)
  assert(not e.commands[2].damageCalled,'not in the last laps')
- e,f=bench('P'); f.cars[2].damageBody=120; e.race.lapsLeft=0; run(e,f,0,WAIT)
+ e,f=bench('P'); f.cars[2].damageBody=K.damagePitBody+40; e.race.lapsLeft=0; run(e,f,0,WAIT)
  assert(e.commands[2].damageCalled,'practice: called')
- e,f=bench('J'); f.cars[2].damageBody=120; run(e,f,0,WAIT); assert(not e.commands[2].damageCalled,'track day: never')
+ e,f=bench('J'); f.cars[2].damageBody=K.damagePitBody+40; run(e,f,0,WAIT); assert(not e.commands[2].damageCalled,'track day: never')
  -- Limite d'appels partagée : trois IA déjà appelées hors de la voie des stands.
- e,f=bench(nil,6); f.cars[2].damageBody=120
+ e,f=bench(nil,6); f.cars[2].damageBody=K.damagePitBody+40
  local tt=0
  for _=1,math.floor(WAIT*60) do
   for i=1,6 do local c=e.commands[i]; c.rulePit=i>=4; c.slowCalled=false; c.stratCalled=false; c.sanCalled=false; c.recover=false; c.penaltyPass=false end
@@ -225,7 +225,7 @@ tests.DAMAGE_PIT_GUARDS_159HB=function()
  end
  assert(not e.commands[2].damageCalled,'shared pit-call limit respected')
  -- Déjà appelée par une autre raison (règles, stratégie…) : pas de second appel.
- e,f=bench(); f.cars[2].damageBody=120
+ e,f=bench(); f.cars[2].damageBody=K.damagePitBody+40
  tt=0
  for _=1,math.floor(WAIT*60) do e.commands[2].stratCalled=true; e.commands[3].rulePit=false; DP.step(e,f,tt,false); tt=tt+1/60 end
  assert(not e.commands[2].damageCalled,'already called for another reason')

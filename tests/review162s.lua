@@ -85,7 +85,8 @@ tests.SLIPSTREAM_SEEK_GUARDS_162S=function()
   local function none(label,e,s) assert((s.seekFront or 0)==0 and (e.stats.slipSeek or 0)==0,sign..': '..label) end
   none('track day',run('J',sign))
   none('option off',run('C',sign,{tune=function(p) p.slipstreamEnabled=false end}))
-  none('car ahead on the line',run('C',sign,{lat=0.5}))
+  -- Décision du pilote 2026-11-14 : recalage en course dès K.wakeAlignLat m (0,3 m) : « sur la trajectoire » = en deçà.
+  none('car ahead on the line',run('C',sign,{lat=0.6*K.wakeAlignLat}))
   none('short straight',run('C',sign,{point=200}))
   none('straight unknown',run('C',sign,{point=false}))
   none('careful first lap',run('C',sign,{each=function(e) e.states[2].flW=1 end}))
@@ -125,9 +126,10 @@ end
 
 -- Déboîtement retenu dans l'aspiration de la cible tant que la ligne droite laisse plus que le temps juste nécessaire.
 tests.SLIPSTREAM_SEEK_LATE_PULL_OUT_162S=function()
- local e={fl={points={0.5},count=1}}
+ local e={fl={points={0.5},count=1},time=0}
  local a={splineValid=true,spline=0.4,speed=60,length=4.4}
- local target={index=3,gap=30,sa=20}
+ -- Affinage 1.63 : cible écartée (hors du sillage direct), pour juger la recherche d'aspiration seule.
+ local target={index=3,gap=30,sa=20,lat=2.5}
  local s={seekFront=3}
  -- 1000 m devant, il faut (30+4,4)/(20/3,6) = 6,2 s : 16,7 s devant, retenu.
  assert(D.seekLateTest(e,s,a,target,{length=10000})==false,'long straight: still in the tow')

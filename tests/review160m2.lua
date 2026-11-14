@@ -119,8 +119,8 @@ tests.SNAPSHOT_AHEAD_AND_TRACK_LAT_160M2=function()
  assert(K.blameLatPeriod==0.1 and K.blameCornerG==3)
  local host=require('tests/host').create(true)
  local Snapshot=require('src/snapshot'); local s=Snapshot.new()
- local asked={}; local sides=ac.getTrackAISplineSides
- ac.getTrackAISplineSides=function(v) asked[#asked+1]=v; return {x=3,y=9} end
+ local sides=ac.getTrackAISplineSides
+ ac.getTrackAISplineSides=function() return {x=3,y=9} end
  local ok,err=pcall(function()
   -- Lectures décalées d'une voiture à l'autre (une image par indice) : quelques images suffisent.
   for k=0,7 do Snapshot.read(s,1/60,10+k/600) end
@@ -128,10 +128,13 @@ tests.SNAPSHOT_AHEAD_AND_TRACK_LAT_160M2=function()
   assert(ai.control and ai.leftWidth==3 and ai.rightWidth==9 and ai.leftAhead==3 and ai.rightAhead==9 and ai.leftAhead2==3 and ai.rightAhead2==9,'AI: widths here and at the two points ahead')
   assert(player.player and player.leftAhead==0 and player.rightAhead2==0,'player: no look-ahead read')
   -- Points demandés : K.reachLook1 et K.reachLook2 s plus loin (K.reachLookMin m au moins par pas).
+  -- Beta 1.63 : largeurs lues dans la table du circuit (src/snapshot.lua, WIDTHS) : une largeur qui varie le long du
+  -- circuit montre les points lus (interpolés, écart négligeable).
   local d1=math.max(ai.speed*K.reachLook1,K.reachLookMin)/s.length; local d2=math.max(ai.speed*K.reachLook2,K.reachLookMin*2)/s.length
-  local seen1,seen2=false,false
-  for _,v in ipairs(asked) do if math.abs(v-(ai.spline+d1)%1)<1e-9 then seen1=true end; if math.abs(v-(ai.spline+d2)%1)<1e-9 then seen2=true end end
-  assert(seen1 and seen2,'look-ahead distances follow the speed')
+  ac.getTrackAISplineSides=function(v) return {x=3+10*v,y=9} end
+  for k=0,7 do Snapshot.read(s,1/60,10.05+k/600) end
+  ai=s.cars[3]
+  assert(math.abs(ai.leftAhead-(3+10*((ai.spline+d1)%1)))<0.02 and math.abs(ai.leftAhead2-(3+10*((ai.spline+d2)%1)))<0.02,'look-ahead distances follow the speed')
   -- Lecture manquée plus loin : 0 (la borne reste celle d'avant).
   local here=ai.spline
   ac.getTrackAISplineSides=function(v) if math.abs(v-here)<1e-9 then return {x=3,y=9} end error('no data') end
@@ -204,6 +207,7 @@ tests.BLAME_CORNER_FROM_TRACK_160M2=function()
  local function side(yellow)
   local e,f=blameScene(on)
   F.place(f,2,0,100,-1); F.place(f,3,2.3,92,1); F.tick(e,f,1.5); f.cars[2].brake=0.5; f.cars[3].brake=0.5
+  F.tick(e,f,0.3) -- Beta 1.64, lot 1 : duel enregistré à l'entrée (freinage côte à côte avant le choc)
   hit(e,f,2,3,function() e.states[2].yellow=yellow; e.states[3].yellow=yellow end)
   return e
  end

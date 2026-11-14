@@ -2,13 +2,15 @@ local ffi=require('ffi')
 local U=require('src/util')
 local C=require('src/config')
 local Caps=require('src/caps')
+local GridMod=require('src/grid')
 local Lights=require('src/lights')
 local Perception=require('src/perception')
 local Presets=require('src/presets')
 local K=C.K
 local M={}
+M.Signals=require('src/signals')
 local setters={level='setAILevel',aggression='setAIAggression',caution='setAICaution',offset='setAISplineOffset',grip='setExtraAIGrip',speed='setAITopSpeed',rain='setAIRainTyres',tyres='setAITyres',pit='setAIPitStopRequest',
- stop='setAIStopCounter',flag='overrideRacingFlag',park='setAINoInput',teleport='teleportCarTo',penalty='setCarPenalty',drs='allowCarDRS',drsActive='setCarDRS',brakeMistake='setAIBrakeMistake',tractionMistake='setAITractionMistake',fuel='overrideAIRequestedFuel',startDelay='setAITimeToStart',awake='awakeCar',position='setCarPosition',velocity='setCarVelocity',repairBody='setCarBodyDamage',repairSuspension='setSuspensionDamage',repairEngine='setCarEngineLife',fuelSet='setCarFuel',throttle='setAIThrottleLimit',tyreKm='setTyresVirtualKM'}
+ stop='setAIStopCounter',flag='overrideRacingFlag',park='setAINoInput',teleport='teleportCarTo',penalty='setCarPenalty',drs='allowCarDRS',drsActive='setCarDRS',brakeMistake='setAIBrakeMistake',tractionMistake='setAITractionMistake',fuel='overrideAIRequestedFuel',startDelay='setAITimeToStart',awake='awakeCar',noRetire='preventAIFromRetiring',position='setCarPosition',velocity='setCarVelocity',repairBody='setCarBodyDamage',repairSuspension='setSuspensionDamage',repairEngine='setCarEngineLife',fuelSet='setCarFuel',throttle='setAIThrottleLimit',tyreKm='setTyresVirtualKM'}
 local windowIDs={'main'}
 -- Événements de l'applicateur vers le journal du moteur (relié par le fichier d'entrée).
 local function note(a,level,text,index) if a.note then a.note(level,text,index) end end
@@ -53,6 +55,8 @@ local function initClock()
  return fallback and clock or nil
 end
 local function present(name)
+ -- Beta 1.64 : clignotants des IA par la voiture cible (src/signals.lua).
+ if name=='turnSignals' then return callable(ac.setTargetCar) and callable(ac.setTurningLights) end
  local controls=name=='brake' or name=='flash'
  return controls and callable(ac.overrideCarControls) or not controls and physics~=nil and callable(physics[setters[name]])
 end
@@ -64,7 +68,17 @@ local function setBrake(controls,value)
 end
 -- Appel de phares d'une IA : mêmes valeurs neutres, frein additionnel en cours conservé, impulsion d'une image.
 local function setFlash(controls,brake) setBrake(controls,brake); controls.headlightsFlash=true end
+-- Beta 1.64 : clignotants d'une IA (value : 0 aucun, 1 gauche, 2 droite, 3 détresse), voiture cible rendue au joueur
+-- (extra : index AC du joueur, 0 sans joueur) dans le même appel, même en cas d'erreur.
+local function turnSignals(index,value,back)
+ if ac.setTargetCar(index)==false then ac.setTargetCar(back or 0); return false end
+ local ok,err=pcall(ac.setTurningLights,value)
+ ac.setTargetCar(back or 0)
+ if not ok then error(err) end
+ return true
+end
 local function write(name,index,value,extra)
+ if name=='turnSignals' then return pcall(turnSignals,index,value,extra) end
  if name=='brake' or name=='flash' then
   local ok,controls=pcall(ac.overrideCarControls,index)
   if not ok or not controls then return false end
@@ -186,23 +200,28 @@ function M.readFlagsHidden(a)
  local ok,value=pcall(readRaceFlagsHidden,a)
  if ok and type(value)=='boolean' then a.raceFlagsHidden=value elseif ok and type(value)=='number' then a.raceFlagsHidden=value~=0 else a.raceFlagsHidden=nil end
 end
--- Beta 1.52 : fenêtre ouverte hors des menus cherchée au changement de visibilité, puis au plus toutes les
--- K.windowCheckPeriod s (now : horloge des images, qui avance aussi en replay, donnée par la mise à jour de l'image
--- seulement ; sans now, rappel du dessin : au changement seulement). Avant : un appel protégé de ac.isWindowOpen à chaque image.
-function M.menu(a,visible,now)
+-- Visibilité des menus (pause, setup) : la fenêtre suit au changement seulement (plus de fermeture périodique depuis la
+-- 1.64 i1, la fenêtre pouvant être ouverte en jeu par le joueur ; le 3e argument des appelants est ignoré).
+function M.menu(a,visible)
  a.menuVisible=visible
  local changed=visible~=a.menuLast
  if changed then
   a.menuLast=visible
   -- Relue à chaque ouverture du menu (réglage CSP modifiable en cours de partie).
   if visible then M.readFlagsHidden(a) end
+  -- Affinage 1.64 i1 (décision du pilote) : la fenêtre s'ouvre seule dans les menus pause/setup et se referme à leur
+  -- sortie, sauf si le joueur l'avait ouverte lui-même en jeu (barre des apps d'AC) : elle reste alors ouverte. En jeu,
+  -- elle n'est plus jamais refermée par l'app (fermée par défaut au premier passage hors menu).
+  if visible then a.openInGame=M.windowOpenInGame()
+  elseif a.openInGame then a.openInGame=false; return end
   if callable(ac.setWindowOpen) then pcall(ac.setWindowOpen,'main',visible) end
  end
- local due=changed or now~=nil and now>=(a.windowCheckAt or -math.huge)
- if not visible and due and callable(ac.isWindowOpen) and callable(ac.setWindowOpen) then
-  if now~=nil then a.windowCheckAt=now+K.windowCheckPeriod end
-  for _,id in ipairs(windowIDs) do local ok,opened=pcall(ac.isWindowOpen,id); if ok and opened then pcall(ac.setWindowOpen,id,false) end end
- end
+end
+-- Affinage 1.64 i1 : fenêtre de réglages ouverte (lecture seule de CSP ; faux si la fonction manque ou échoue).
+function M.windowOpenInGame()
+ if not callable(ac.isWindowOpen) then return false end
+ local ok,opened=pcall(ac.isWindowOpen,windowIDs[1])
+ return ok and opened==true
 end
 -- Beta 1.14 : fenêtre de réglages ramenée une fois à la taille compacte (target) si elle est plus large. Renvoie true
 -- quand c'est fait ou impossible (fonction ou fenêtre absente : noté au journal), pour ne jamais réessayer.
@@ -303,6 +322,8 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
  if not pendingOnly and a.flagOverride and Caps.restoreCall(a.caps,'flag',-1,K.flagNone) then a.flagOverride=false; a.flagValue=K.flagNone; a.recoveryDirty=true; M.flagReleased(a); note(a,'INFO','panneaux lumineux du circuit: rendus a AC (commandes rendues)',-1) end
  if final then M.releaseBlackFlag(a) end
  if not pendingOnly then M.releaseDrs(a,frame) end
+ -- Beta 1.64 : clignotants des IA éteints.
+ if not pendingOnly then M.Signals.release(a,frame,Caps) end
  for i=1,frame.count do
   local car=frame.cars[i]; local s=a.cars[i]
   if final then restoreSkin(s,car) end
@@ -329,12 +350,14 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
    -- Demande de carburant rendue à AC (math.huge : plus de remplacement).
    if mine and s.fuelRequested>=0 and Caps.restoreCall(a.caps,'fuel',car.index,math.huge) then s.fuelRequested=-1; s.fuelLogged=nil; a.recoveryDirty=true end
    local driving=mine and not car.pit and not car.offtrack
+   -- Beta 1.63 : tour de décélération en cours (M.cooldown) : plafond et décalage laissés à ce tour.
+   local cool=s.cooling and not final and not car.pit
    if driving or final and mine then
     local good=s.offsetReset==true and s.offset==0
     -- Beta 1.52 : au déchargement (aucune image ne suit), décalage rendu à 0 sans condition (aux stands, hors piste, en
     -- replay ou voisin trop près) : sinon AC le gardait jusqu'à la fin de la partie.
     if not good and final then good=Caps.restoreCall(a.caps,'offset',car.index,0,false); s.offsetReset=good
-    elseif not good and driving and not frame.replay then
+    elseif not good and driving and not frame.replay and not cool then
      Perception.occupancy(frame.cars,frame.count,i,a.g or C.globalDefaults,a.safety)
      local canonical=s.offset*(a.offsetSign==0 and 1 or a.offsetSign)
      local safe=not (canonical>0 and a.safety.left or canonical<0 and a.safety.right)
@@ -346,7 +369,7 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
     if s.caution~=nil then if Caps.restoreCall(a.caps,'caution',car.index,K.defaultCaution) then s.caution=nil else good=false end end
     if s.grip~=nil then if Caps.restoreCall(a.caps,'grip',car.index,K.gripBase) then s.grip=nil else good=false end end
     if s.brake~=0 then good=false end
-    if s.speed~=nil then if Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil else good=false end end
+    if s.speed~=nil then if cool then good=false elseif Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil else good=false end end
     if s.throttle~=nil then if Caps.restoreCall(a.caps,'throttle',car.index,1) then s.throttle=nil else good=false end end
     if s.rainHint~=nil or s.pitRequest or s.stop or s.parked or s.fuelRequested>=0 then good=false end
     if good then s.owned=false; s.reset=false; s.offset=0; s.level=nil; s.aggression=nil; s.caution=nil; s.grip=nil; s.brake=0; s.speed=nil; s.recovered=false; s.restoredAt=now; s.justRestored=true; a.recoveryDirty=true end
@@ -827,11 +850,12 @@ local function safety(a,s,car,cmd,now)
   -- Ramenée à son emplacement depuis la piste comme depuis la voie des stands (jamais garée en travers) ; de nouveau si
   -- elle en ressort (Beta 1.22 : garée sans pilote, une IA peut quitter son emplacement, Content Manager la placer en
   -- piste), au plus toutes les K.parkReturnPeriod s.
-  if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and a.caps.teleport.available and Caps.call(a.caps,'teleport',car.index,'PIT') then s.teleported=true; s.teleportAt=now+K.parkReturnPeriod; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: ramenee a son stand' or cmd.parkReason=='spare' and 'voiture de securite en reserve: ramenee a son stand' or 'voiture de securite: ramenee a son stand',car.index+1) end
+  if not car.inPitBox and not cmd.scHideWait and now>=s.teleportAt and a.caps.teleport.available and Caps.call(a.caps,'teleport',car.index,'PIT') then s.teleported=true; s.teleportAt=now+K.parkReturnPeriod; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: ramenee a son stand' or cmd.parkReason=='retired' and 'IA abandonnee: ramenee a son stand' or cmd.parkReason=='spare' and 'voiture de securite en reserve: ramenee a son stand' or 'voiture de securite: ramenee a son stand',car.index+1) end
   -- Relecture : une IA disqualifiée n'est garée qu'aux stands (ramenée par le moteur si le déplacement échoue).
   -- Beta 1.48 : voiture de sécurité (ou de réserve) garée seulement à son emplacement (jamais en travers de la piste
   -- après un retour au stand manqué), sauf retour au stand impossible (CSP) ; IA disqualifiée : aux stands.
-  local where=cmd.parkReason=='dq' and (car.pit or car.inPitBox) or cmd.parkReason~='dq' and (car.inPitBox or not a.caps.teleport.available)
+  local out=cmd.parkReason=='dq' or cmd.parkReason=='retired'
+  local where=out and (car.pit or car.inPitBox) or not out and (car.inPitBox or not a.caps.teleport.available)
   -- Beta 1.50 : voiture de sécurité en service retenue à son emplacement par l'attente native d'AC (départ différé de
   -- K.scHoldTime s, freinage forcé de K.scHoldStop s, renouvelés toutes les K.scHoldPeriod s), jamais garée sans pilote : libérée, elle
   -- repart d'elle-même par la voie des stands (garée sans pilote, elle n'en sortait jamais). Garée sans pilote seulement
@@ -853,7 +877,7 @@ local function safety(a,s,car,cmd,now)
     note(a,'WARN',string.format('voiture de securite: a quitte son emplacement malgre l attente (%d / %d)%s',s.scEscapes,K.scEscapeMax,s.scEscapes>=K.scEscapeMax and ', garee sans pilote desormais' or ''),car.index+1)
    end
   elseif now>=s.parkAt and a.caps.park.available and where and Caps.call(a.caps,'park',car.index,true) then
-   if not s.parked then a.recoveryDirty=true; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: garee jusqu a la fin de la session' or cmd.parkReason=='spare' and 'voiture de securite en reserve: garee sans pilote' or 'voiture de securite: garee sans pilote',car.index+1) end; s.parked=true; s.parkAt=now+K.parkPeriod
+   if not s.parked then a.recoveryDirty=true; note(a,'INFO',cmd.parkReason=='dq' and 'IA disqualifiee: garee jusqu a la fin de la session' or cmd.parkReason=='retired' and 'IA abandonnee: garee jusqu a la fin de la session' or cmd.parkReason=='spare' and 'voiture de securite en reserve: garee sans pilote' or 'voiture de securite: garee sans pilote',car.index+1) end; s.parked=true; s.parkAt=now+K.parkPeriod
   end
  else
   -- Beta 1.52 : retenue levée sans libération (scPark retombé sans scRelease) : attente native de K.scHoldTime s et
@@ -867,8 +891,13 @@ local function safety(a,s,car,cmd,now)
   if cmd.scRelease and car.inPitBox then
    if now>=(s.scKickAt or -math.huge) then
     s.scKickAt=now+K.scKickPeriod
-    if not s.scReleasedAt then s.scReleasedAt=now; Caps.call(a.caps,'pit',car.index,false) end
+    if not s.scReleasedAt then s.scReleasedAt=now; s.scKicks=0; Caps.call(a.caps,'pit',car.index,false) end
+    -- Correctif 1.63 (Imola, 13 novembre) : toute retenue levée à chaque relance (départ différé, freinage forcé,
+    -- garée sans pilote, retenue de l'app), réveillée ; chaque relance notée.
+    if s.parked and Caps.restoreCall(a.caps,'park',car.index,false) then s.parked=false; s.parkAt=-math.huge; a.recoveryDirty=true end
     Caps.call(a.caps,'awake',car.index); Caps.call(a.caps,'startDelay',car.index,0); Caps.call(a.caps,'stop',car.index,0)
+    s.scKicks=(s.scKicks or 0)+1
+    note(a,'INFO',string.format('voiture de securite: liberee a son emplacement, attentes levees et reveil (%d)',s.scKicks),car.index+1)
    end
   elseif cmd.scRelease and s.scReleasedAt then
    note(a,'INFO',string.format('voiture de securite: sortie de son stand apres %.1f s',now-s.scReleasedAt),car.index+1); s.scReleasedAt=nil
@@ -888,7 +917,46 @@ local function recover(a,s,car,cmd)
    s.redTeleported=true
    -- Relecture : une IA lente et endommagée roule encore (jamais « immobile ») ; le déplacement la répare.
    if cmd.recoverReason=='lente et endommagee' then note(a,'INFO',string.format('IA lente et endommagee depannee a son stand, reparee par le deplacement (lente depuis %.0f s)',cmd.recoverStill or 0),car.index+1)
+   -- Correctif 1.64 : IA encore en incident en piste au délai maximal du drapeau rouge (elle peut rouler au pas).
+   elseif cmd.recoverReason=='delai maximal' then note(a,'INFO',string.format('IA encore en piste au delai maximal du drapeau rouge depannee a son stand (en incident depuis %.0f s)',cmd.recoverStill or 0),car.index+1)
    else note(a,'INFO',string.format('IA immobile depannee a son stand (%s, immobile depuis %.0f s)',cmd.recoverReason or '?',cmd.recoverStill or 0),car.index+1) end
+  end
+ end
+end
+-- Beta 1.63 : IA accidentée qui peut encore rouler (src/incidents.lua, rejoin) : pas de dépannage tant qu'elle essaie
+-- de repartir ; chaque redémarrage demandé est servi une fois (attente d'AC après un incident levée, voiture réveillée).
+-- Une attente posée par l'app elle-même (retenue) n'est jamais levée ici.
+function M.rejoin(a,frame,incidents,commands)
+ if not a.allowed or frame.online or frame.replay or frame.paused then return end
+ for i=1,frame.count do
+  local c=incidents.cars[i]; local cmd=commands[i]; local s=a.cars[i]; local car=frame.cars[i]
+  if c.rejoining then cmd.recover=false end
+  local id=c.rejoinId or 0
+  if id~=(s.rejoinServed or 0) then
+   s.rejoinServed=id
+   if car.valid and car.control and not car.player and not car.pit and not s.stop and not s.parked then
+    Caps.call(a.caps,'stop',car.index,0); Caps.call(a.caps,'awake',car.index)
+   end
+  end
+ end
+end
+-- Beta 1.63 : tour de décélération après le drapeau à damier (src/cooldown.lua) : plafond d'allure et décalage vers le
+-- côté libre d'une IA arrivée ; rendus dès qu'elle n'y a plus droit (voie des stands : M.restore, laneRelease ; fin de
+-- course, nouvelle session). La restitution ne touche ni à son plafond ni à son décalage pendant ce tour (s.cooling).
+function M.cooldown(a,frame,t,g,now)
+ if not a.allowed or frame.online or frame.replay or frame.paused then return end
+ for i=1,frame.count do
+  local c=t.cars[i]; local s=a.cars[i]; local car=frame.cars[i]
+  if c.on and car.valid and car.control and not car.player and not car.pit then
+   claim(a,s,car,now); s.cooling=true
+   if a.caps.speed.available then send(a,s,'speed',car.index,c.cap,K.levelEpsilon) end
+   if g.offsetSign~=0 and a.caps.offset.available then
+    local offset=U.clamp(c.offset,-1,1)*g.offsetSign
+    if math.abs(offset-s.offset)>=K.offsetEpsilon and Caps.call(a.caps,'offset',car.index,offset,false) then s.offset=offset; s.offsetReset=offset==0 end
+   end
+  elseif s.cooling then
+   s.cooling=nil; s.reset=true
+   if s.speed~=nil and car.valid and car.control and not car.player and Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil; a.recoveryDirty=true end
   end
  end
 end
@@ -1304,6 +1372,9 @@ function M.apply(a,frame,commands,g,now)
   hold(a,s,car,cmd,now)
   -- Départ arrêté (Beta 1.34) : extinction des feux, IA réveillées (aux stands : départ immédiat).
   if cmd.gridWake and car.valid and car.control and not car.player then Caps.call(a.caps,'awake',car.index); if car.pit then Caps.call(a.caps,'startDelay',car.index,0) end end
+  -- Affinage 1.63 (Bakou) : IA de la grille protégée du renvoi aux stands d'AC (appel à chaque image, src/grid.lua).
+  GridMod.retireGuard=a.caps.noRetire~=nil and a.caps.noRetire.available==true
+  if cmd.noRetire and car.valid and car.control and not car.player then Caps.call(a.caps,'noRetire',car.index) end
   flash(a,s,car,cmd,now)
   local limit=math.min(cmd.speedLimit or K.unlimitedSpeed,cmd.yellowLimit or K.unlimitedSpeed)
   local wanted=(cmd.throttleLimit or 1)<1 or cmd.weatherManaged or cmd.rulePit or cmd.stopHold or cmd.pitHold or cmd.scPark or cmd.scSpeed<K.unlimitedSpeed or s.stop or s.parked or cmd.active and (cmd.levelOwned~=false or cmd.aggressionOwned~=false or cmd.cautionOwned~=false or math.abs(cmd.offset)>=K.offsetEpsilon or (g.useBrakeAssist and (cmd.brake or 0)>0) or limit<K.unlimitedSpeed)
@@ -1371,6 +1442,8 @@ function M.apply(a,frame,commands,g,now)
    elseif Caps.restoreCall(a.caps,'throttle',car.index,1) then s.throttle=nil end
   end
  end
+ -- Beta 1.64 : clignotants des IA (src/signals.lua), après toutes les autres commandes de l'image.
+ M.Signals.write(a,frame,commands,Caps)
 end
 function M.register(a,release,session)
  if ac.onRelease and not a.releaseToken then local ok,t=pcall(ac.onRelease,release); if ok then a.releaseToken=t or true end end
@@ -1634,7 +1707,7 @@ end
 -- sous Documents\Assetto Corsa\AdvancedIA, repli sur le dossier de l'app dans CSP comme le fichier des préréglages.
 -- Seuls accès aux fichiers de ces deux dossiers. folder : l'un des deux noms ; key : clé du circuit (TrackFile.key).
 local function trackPath(dir,folder,key)
- if not dir or (folder~=K.zoneFolder and folder~=K.paceFolder) then return nil end
+ if not dir or (folder~=K.zoneFolder and folder~=K.paceFolder and folder~=K.dangerFolder) then return nil end
  if type(key)~='string' or key=='' or #key>K.trackKeyMax or not key:match('^[%w_%-]+$') then return nil end
  return dir..'\\'..folder..'\\'..key..'.ini'
 end
@@ -1691,6 +1764,13 @@ function M.trackFileWrite(folder,key,text)
    if saveClean(path,text) then return place[2],clock and (clock()-before)*1000 or 0 end
   end
  end
+ return nil
+end
+-- Beta 1.64 (overlay par bureau, src/desktops.lua) : bureau d'applications d'AC actuel, valeur brute (0 à 3) ou nil.
+function M.desktop()
+ if not callable(ac.getUI) then return nil end
+ local ok,v=pcall(function() local s=ac.getUI(); return s and s.currentDesktop end)
+ if ok then return v end
  return nil
 end
 return M

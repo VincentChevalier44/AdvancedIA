@@ -3,7 +3,9 @@
 local C=require('src/config')
 local tests={}
 
-local all={'fineInputs','dynamicPersona','wearPace','rearAwareness','weatherLive'}
+-- Beta 1.64 : clignotants des IA (aiTurnSignals) dans chaque préréglage intégré (règle du pilote : chaque nouvelle option
+-- pertinente est explicitement dans les préréglages).
+local all={'fineInputs','dynamicPersona','wearPace','rearAwareness','weatherLive','aiTurnSignals'}
 local matrix={
  {'Nordschleife','J',{},{'damagePit','qualiRuns','classNuance','passAid','strategyStartVariety'}},
  {'Circuit','J',{},{'damagePit','qualiRuns','classNuance','passAid','strategyStartVariety'}},
@@ -27,7 +29,7 @@ end
 -- Chaque option active a son onglet coché, sinon elle serait coupée sans le dire.
 tests.PRESET_OPTIONS_SECTIONS_TICKED_162P=function()
  local section={fineInputs='human',dynamicPersona='human',rearAwareness='lateral',wearPace='weather',weatherLive='weather',
-  damagePit='accidents',qualiRuns='yield',strategyStartVariety='strategy',strategySmart='strategy',passAid='overtake',classNuance='blue'}
+  damagePit='accidents',qualiRuns='yield',aiTurnSignals='lateral',strategyStartVariety='strategy',strategySmart='strategy',passAid='overtake',classNuance='blue'}
  for _,row in ipairs(matrix) do
   local p=C.preset(row[1],row[2],{})
   for key,group in pairs(section) do

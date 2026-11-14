@@ -31,9 +31,10 @@ end
 tests.SC_FREE_PACE_160S=function()
  local e,f,t=deployed()
  assert(e.run.safetyCarSpeedKmh==nil,'the speed setting is gone')
- assert(e.commands[5].scSpeed==K.scLeadKmh,'slow while the field is far behind')
+ -- Correctif 1.63 : plus d'allure lente fixe, plus de plafond quand l'allure du peloton est inconnue.
+ assert(e.commands[5].scSpeed>=K.unlimitedSpeed,'1.63: no fixed slow pace while the field is far behind')
  F.place(f,2,1150,120); F.place(f,3,1100,120); F.tick(e,f,0.5)
- assert(t.scHead==2 and e.commands[5].scSpeed==K.scNominalKmh+K.scCatchUp-K.scFreeMargin,'free pace once the queue head is close (lot 5: finite while the pace of the field is unknown): '..tostring(e.commands[5].scSpeed))
+ assert(t.scHead==2 and e.commands[5].scSpeed>=K.unlimitedSpeed,'1.63: full pace while the pace of the field is unknown: '..tostring(e.commands[5].scSpeed))
  local s=e.states[2]; for b=1,#s.pace do s.pace[b]=250/3.6 end; s.paceCount=400
  F.tick(e,f,0.2)
  assert(math.abs(e.commands[5].scSpeed-250/(1+K.scPacePct/100))<1e-6,'never faster than the field can follow: '..e.commands[5].scSpeed)
@@ -120,7 +121,7 @@ end
 tests.SC_GREEN_TRAIN_160S=function()
  local e,f,t=deployed()
  F.place(f,5,1200,100); F.place(f,2,1150,100); F.place(f,3,1100,100); F.place(f,4,6000,100); f.cars[4].pit=false
- F.tick(e,f,K.scMinOut+K.scBunchLaps*f.length/(K.scNominalKmh/3.6)+e.run.neutralizationHold+5)
+ F.tick(e,f,K.scMinOut+math.min(K.scBunchMax,K.scBunchLaps*f.length/(K.scNominalKmh/3.6))+e.run.neutralizationHold+5)
  assert(t.safetyPhase=='in','in this lap')
  -- Elle entre dans la voie des stands, la tête de la file déjà un peu devant elle.
  F.place(f,5,9000,60); F.place(f,2,9020,100); F.place(f,3,8950,100); F.tick(e,f,0.1)

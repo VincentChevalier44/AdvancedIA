@@ -67,6 +67,37 @@ return function(source)
   HOST.sim.isPaused=false; HOST.sim.isInMainMenu=true; script.HUMANAI__MENU(); assert(HUMANAI.host.menuVisible)
   HOST.sim.isInMainMenu=false; pause(true)
  end)
+ -- Affinage 1.64 i1 (décision du pilote) : fenêtre ouverte en jeu depuis la barre des apps : vue compacte, vue complète,
+ -- rien de dessiné quand elle est fermée ; gardée ouverte à la sortie d'un menu.
+ check('1.64 i1 fenêtre ouverte en jeu : vue compacte puis complète',function()
+  pause(false); HOST.windowOpen.main=false; redraw(); assert(#HOST.drawnTexts==0,'closed: nothing drawn')
+  HOST.windowOpen.main=true; redraw()
+  assert(drawnText(L.ingameTitle) and drawn('ingame_full') and drawn('ingame_overlay'),'compact view')
+  local g=HUMANAI.engine.g; local before=g.overlayEnabled~=false
+  press('ingame_overlay'); assert((g.overlayEnabled~=false)~=before,'overlay switch'); press('ingame_overlay')
+  assert((g.overlayEnabled~=false)==before)
+  press('ingame_full'); redraw(); assert(not drawnText(L.ingameTitle),'full view')
+  pause(true); redraw(); pause(false); assert(HOST.windowOpen.main,'opened by the player: kept open after the menu')
+  redraw(); assert(drawnText(L.ingameTitle),'compact view again after the menu')
+  HOST.windowOpen.main=false; redraw(); assert(#HOST.drawnTexts==0)
+  pause(true)
+ end)
+ -- Affinage 1.64 t1 : vue compacte en jeu : overlay sur ce bureau d'AC, déplacer/verrouiller, replacer sur ce bureau ;
+ -- bureau illisible : pas d'interrupteur de bureau.
+ check('1.64 t1 vue compacte : overlay de ce bureau',function()
+  pause(false); HOST.windowOpen.main=true; redraw()
+  assert(drawn('ingame_move') and drawn('ingame_recenter') and not drawn('ingame_desk'),'unknown desktop: no desktop switch')
+  local g=HUMANAI.engine.g; local Desk=require('src/desktops')
+  local getUI=ac.getUI; ac.getUI=function() return {windowSize={x=1920,y=1080},currentDesktop=1} end
+  local ok,err=pcall(function()
+   redraw(); assert(drawn('ingame_desk'),'desktop switch shown')
+   press('ingame_desk'); assert(g.overlayDesk2==false and g.overlayDesk1==true,'desktop 2 hidden only'); press('ingame_desk'); assert(g.overlayDesk2==true)
+   local locked=g.overlayLocked; press('ingame_move'); assert(g.overlayLocked==not locked,'move/lock'); press('ingame_move'); assert(g.overlayLocked==locked)
+   Desk.setLayout(g,2,10,20,30,40); press('ingame_recenter'); assert(Desk.layout(g,2).x==-1 and not Desk.detached(g,2),'put back on this desktop')
+  end)
+  ac.getUI=getUI; HOST.windowOpen.main=false; redraw(); pause(true)
+  assert(ok,err)
+ end)
  check('boutons de profil, surbrillance et activations indépendantes',function()
   go('settings'); press('section_general'); assert(HUMANAI.engine.profiles.J.section_general)
   assert(HOST.storage['humanai:p:J:'].section_general and HOST.calls==0)
@@ -720,6 +751,63 @@ return function(source)
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
   assert(HOST.flag==0,'native flag untouched')
  end)
+ -- Beta 1.64, lot 3 (décision du pilote du 13 novembre) : drapeau rouge au délai maximal, piste non dégagée. Scène du
+ -- cas 1.5.0 (voitures 2 et 3 côte à côte sur une piste étroite) ; voiture 1 arrêtée seule en piste depuis moins de 8 s
+ -- au délai maximal (raccourci). setup(physics) : capacité de déplacement retouchée avant le lancement.
+ local function red164(setup)
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; HOST.sim.carsCount=4
+  if setup then setup() end
+  assert(loadstring(source))()
+  local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.redFlagCars=2; e.profiles.C.redFlagHold=20; E.changed(e)
+  local function lines(text) local n=0; for k=0,e.log.count-1 do local row=e.log[(e.log.head-k-1)%e.log.limit+1]; if row.message:find(text,1,true) then n=n+1 end end return n end
+  H.tick(HOST,8)
+  local sides=ac.getTrackAISplineSides; ac.getTrackAISplineSides=function() return {x=3,y=3} end
+  for k,i in ipairs({2,3}) do local c=HOST.cars[i]; c.speedKmh=0; c.velocity={x=0,z=0}; c.position={x=k==1 and -1.5 or 1.5,y=0,z=HOST.cars[2].position.z}; c.splinePosition=HOST.cars[2].splinePosition end
+  H.tick(HOST,C.K.redIncidentStill+1)
+  ac.getTrackAISplineSides=sides
+  assert(e.incidents.red,'red flag')
+  return e,lines
+ end
+ local function alone(e)
+  local c=HOST.cars[1]; c.speedKmh=0; c.velocity={x=0,z=0}; c.position={x=0,y=0,z=5000}; c.splinePosition=0.5
+  H.tick(HOST,3)
+  assert(e.incidents.cars[2].incident and e.incidents.cars[2].onTrack and e.incidents.cars[2].still<C.K.redRecoverTime,'car 1 in an incident on the track, stopped for less than 8 s')
+ end
+ check('Beta 1.64 : drapeau rouge au délai maximal, IA encore en piste dépannée, reprise piste dégagée',function()
+  local e,lines=red164()
+  H.tick(HOST,3); assert(HOST.teleports>=2,'cars 2 and 3 recovered by the red-flag rule')
+  alone(e)
+  assert(e.incidents.onTrack==1 and e.incidents.red,'guard: one AI still on the track just before the maximum delay')
+  local teleports=HOST.teleports
+  e.incidents.redMax=e.time-e.incidents.redSince
+  H.tick(HOST,0.5); H.tick(HOST,1)
+  assert(HOST.teleports==teleports+1 and HOST.cars[1].isInPit,'car 1 recovered at the maximum delay')
+  assert(lines('drapeau rouge: delai maximal atteint')==1 and lines('IA encore en piste au delai maximal du drapeau rouge')==1,'wait and recovery logged')
+  assert(not e.incidents.red and lines('reprise forcee')==0,'restart once the track is clear')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ check('Beta 1.64 : drapeau rouge au délai maximal sans déplacement de CSP : reprise forcée notée',function()
+  local e,lines=red164(function() physics.teleportCarTo=nil end)
+  assert(e.teleportCap==false,'no move function: capability missing')
+  alone(e)
+  local t=e.incidents
+  t.redMax=e.time-t.redSince+0.5
+  for _=1,120 do if not t.red then break end; H.tick(HOST,1/60) end
+  assert(not t.red and t.redEnd-t.redSince>=t.redMax and t.redEnd-t.redSince<t.redMax+1/30,'forced restart at the first frame past the maximum delay, no wait')
+  assert(lines('depannage impossible, reprise forcee')==1 and lines('delai maximal atteint')==0,'forced restart logged')
+  assert(t.relaunch and HOST.teleports==0,'restart lap, nobody moved')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ check('Beta 1.64 : drapeau rouge, déplacement en échec : capacité coupée, reprise forcée',function()
+  local e,lines=red164(function() physics.teleportCarTo=function() error('teleport refused') end end)
+  H.tick(HOST,1)
+  assert(e.teleportCap==false and lines('capacite teleport: coupee apres 3 echecs')==1,'capability cut after 3 failures')
+  local t=e.incidents
+  t.redMax=e.time-t.redSince
+  H.tick(HOST,1)
+  assert(not t.red and t.relaunch and lines('depannage impossible, reprise forcee')==1,'forced restart, logged')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
  check('1.6.0 : arrêts obligatoires mémorisés appliqués après un rechargement, oubliés au redémarrage de la session',function()
   local function rules() local e=HUMANAI.engine; course161(e.profiles.C); e.profiles.C.mandatoryStops=1; E.changed(e) end
   HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3
@@ -1228,6 +1316,22 @@ return function(source)
   assert(HOST.storage['humanai:g:'].panelShow=='always' or true)
   HUMANAI.release()
  end)
+  -- Beta 1.64 (demande du pilote) : overlay masqué sur un bureau d'applications d'AC, affiché sur les autres ; bureau
+ -- inconnu ou illisible : affiché (comme avant) ; le moteur continue.
+ check('Beta 1.64 : overlay par bureau d applications',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.space={x=1000,y=3000}; HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,1)
+  local was=ac.getUI; local desk=1
+  ac.getUI=function() return {windowSize={x=1920,y=1080},currentDesktop=desk} end
+  pause(true); local g=HUMANAI.engine.g; section('overlay')
+  press('panel_show'); press('overlay_desk_2'); assert(g.overlayDesk2==false and g.overlayDesk1==true,'desktop 2 switched off')
+  pause(false); H.tick(HOST,0.5)
+  HOST.transparent={}; script.HUMANAI__HUD(); assert(not HOST.transparent.AdvancedIA_overlay,'hidden on desktop 2')
+  local t=HUMANAI.engine.time; H.tick(HOST,0.5); assert(HUMANAI.engine.time>t,'engine still running')
+  desk=0; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'shown on desktop 1')
+  desk=nil; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'unknown desktop: shown')
+  ac.getUI=function() error('broken') end; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'unreadable: shown')
+  ac.getUI=was; HUMANAI.release()
+ end)
  -- Beta 1.14 : fenêtre de réglages ramenée une fois à 900 × 700 ; la taille choisie ensuite est respectée.
  check('Beta 1.14 : fenêtre de réglages compacte une seule fois',function()
   HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))(); pause(true); main()
@@ -1531,6 +1635,184 @@ return function(source)
   H.tick(HOST,5); assert(HOST.awakes[3]==woken and found,'out of its box: no more calls, exit logged')
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
+ -- Affinage 1.64 t1 (demande du pilote : overlay placé à un endroit différent sur chaque bureau d'AC, ligne de session
+ -- placée à part) : position gardée par bureau, les autres bureaux ne bougent pas, ligne de session détachée en la
+ -- glissant (deux fenêtres, rien dessiné deux fois), replacée sur ce bureau seulement ; bureau illisible : comme avant.
+ check('LOCK_OVERLAY_LAYOUT_164 : overlay place par bureau, ligne de session detachable',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
+  local e=HUMANAI.engine; local g=e.g; course161(e.profiles.C); E.changed(e); H.tick(HOST,1)
+  local Desk=require('src/desktops')
+  g.panelShow='always'
+  local desk=0; local getUI=ac.getUI
+  ac.getUI=function() return {windowSize={x=1920,y=1080},currentDesktop=desk} end
+  local ok,err=pcall(function()
+   local cx,cy=(1920-600)/2,1080*C.K.hudTop
+   HOST.transparent={}; script.HUMANAI__HUD()
+   local w=HOST.transparent.AdvancedIA_overlay
+   assert(w and math.abs(w.x-cx)<1e-6 and math.abs(w.y-cy)<1e-6 and not HOST.transparent.AdvancedIA_overlay_line,'desktop 1: centred, one window')
+   assert(g.overlayLayout=='','nothing stored by default')
+   -- Glisser sur le bureau 1 : ce bureau seulement (la position globale d'avant ne bouge pas).
+   g.overlayLocked=false; script.HUMANAI__HUD(); w=HOST.transparent.AdvancedIA_overlay
+   HOST.mouseDelta={x=100,y=40}; HOST.drags['##aai_overlay_move']=0.5; script.HUMANAI__HUD()
+   HOST.mouseDelta={x=0,y=0}; script.HUMANAI__HUD()
+   local l=Desk.layout(g,1)
+   assert(math.abs(l.x-(cx+100))<=1 and math.abs(l.y-(cy+40))<=1 and l.sx==-1 and l.sy==-1,'desktop 1 moved ('..g.overlayLayout..')')
+   assert(g.overlayX==-1 and g.overlayY==-1,'global position untouched')
+   assert(C.validateGlobals(g).overlayLayout==g.overlayLayout,'stored layout is valid')
+   -- Bureau 2 : toujours centré ; retour au bureau 1 : position gardée.
+   desk=1; HOST.transparent={}; script.HUMANAI__HUD(); w=HOST.transparent.AdvancedIA_overlay
+   assert(math.abs(w.x-cx)<1e-6 and math.abs(w.y-cy)<1e-6,'desktop 2 still centred')
+   desk=0; HOST.transparent={}; script.HUMANAI__HUD(); w=HOST.transparent.AdvancedIA_overlay
+   assert(math.abs(w.x-l.x)<1e-6 and math.abs(w.y-l.y)<1e-6,'desktop 1 keeps its place')
+   -- Ligne de session glissée : détachée ; le panneau reste à sa place, sans la ligne ; la ligne est dans sa fenêtre.
+   assert(e.hud.stripCount>0,'session line shown')
+   local panelY=w.y+(C.K.hudPad*0.5+C.K.hudStripH)
+   HOST.mouseDelta={x=-300,y=500}; HOST.drags['##aai_overlay_line']=0.5; script.HUMANAI__HUD()
+   HOST.mouseDelta={x=0,y=0}; HOST.transparent={}; script.HUMANAI__HUD()
+   l=Desk.layout(g,1)
+   assert(l.sx>=0 and l.sy>=0 and Desk.detached(g,1) and not Desk.detached(g,2),'line detached on desktop 1 only')
+   local band,line=HOST.transparent.AdvancedIA_overlay,HOST.transparent.AdvancedIA_overlay_line
+   assert(band and line,'two windows')
+   assert(math.abs(band.x-w.x)<=1 and math.abs(band.y-panelY)<=1,'panel stays where it was')
+   assert(math.abs(line.x-(w.x-300))<=1 and math.abs(line.y-(w.y+500))<=1,'line where it was dropped')
+   assert(math.abs(line.h-(C.K.hudPad+C.K.hudStripH))<1e-6 and band.h<w.h,'each window holds its own part')
+   -- Rien dessiné deux fois : la ligne seule dans sa fenêtre, le panneau sans la ligne.
+   HOST.drawnTexts={}; HOST.transparent={}; script.HUMANAI__HUD()
+   local strips=0; for k=1,e.hud.stripCount do local v=e.hud.strip[k].value; for _,t in ipairs(HOST.drawnTexts) do if t==v then strips=strips+1 end end end
+   assert(strips<=e.hud.stripCount,'session line drawn once ('..strips..')')
+   -- La ligne se déplace seule.
+   HOST.mouseDelta={x=20,y=0}; HOST.drags['##aai_line_move']=0.5; script.HUMANAI__HUD()
+   HOST.mouseDelta={x=0,y=0}; script.HUMANAI__HUD()
+   local l2=Desk.layout(g,1); assert(math.abs(l2.sx-(l.sx+20))<=1 and l2.x==l.x and l2.y==l.y,'line moved alone')
+   -- Bureau 2 : toujours une seule fenêtre, centrée.
+   desk=1; HOST.transparent={}; script.HUMANAI__HUD()
+   assert(not HOST.transparent.AdvancedIA_overlay_line and math.abs(HOST.transparent.AdvancedIA_overlay.x-cx)<1e-6,'desktop 2 unchanged')
+   -- Replacer sur le bureau 1 : centré, ligne rattachée ; le bureau 2 garde la position globale d'avant.
+   g.overlayX=50; g.overlayY=60
+   desk=0; pause(true); section('overlay'); press('overlay_recenter'); pause(false)
+   assert(Desk.layout(g,1).x==-1 and not Desk.detached(g,1),'desktop 1 reset')
+   assert(Desk.layout(g,2).x==50 and Desk.layout(g,2).y==60,'desktop 2 keeps the old global place')
+   HOST.transparent={}; script.HUMANAI__HUD(); w=HOST.transparent.AdvancedIA_overlay
+   assert(math.abs(w.x-cx)<1e-6 and not HOST.transparent.AdvancedIA_overlay_line,'desktop 1 centred again')
+   -- Texte stocké : chiffres seulement ; autre chose : valeur par défaut.
+   local bad={}; for k,v in pairs(g) do bad[k]=v end; bad.overlayLayout='1,2,3,4;os.exit()'
+   assert(C.validateGlobals(bad).overlayLayout=='','unsafe text refused')
+   bad.overlayLayout='1,2,3,4'; assert(Desk.layout(bad,1).x==1 and Desk.layout(bad,2).x==-1,'parsed as numbers')
+  end)
+  ac.getUI=getUI
+  assert(ok,err)
+ end)
+ -- Affinage 1.64 u2 (demande du pilote : « comme SuperHUD, chaque élément de l'overlay placé à un endroit différent sur
+ -- chaque bureau, affiché sur un bureau et pas sur un autre ») : éléments line / panel / info / pills, chacun affiché ou
+ -- masqué et détaché par bureau ; rien de gardé : comme avant ; rien dessiné deux fois ; « Replacer » et « Tout replacer ».
+ check('LOCK_OVERLAY_ELEMENTS_164 : chaque element de l overlay affiche et place par bureau',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
+  local e=HUMANAI.engine; local g=e.g; course161(e.profiles.C); E.changed(e); H.tick(HOST,1)
+  local Desk=require('src/desktops')
+  g.panelShow='always'; g.overlayLocked=true
+  local desk=0; local getUI=ac.getUI
+  ac.getUI=function() return {windowSize={x=1920,y=1080},currentDesktop=desk} end
+  local ok,err=pcall(function()
+   local K=C.K; local cx,cy=(1920-600)/2,1080*K.hudTop
+   local function frame() HOST.transparent={}; HOST.drawnTexts={}; HOST.hits={}; HOST.hitOrder={}; script.HUMANAI__HUD() end
+   -- Rien de gardé : une fenêtre, à la place d'avant, même hauteur que l'overlay d'avant.
+   frame(); local w=HOST.transparent.AdvancedIA_overlay
+   local full=K.hudPad+K.hudStripH+K.hudBandH
+   assert(w and math.abs(w.x-cx)<1e-6 and math.abs(w.y-cy)<1e-6 and math.abs(w.h-full)<1e-6,'default: one window as before ('..(w and w.h or -1)..')')
+   assert(not HOST.transparent.AdvancedIA_overlay_line and not HOST.transparent.AdvancedIA_overlay_info and not HOST.transparent.AdvancedIA_overlay_pills,'default: no element apart')
+   assert(g.overlayParts=='' and e.hud.stripCount>0,'nothing stored, session line shown')
+   -- Ligne de session masquée sur le bureau 1 seulement : plus dessinée, fenêtre plus basse ; bureau 2 inchangé.
+   Desk.setShown(g,1,'line',false)
+   assert(not Desk.shown(g,1,'line') and Desk.shown(g,2,'line') and C.validateGlobals(g).overlayParts==g.overlayParts,'line hidden on desktop 1 only')
+   frame(); w=HOST.transparent.AdvancedIA_overlay
+   assert(w and math.abs(w.h-(K.hudPad+K.hudBandH))<1e-6 ,'desktop 1: no session line')
+   desk=1; frame(); w=HOST.transparent.AdvancedIA_overlay
+   assert(math.abs(w.h-full)<1e-6 ,'desktop 2: session line still shown')
+   -- Panneau masqué sur le bureau 2 : seule la ligne reste ; bureau 1 : panneau seul.
+   Desk.setShown(g,2,'panel',false)
+   frame(); w=HOST.transparent.AdvancedIA_overlay
+   assert(w and math.abs(w.h-(K.hudPad+K.hudStripH))<1e-6,'desktop 2: line only ('..w.h..')')
+   desk=0; frame(); w=HOST.transparent.AdvancedIA_overlay
+   assert(math.abs(w.h-(K.hudPad+K.hudBandH))<1e-6,'desktop 1 unchanged')
+   -- Tout masqué sur le bureau 1 : aucune fenêtre.
+   Desk.setShown(g,1,'panel',false); Desk.setShown(g,1,'info',false); Desk.setShown(g,1,'pills',false)
+   frame(); assert(next(HOST.transparent)==nil,'desktop 1: everything hidden, no window')
+   Desk.resetParts(g,1); assert(Desk.shown(g,1,'line') and Desk.shown(g,1,'panel') and not Desk.shown(g,2,'panel'),'desktop 1 reset only')
+   -- Déverrouillé : place de l'explication et des pastilles montrée sous le panneau ; glissée, l'explication devient une
+   -- fenêtre à part sur ce bureau, le panneau ne bouge pas.
+   g.overlayLocked=false; frame(); w=HOST.transparent.AdvancedIA_overlay
+   local ghostH=full+2*K.hudExplainLine+6+K.hudPillH+4
+   assert(math.abs(w.h-ghostH)<1e-6 and HOST.hits['##aai_overlay_info'] and HOST.hits['##aai_overlay_pills'],'unlocked: info and pills places shown ('..w.h..')')
+   local infoY=HOST.hits['##aai_overlay_info'].y
+   assert(math.abs(infoY-(K.hudPad*0.5+K.hudStripH+K.hudBandH))<1e-6,'info zone under the panel')
+   HOST.mouseDelta={x=-200,y=300}; HOST.drags['##aai_overlay_info']=0.5; script.HUMANAI__HUD()
+   HOST.mouseDelta={x=0,y=0}; frame()
+   local ix,iy=Desk.place(g,1,'info')
+   assert(ix and math.abs(ix-(cx-200))<=1 and math.abs(iy-(cy+infoY+300))<=1,'info placed apart on desktop 1')
+   assert(Desk.place(g,2,'info')==nil and Desk.layout(g,1).x==-1,'desktop 2 untouched, panel did not move')
+   local main,info=HOST.transparent.AdvancedIA_overlay,HOST.transparent.AdvancedIA_overlay_info
+   assert(main and info and math.abs(main.x-cx)<1e-6 and math.abs(main.y-cy)<1e-6,'two windows, panel in place')
+   assert(math.abs(main.h-(full+K.hudPillH+4))<1e-6 and math.abs(info.h-(K.hudPad+2*K.hudExplainLine+6))<1e-6,'each window holds its own part')
+   assert(math.abs(info.x-ix)<1e-6 and math.abs(info.y-iy)<1e-6,'info window at its place')
+   -- L'explication détachée se déplace seule.
+   HOST.mouseDelta={x=30,y=0}; HOST.drags['##aai_info_move']=0.5; script.HUMANAI__HUD()
+   HOST.mouseDelta={x=0,y=0}; frame()
+   local ix2=Desk.place(g,1,'info'); assert(math.abs(ix2-(ix+30))<=1 and Desk.layout(g,1).x==-1,'info moved alone')
+   -- Pastilles détachées aussi ; bureau 2 : toujours une seule fenêtre.
+   HOST.mouseDelta={x=0,y=400}; HOST.drags['##aai_overlay_pills']=0.5; script.HUMANAI__HUD()
+   HOST.mouseDelta={x=0,y=0}; frame()
+   assert(Desk.place(g,1,'pills')~=nil and HOST.transparent.AdvancedIA_overlay_pills and math.abs(HOST.transparent.AdvancedIA_overlay.h-full)<1e-6,'pills apart, panel window back to line + panel')
+   desk=1; frame()
+   assert(HOST.transparent.AdvancedIA_overlay and not HOST.transparent.AdvancedIA_overlay_info and not HOST.transparent.AdvancedIA_overlay_pills,'desktop 2: no element apart')
+   desk=0
+   -- Verrouillé, rien à montrer : les fenêtres à part disparaissent (rien de vide à l'écran).
+   g.overlayLocked=true; frame()
+   assert(not HOST.transparent.AdvancedIA_overlay_info and not HOST.transparent.AdvancedIA_overlay_pills and HOST.transparent.AdvancedIA_overlay,'locked: empty elements not shown')
+   -- Élément masqué : ni dans sa fenêtre, ni sous le panneau.
+   g.overlayLocked=false; Desk.setShown(g,1,'info',false); frame()
+   assert(not HOST.transparent.AdvancedIA_overlay_info and not HOST.hits['##aai_overlay_info'],'hidden info: nowhere')
+   -- Replacer un élément : affiché, rattaché sous le panneau (bureau 1 seulement).
+   Desk.resetElement(g,1,'info'); frame()
+   assert(Desk.shown(g,1,'info') and Desk.place(g,1,'info')==nil and HOST.hits['##aai_overlay_info'] and not HOST.transparent.AdvancedIA_overlay_info,'info back under the panel')
+   -- Tout replacer sur ce bureau (bouton de la section Overlay) : éléments et place par défaut ; bureau 2 garde son choix.
+   pause(true); section('overlay'); press('overlay_recenter'); pause(false)
+   assert(g.overlayParts:find('^0,%-1,%-1,%-1,%-1;')~=nil or Desk.place(g,1,'pills')==nil,'desktop 1 parts reset')
+   assert(Desk.place(g,1,'pills')==nil and Desk.shown(g,1,'line') and not Desk.shown(g,2,'panel'),'desktop 2 keeps its choice')
+   -- Texte stocké : chiffres seulement ; autre chose : valeur par défaut.
+   local bad={}; for k,v in pairs(g) do bad[k]=v end; bad.overlayParts='1,2,3,4,5;os.exit()'
+   assert(C.validateGlobals(bad).overlayParts=='','unsafe text refused')
+   bad.overlayParts='9,-1,-1,10,20'; assert(not Desk.shown(bad,1,'line') and not Desk.shown(bad,1,'pills') and Desk.shown(bad,1,'panel') and Desk.place(bad,1,'pills')==10,'parsed as numbers')
+   -- Bureau illisible : tout comme avant (éléments ignorés).
+   local saved=g.overlayParts; g.overlayParts='15,-1,-1,-1,-1;15,-1,-1,-1,-1;15,-1,-1,-1,-1;15,-1,-1,-1,-1'; g.overlayLocked=true
+   ac.getUI=function() return {windowSize={x=1920,y=1080}} end
+   frame(); assert(HOST.transparent.AdvancedIA_overlay and math.abs(HOST.transparent.AdvancedIA_overlay.h-full)<1e-6,'unknown desktop: everything as before')
+   g.overlayParts=saved
+  end)
+  ac.getUI=getUI
+  assert(ok,err)
+ end)
+ -- Affinage 1.64 u2 : vue compacte en jeu et section Overlay : une ligne par élément (sur ce bureau, Replacer).
+ check('1.64 u2 vue compacte : elements de l overlay sur ce bureau',function()
+  local g=HUMANAI.engine.g; local Desk=require('src/desktops')
+  pause(false); HOST.windowOpen.main=true; redraw()
+  assert(not drawn('ingame_el_line'),'unknown desktop: no element rows')
+  local getUI=ac.getUI; ac.getUI=function() return {windowSize={x=1920,y=1080},currentDesktop=2} end
+  local ok,err=pcall(function()
+   g.overlayParts=''
+   redraw(); assert(drawn('ingame_el_line') and drawn('ingame_el_panel') and drawn('ingame_el_info') and drawn('ingame_el_pills') and drawn('ingame_el_reset_info'),'element rows shown')
+   press('ingame_el_pills'); assert(not Desk.shown(g,3,'pills') and Desk.shown(g,1,'pills'),'pills hidden on desktop 3 only')
+   Desk.setPlace(g,3,'info',10,20); press('ingame_el_reset_info'); assert(Desk.place(g,3,'info')==nil,'info reset')
+   press('ingame_el_reset_pills'); assert(Desk.shown(g,3,'pills'),'pills shown again')
+   HOST.windowOpen.main=false; redraw(); pause(true)
+   section('overlay'); redraw(); local r=HOST.hits['##aai_overlay_desk_1']; HOST.mouse={x=r.x+5,y=r.y+5}
+   for _=1,20 do HOST.wheel=-1; main() end
+   redraw(); HOST.mouse={x=-1e6,y=-1e6}
+   assert(drawn('overlay_el_line') and drawn('overlay_el_reset_panel'),'settings rows shown (wheel)')
+   press('overlay_el_line'); assert(not Desk.shown(g,3,'line'),'line hidden from the settings'); press('overlay_el_line'); assert(Desk.shown(g,3,'line'))
+  end)
+  ac.getUI=getUI; HOST.windowOpen.main=false; pause(true)
+  assert(ok,err)
+ end)
  -- Beta 1.25 : overlay en jeu : fenêtre transparente centrée en haut, verrouillée (clics
  -- traversants) ; déverrouillée : glisser, coin pour la taille, clic droit pour verrouiller ; masquée en rediffusion ;
  -- case de session d'AC remplacée puis rendue ; messages d'AC repris, notés, masqués sur demande, tout rendu au
@@ -1705,8 +1987,9 @@ return function(source)
   local g=HUMANAI.engine.g
   -- Beta 1.37 : l'overlay mène à la section Panneaux lumineux (en bas, atteint à la molette).
   section('overlay'); redraw()
-  local r=HOST.hits['##aai_overlay_lock']; HOST.mouse={x=r.x+5,y=r.y+5}
-  for _=1,10 do HOST.wheel=-1; main() end
+  -- Beta 1.64 : section plus longue (bureaux d'applications) : molette sur le contenu défilant.
+  local r=HOST.hits['##aai_overlay_overlayEnabled']; HOST.mouse={x=r.x+5,y=r.y+5}
+  for _=1,16 do HOST.wheel=-1; main() end
   redraw(); assert(drawn('overlay_lights') and not drawn('overlay_trackLights'),'link to the section, no global switch'); HOST.mouse={x=-1e6,y=-1e6}
   press('overlay_lights'); redraw(); assert(lit('cat_lights') and drawn('set_lightsRed') and drawn('lights_on_J'),'section opened by the link')
   -- Section propre de chaque profil : interrupteur de la liste, puces « Active pour », réinitialisation.
@@ -1728,7 +2011,8 @@ return function(source)
  end)
  -- Beta 1.33 : mise à jour depuis GitHub, app complète sur une imitation de CSP (réseau, empreinte, zips, fichiers).
  local Fake=require('tests/updatefake')
- local function ver(d) local major,minor=C.release:match('(%d+)%.(%d+)'); return 'Beta '..major..'.'..(tonumber(minor)+d) end
+ -- Beta 2.0.0 : versions a trois nombres (le dernier est incremente) ; ver(0) est la version installee telle quelle.
+ local function ver(d) local parts={}; for n in C.release:gmatch('%d+') do parts[#parts+1]=tonumber(n) end; parts[#parts]=parts[#parts]+d; local i=#parts; while parts[i]<0 and i>1 do parts[i]=parts[i]+100; i=i-1; parts[i]=parts[i]-1 end; return 'Beta '..table.concat(parts,'.') end
  local Update=require('src/update')
  local API='get https://api.github.com/repos/VincentChevalier44/AdvancedIA/releases/latest'
  local function logged(text) local e=HUMANAI.engine; for n=0,e.log.count-1 do local row=e.log[(e.log.head-n-1)%e.log.limit+1]; if row.message:find(text,1,true) then return true end end; return false end
@@ -2660,9 +2944,9 @@ return function(source)
   launch(true); H.tick(HOST,3)
   local port=HUMANAI.bridgePort()
   assert(port and #connected==2 and beats>0 and pubs==beats,'present: opened and published every frame')
-  assert(logged('pont des apps compagnes: ouvert (version 1)'),'present: journal line')
+  assert(logged('pont des apps compagnes: ouvert (version 2)'),'present: journal line')
   local hello,data=connected[1],connected[2]
-  assert(hello.bridgeVersion==1 and hello.release==C.release and hello.heartbeat==beats and hello.closed==false,'hello fields')
+  assert(hello.bridgeVersion==2 and hello.release==C.release and hello.heartbeat==beats and hello.closed==false,'hello fields')
   assert(data.serial==pubs and data.carCount>0 and data.cars[0].valid==true and data.profile==HUMANAI.engine.profile,'data fields')
   assert(HOST.calls==callsAbsent and HUMANAI.engine.time==timeAbsent,'present: same commands as absent')
   -- Déchargement : pont fermé, plus rien publié.
@@ -2676,6 +2960,46 @@ return function(source)
   local b0=beats; H.tick(HOST,1); assert(beats==b0,'nothing more after the cut')
   B.beat,B.publish=beat0,pub0; ac.connect=nil; ac.StructItem=nil
   HUMANAI.release()
+ end)
+ -- Beta 1.63 (accord avec SetupLab) : SetupLab seul installé : pont ouvert, clé « AdvancedIA.session » écrite (v=1 en tête),
+ -- commandes identiques ; aucune des deux apps : rien ; déchargement : « v=1;closed=1 ».
+ check('Beta 1.63 : cle de session pour SetupLab ecrite seulement SetupLab present, fermee au dechargement',function()
+  local connected={}
+  local function fakeStruct()
+   local SI={}
+   for _,k in ipairs({'boolean','int32','uint32','float','double'}) do SI[k]=function() return {kind=k} end end
+   SI.string=function(n) return {kind='string',cap=n} end
+   SI.key=function(s) return {kind='key',value=s} end
+   SI.struct=function(f) return {kind='struct',fields=f} end
+   SI.array=function(e,n) return {kind='array',elem=e,size=n} end
+   local function make(d)
+    if d.kind=='struct' then local o={}; for name,f in pairs(d.fields) do if f.kind~='key' then o[name]=make(f) end end; return o
+    elseif d.kind=='array' then local a={}; for i=0,d.size-1 do a[i]=make(d.elem) end; return a
+    elseif d.kind=='string' then return '' elseif d.kind=='boolean' then return false end
+    return 0
+   end
+   ac.StructItem=SI
+   ac.connect=function(layout) local o=make({kind='struct',fields=layout}); connected[#connected+1]=o; return o end
+  end
+  local function launch(setupLab)
+   if HUMANAI then HUMANAI.release() end
+   HOST=H.create(true); connected={}; fakeStruct()
+   ac.FolderID.ACAppsLua=1029; local getFolder=ac.getFolder
+   ac.getFolder=function(id) if id==1029 then return 'appslua' end return getFolder(id) end
+   if setupLab then local sep=string.char(92); HOST.files['appslua'..sep..'SetupLab'..sep..'manifest.ini']='[ABOUT]' end
+   assert(loadstring(source))()
+  end
+  launch(false); H.tick(HOST,3)
+  assert(#connected==0 and HOST.values['AdvancedIA.session']==nil,'neither app: nothing opened or written')
+  local callsAbsent=HOST.calls
+  launch(true); H.tick(HOST,3)
+  local text=HOST.values['AdvancedIA.session']
+  assert(HUMANAI.bridgePort()~=nil and #connected==2,'SetupLab alone: bridge opened')
+  assert(type(text)=='string' and text:sub(1,4)=='v=1;' and text:find(';session=',1,true) and text:find(';lastLapClean=',1,true),'key written: '..tostring(text))
+  assert(HOST.calls==callsAbsent,'same commands')
+  HUMANAI.release()
+  assert(HOST.values['AdvancedIA.session']=='v=1;closed=1','closed on unload')
+  ac.connect=nil; ac.StructItem=nil
  end)
  -- Beta 1.49 (session du 5 novembre, 11:33 : « arrivee en 0 », « 0 -> 1 ») : composés du joueur lus comme ceux des IA.
  check('Beta 1.49 : composes du joueur lus (noms de l arret obligatoire)',function()
@@ -2958,14 +3282,19 @@ return function(source)
   H.tick(HOST,3)
   for i=0,2 do local c=HOST.cars[i]; c.isInPit=true; c.isInPitlane=true; c.speedKmh=0; c.velocity={x=0,z=0} end
   for _=1,120 do if not t.red then break end; H.tick(HOST,0.5) end
-  assert(not t.red and t.relaunch and t.neutralMode=='sc' and t.safetyPhase=='place','relaunch behind the safety car, to be placed')
-  -- Le joueur sort le premier (P1) ; la voiture de sécurité est posée devant lui par CSP.
-  local writes=HOST.positionWrites or 0
-  local c=HOST.cars[0]; c.isInPit=false; c.isInPitlane=false; c.splinePosition=0.5; c.position={x=0,y=0,z=5000}; c.speedKmh=60; c.velocity={x=0,y=0,z=60/3.6}; H.tick(HOST,0.2)
-  c.splinePosition=0.5+(C.K.scPlaceOnTrack+5)/10000; c.position={x=0,y=0,z=5000+C.K.scPlaceOnTrack+5}; H.tick(HOST,1)
-  assert((HOST.positionWrites or 0)>writes and HOST.positions[3] and not HOST.cars[3].isInPit and t.safetyPhase=='out','placed on track by setCarPosition')
-  assert(math.abs(HOST.positions[3].pos.z-(5000+C.K.scPlaceOnTrack+5+C.K.scPlaceFirstOut))<1,'ahead of the first car out')
-  H.tick(HOST,C.K.scMinOut+C.K.scBunchLaps*10000/(C.K.scNominalKmh/3.6)+e.run.neutralizationHold+5)
+  -- Correctif 1.63 (Imola, 13 novembre : IA sorties avant elle, jonction inconnue) : posée aussitôt par CSP à la hauteur
+  -- de son emplacement plus K.scPlaceJunction m, avant que quiconque sorte ; IA et joueur retenus jusqu'à 150 m.
+  -- Avant : posée devant la première voiture sortie (le joueur P1).
+  assert(not t.red and t.relaunch and t.neutralMode=='sc','relaunch behind the safety car')
+  for _=1,20 do if t.safetyPhase=='out' then break end; H.tick(HOST,0.2) end
+  assert(HOST.positions[3] and not HOST.cars[3].isInPit and t.safetyPhase=='out' and t.safetyFrom:sub(1,5)=='stand','placed on track by setCarPosition at the height of its box')
+  assert(t.holdAll and e.commands[2].pitHold and t.restartState=='wait','field and player held until it has run 150 m')
+  local sc=HOST.cars[3]; local z=sc.position.z; sc.position={x=0,y=0,z=z+200}; sc.splinePosition=(sc.splinePosition+200/10000)%1; sc.speedKmh=80; H.tick(HOST,C.K.redReleaseFirst+0.5)
+  assert(not t.holdAll and t.restartState=='go','then the player (P1) leaves first')
+  local c=HOST.cars[0]; c.isInPit=false; c.isInPitlane=false; c.splinePosition=(sc.splinePosition-100/10000)%1; c.position={x=0,y=0,z=sc.position.z-100}; c.speedKmh=60; c.velocity={x=0,y=0,z=60/3.6}; H.tick(HOST,1)
+  -- File formée derrière elle (le joueur juste derrière) : elle rentre dès la fin de la neutralisation, au plus après l'attente du regroupement.
+  local limit=C.K.scMinOut+math.min(C.K.scBunchMax,C.K.scBunchLaps*10000/(C.K.scNominalKmh/3.6))+e.run.neutralizationHold+5
+  for _=1,math.ceil(limit) do if t.safetyPhase=='in' then break end; H.tick(HOST,1) end
   assert(t.safetyPhase=='in' and t.neutral,'in this lap')
   HOST.cars[3].isInPitlane=true; H.tick(HOST,0.5)
   assert(not t.neutral and not t.relaunch,'green when it enters the pit lane')
@@ -3360,6 +3689,39 @@ return function(source)
   assert(HOST.offsets[1]==0 and HOST.speedLimits[1]==C.K.unlimitedSpeed and s.level==nil and s.caution==nil,'handed back to AC in the lane')
   assert(HOST.laneWrites>lane and lines156(e,'voiture rendue a AC apres l arrivee')==1,'only original values written there, one line')
   local after=HOST.laneWrites; H.tick(HOST,3); assert(HOST.laneWrites==after,'nothing more written in the lane')
+ end)
+ -- Beta 1.63 (demande du pilote) : tour de décélération après le drapeau à damier ; plafond gardé quand la session est
+ -- finie (le moteur ne pilote plus), rendu dans la voie des stands.
+ check('1.63 : tour de décélération après le drapeau à damier : plafond progressif, gardé en fin de session, rendu aux stands',function()
+  local e=race156(); H.tick(HOST,3)
+  local car=HOST.cars[1]; car.isRaceFinished=true; car.speedKmh=200
+  H.tick(HOST,1)
+  local cap=HOST.speedLimits[1]
+  print(string.format('1.63 cool-down: cap %s after 1 s, lines %d',tostring(cap),lines156(e,'tour de deceleration')))
+  assert(cap and cap<C.K.unlimitedSpeed and cap>=C.K.coolMinKmh and cap>200-C.K.coolDecel*3.6*1.2,'cap written, lowered gently')
+  assert(lines156(e,'tour de deceleration')==1,'one line')
+  HOST.sim.isSessionFinished=true; H.tick(HOST,1)
+  assert(e.guard=='finished' and HOST.speedLimits[1]<C.K.unlimitedSpeed,'kept once the session is over')
+  assert(HOST.speedLimits[2]==nil or HOST.speedLimits[2]>=C.K.unlimitedSpeed,'cars not finished: nothing')
+  car.isInPitlane=true; car.speedKmh=60; H.tick(HOST,1)
+  assert(HOST.speedLimits[1]>=C.K.unlimitedSpeed,'given back in the pit lane')
+ end)
+ -- Beta 1.63 (demande du pilote) : IA accidentée qui peut rouler : redémarrage demandé, pas de dépannage pendant ses
+ -- essais ; moteur cassé : « ne peut plus rouler », dépannée comme avant.
+ check('1.63 : IA accidentée qui peut rouler : redémarrage, pas de dépannage ; moteur cassé : dépannée',function()
+  local e=race156(); H.tick(HOST,3)
+  -- Beta 1.64 (Monza S11) : au départ et au premier tour, l'IA accidentée attend le passage du peloton (500 m) ; ce cas
+  -- vérifie le redémarrage ordinaire, hors premier tour.
+  e.startedAt=e.time-C.K.hotspotStartGrace-1; if e.fl then e.fl.on=false end
+  local car=HOST.cars[2]; car.speedKmh=0; car.velocity={x=0,y=0,z=0}
+  local tele=HOST.teleports
+  H.tick(HOST,6)
+  print(string.format('1.63 rejoin: awakes %s, stop %s, teleports %d, lines %d, neutral %s',tostring(HOST.awakes[2]),tostring(HOST.stops[2]),HOST.teleports-tele,lines156(e,'IA accidentee: redemarrage demande'),tostring(e.incidents.neutral)))
+  assert((HOST.awakes[2] or 0)>=1 and HOST.stops[2]==0,'restart served')
+  assert(HOST.teleports==tele,'not towed while it tries')
+  car.engineLifeLeft=0; H.tick(HOST,40)
+  assert(lines156(e,'IA accidentee ne peut plus rouler: moteur casse')==1,'reason logged once')
+  assert(HOST.teleports>tele,'towed once it cannot go on')
  end)
  check('1.58 : en course, dans la voie des stands, la demande d arrêt de l app est gardée',function()
   local e=race156(); H.tick(HOST,3)

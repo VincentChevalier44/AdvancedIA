@@ -43,9 +43,13 @@ end
 -- Endroit où plusieurs IA sortent (la trajectoire elle-même) : ignoré dès la troisième, noté une fois.
 tests.SAN_LINE_IGNORED_142=function()
  local e,f=F.scene('P',6); F.tick(e,f,0.1)
- for k,i in ipairs({2,3,4,5}) do F.place(f,i,5000+(k-1)*5,100) end
- F.tick(e,f,0.5)
- for _,i in ipairs({2,3,4,5}) do out(f,i,true); F.tick(e,f,0.5); out(f,i,false); F.tick(e,f,0.2) end
+ -- Correctif 1.63 : chaque voiture sort seule au même endroit (une sortie avec une voiture à moins de K.sanCrowdGap m
+ -- est excusée, en peloton).
+ for _,i in ipairs({2,3,4,5}) do
+  for k,j in ipairs({2,3,4,5}) do F.place(f,j,j==i and 5000 or 7000+k*200,100) end
+  e.states[i].nextPerception=0; F.tick(e,f,0.2)
+  out(f,i,true); F.tick(e,f,0.5); out(f,i,false); F.tick(e,f,0.2)
+ end
  assert(count(e,'tour invalide IA')==2,'two laps invalidated before the place is known: '..count(e,'tour invalide IA'))
  assert(count(e,'limites de piste IA: zone ignoree a 50')==1,'place ignored once')
 end

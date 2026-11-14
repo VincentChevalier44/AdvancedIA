@@ -79,8 +79,9 @@ end
 -- réparée à son emplacement.
 tests.SLOW_DAMAGED_TO_PITS_141=function()
  local e,f=isleOfMan(); f.cars[2].damageSuspension=0.37; f.cars[2].damageBody=40
- F.tick(e,f,K.slowPitTime-1); assert(not e.commands[2].recover,'not before '..K.slowPitTime..' s')
- F.tick(e,f,2)
+ -- Affinage 1.63 (Sepang, 13 novembre, décision du pilote : « arrêt immédiat quand elle est endommagée ») : dégâts au-delà des seuils abaissés : dès K.slowPitTime2 s d'obstacle (avant : K.slowPitTime s).
+ F.tick(e,f,K.slowObstacleTime-1); assert(not e.commands[2].recover,'not before it is an obstacle')
+ F.tick(e,f,K.slowPitTime2+2)
  assert(e.commands[2].recover and e.commands[2].recoverReason=='lente et endommagee','brought back to its pit')
  assert(count(e,'endommagee (suspension 0.37, carrosserie 40), ramenee a son stand')==1,'logged once')
  -- Sans dégâts notables : jamais.

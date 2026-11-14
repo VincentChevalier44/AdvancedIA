@@ -14,13 +14,20 @@ local function clear(c)
  c.usedDry={}; c.usedCount=0; c.requestServices=0; c.requestAbandoned=false; c.laneVisit=nil; c.laneStopped=false; c.reboxLogged=false; c.appTowAt=nil
 end
 function M.new()
- local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false}
+ local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false,sprintKm=-1,sprintLap=0,sprintSaid=false,sprintShow=false,sprintEmitted=false,sprintSeen=false}
  for i=1,K.maxCars do local c={identity='',lastStop=0}; clear(c); t.cars[i]=c end
  return t
 end
 function M.reset(t,now)
  for i=1,K.maxCars do local c=t.cars[i]; clear(c); c.identity=''; c.lastStop=now end
  t.opened=false; t.openedAt=-math.huge; t.justClosed=false; t.state='off'; t.dirty=true; t.wetRace=false; t.waived=false
+ -- Relecture 164e (A4) : ouverture retardée par la décision oubliée avec la session.
+ t.openedPos=-1; t.heldOpen=false
+ t.shortWaived=false; t.effectiveKey=nil; t.callBy=nil
+ -- Beta 1.64, lot 4 : course sprint (décision, distance, annonce) oubliée avec la session.
+ t.sprint=nil; t.sprintKm=-1; t.sprintLap=0; t.sprintSaid=false
+ -- Relecture 164d : message de la course sprint en attente ou tout juste émis, première image de la session vue.
+ t.sprintShow=false; t.sprintEmitted=false; t.sprintSeen=false
  -- Relecture 1.52 : pénalité du joueur en attente du composé (engine.lua) et départ vu, oubliés avec la session.
  t.stopAwait=false; t.wasStarted=false
  t.entrySpline=-1; t.playerNotice=''; t.playerNoticeUntil=-math.huge; t.hintFor=-2
@@ -42,6 +49,66 @@ function M.progress(frame)
  if frame.sessionMinutes>0 then return U.clamp(1-frame.left/(frame.sessionMinutes*60),0,1) end
  return -1
 end
+-- Affinage 1.63 (course courte) : durée de tour de référence (médiane des tours appris des IA), 0 inconnue.
+function M.refLap(t,frame)
+ local list={}
+ for i=1,frame.count do local c=t.cars[i]; if c and (c.lapTime or 0)>0 then list[#list+1]=c.lapTime end end
+ if #list==0 then return 0 end
+ table.sort(list)
+ return list[math.floor((#list+1)/2)]
+end
+-- Fenêtre effective des règles : (ouverture, fermeture, course trop courte, appel au plus tard). Course aux tours
+-- (avancement = tours du leader / tours de la course, par pas entiers) : fermée avant le dernier tour, au moins un tour
+-- ouvert après le premier ; course chronométrée : fermée K.pitCloseLaps tours de référence avant la fin (durée du tour
+-- inconnue : pourcentages inchangés). Les pourcentages qui laissent déjà la marge sont rendus tels quels.
+function M.effective(opening,closing,frame,refLap)
+ if frame.sessionLaps>0 and not frame.timedRace then
+  local laps=frame.sessionLaps
+  local cap=(laps-K.pitCloseLaps)/laps
+  if closing>cap then closing=cap end
+  -- Dernier pas ouvert : plus grand nombre de tours du leader L tel que L/laps <= fermeture (même calcul que l'état).
+  local last=math.min(laps,math.floor(closing*laps)+1)
+  while last>=0 and last/laps>closing do last=last-1 end
+  if last<1 then return opening,closing,true,nil end
+  if last/laps<opening then opening=last/laps end
+  local callBy=nil
+  local lead=last-K.pitCallLeadLaps
+  if lead>=1 and lead/laps>=opening then callBy=lead/laps else callBy=opening end
+  return opening,closing,false,callBy
+ end
+ if frame.sessionMinutes>0 and refLap>0 then
+  local duration=frame.sessionMinutes*60
+  local lap=refLap/duration
+  local cap=1-K.pitCloseLaps*lap
+  if closing>cap then closing=cap end
+  if closing<=lap then return opening,closing,true,nil end
+  if opening>closing-lap then opening=math.max(0,closing-lap) end
+  local callBy=closing-K.pitCallLeadLaps*lap
+  if callBy<opening then callBy=opening end
+  return opening,closing,false,callBy
+ end
+ return opening,closing,false,nil
+end
+-- Beta 1.64, lot 4 (décision du pilote du 13 novembre) : distance de la course en km (-1 inconnue) et tour retenu en s (0 :
+-- course aux tours). Course aux tours : tours × longueur. Course au temps : (tours entiers au meilleur tour du plateau + 1,
+-- la ligne après la fin du temps, + 1 si la session a un tour supplémentaire) × longueur, seulement des voitures ayant
+-- bouclé K.sprintLapsSeen tours : le plus rapide l'emporte. Relecture 164d : estimation figée à la décision ; un rythme
+-- qui s'améliore ensuite peut allonger la course réelle d'un tour (sous-estimée près du seuil). Aucune table créée.
+function M.raceKm(frame)
+ if frame.length<=0 then return -1,0 end
+ if frame.sessionLaps>0 and not frame.timedRace then return frame.sessionLaps*frame.length/1000,0 end
+ if frame.sessionMinutes<=0 then return -1,0 end
+ local lap=math.huge
+ for i=1,frame.count do
+  local a=frame.cars[i]
+  if a.valid and not a.safetyCar and (a.lap or 0)>=K.sprintLapsSeen and (a.bestLap or 0)>=K.fuelLapTimeMin and a.bestLap<lap then lap=a.bestLap end
+ end
+ if lap==math.huge then return -1,0 end
+ -- Beta 1.64 (décision du pilote, constat 6) : marge de 3 % sur le tour de référence (K.sprintLapShare) ; le tour
+ -- retenu (journal, sauvegarde) reste le meilleur tour brut.
+ local laps=(math.floor(frame.sessionMinutes*60/(lap*K.sprintLapShare))+1)+(frame.extraLap==true and 1 or 0)
+ return laps*frame.length/1000,lap
+end
 -- Pneus posés à l'arrêt : la météo prime si elle exige un autre pneu (pluie, retour au sec) ; sinon un autre
 -- composé sec (F1), sinon un train neuf du même composé.
 -- Beta 1.58 : used (composés secs déjà roulés en course), usedCount (leur nombre) : tant que moins de deux composés secs
@@ -52,7 +119,8 @@ function M.compound(a,cmd,p,used,usedCount)
  if not cmd.weatherManaged and cmd.weatherRain then return -1 end
  if cmd.weatherManaged and cmd.weatherCompound>=0 and (cmd.weatherRain or cmd.weatherCompound~=a.compoundIndex) then return cmd.weatherCompound end
  if not a.tyresKnown or a.compoundIndex==nil then return -1 end
- if p.pitCompoundChange and a.dryCompounds then
+ -- Beta 1.64, lot 4 : course sprint (cmd.sprintFree, posé par M.update) : aucun autre composé imposé, train neuf du même.
+ if p.pitCompoundChange and a.dryCompounds and not cmd.sprintFree then
   if used and (usedCount or 0)<2 then for index=0,K.maxTyreCompounds-1 do if a.dryCompounds[index] and index~=a.compoundIndex and not used[index] then return index end end end
   for index=0,K.maxTyreCompounds-1 do if a.dryCompounds[index] and index~=a.compoundIndex then return index end end
  end
@@ -69,7 +137,8 @@ end
 local function tyreShort(a,index) return index~=nil and (a.tyreNames and a.tyreNames[index] or tostring(index)) or '?' end
 local function notice(t,kind,from,to,untilAt,fromIndex,toIndex) t.playerNotice=kind; t.playerNoticeFrom=from; t.playerNoticeTo=to; t.playerNoticeUntil=untilAt; t.playerNoticeFromIndex=fromIndex or -1; t.playerNoticeToIndex=toIndex or -1 end
 -- closed : entrée des stands fermée (neutralisation, règles GT et Endurance) : aucune IA appelée, un arrêt n'y compte pas.
-function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
+-- Relecture 164d : busy (engine.lua) : annonce du départ en cours ou message récent : le message de la course sprint attend.
+function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed,busy)
  local active=profile=='C' and (p.mandatoryStops>0 or p.maxStintMin>0 or p.minPitTime>0)
  local progress=M.progress(frame); t.progress=progress
  -- Fenêtre déclarée par CSP (serveur, mode de course) prioritaire ; sinon celle des règles, en part de course.
@@ -77,23 +146,98 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
  local position,opening,closing
  if csp then position=frame.simTime; opening=frame.pitWindowStart; closing=frame.pitWindowEnd
  else position=progress; opening=p.pitWindowOpenPct/100; closing=p.pitWindowClosePct/100 end
- t.csp=csp; t.position=position; t.open=opening; t.close=closing
+ -- Affinage 1.63 (course courte) : fenêtre des règles fermée avant le dernier tour, au moins un tour ouvert, appel des
+ -- IA au plus tard un tour avant la fermeture ; course trop courte : arrêt obligatoire levé (fenêtre de CSP inchangée).
+ local short,callBy=false,nil
+ if not csp then opening,closing,short,callBy=M.effective(opening,closing,frame,M.refLap(t,frame)) end
+ t.csp=csp; t.position=position; t.open=opening; t.close=closing; t.callBy=callBy
+ -- Beta 1.64, lot 4 (décision du pilote du 13 novembre) : course de K.sprintMaxKm km ou moins = course sprint : arrêt
+ -- obligatoire levé (aucun appel, aucun arrêt compté, aucun composé imposé, aucune pénalité du joueur), dit au départ.
+ -- Décidée une fois par session (M.reset), seulement tant que la fenêtre ne s'est pas ouverte : ensuite, l'arrêt est
+ -- maintenu (jamais de règle changée fenêtre ouverte). Distance inconnue, fenêtre de CSP, règles sans arrêt obligatoire :
+ -- rien ne change.
+ local timed=not (frame.sessionLaps>0 and not frame.timedRace)
+ -- Relecture 164e (A2) : sauvegarde de la même session qui dit la course encore indécise : la règle de l'ancienne
+ -- sauvegarde (« fenêtre atteinte au rechargement : maintenu ») ne vaut pas (fenêtre « en attente » avant la décision :
+ -- la position seule ne dit plus que la fenêtre était ouverte).
+ if t.restoredUndecided and frame.session==t.restoredSession then t.sprintSeen=true end
+ if K.sprintWaiver and t.sprint==nil and active and p.mandatoryStops>0 and not csp then
+  -- Relecture 164d : décision gardée avec la session (M.serialize) : relue après un rechargement de l'app, jamais reprise.
+  if t.restoredSprint~=nil and frame.session==t.restoredSession then
+   t.sprint=t.restoredSprint; t.sprintKm=t.restoredSprintKm; t.sprintLap=t.restoredSprintLap; t.sprintSaid=t.restoredSprintSaid
+  elseif t.opened then t.sprint=false; t.sprintKm=-1; t.sprintLap=0; t.dirty=true
+  -- Relecture 164d : app rechargée en pleine course au temps sans décision gardée, fenêtre déjà atteinte : maintenu.
+  elseif not t.sprintSeen and frame.started==true and timed and position>=opening then t.sprint=false; t.sprintKm=-1; t.sprintLap=0; t.dirty=true
+  else
+   local km,lap=M.raceKm(frame)
+   if km>=0 then t.sprint=km<=K.sprintMaxKm; t.sprintKm=km; t.sprintLap=lap; t.dirty=true end
+   -- Relecture 164e (A3) : course au temps sans meilleur tour exploitable (ancien CSP, tour de moins de
+   -- K.fuelLapTimeMin s) quand le meneur a bouclé K.sprintLapsSeen+1 tours : arrêt maintenu, distance inconnue (avant :
+   -- fenêtre « en attente » jusqu'à sa fermeture, aucun appel, aucune pénalité, arrêts de stratégie retenus).
+   if km<0 and timed and (frame.leaderLaps or 0)>=K.sprintLapsSeen+1 then t.sprint=false; t.sprintKm=-1; t.sprintLap=0; t.dirty=true end
+  end
+ end
+ t.sprintSeen=true
+ local sprint=t.sprint==true and not csp
+ -- Relecture 164d : course au temps encore indécise (estimation possible, fenêtre pas ouverte) : avis de la fenêtre
+ -- ajustée et de la course trop courte attendus (jamais donnés avant la décision, jamais avec celui du sprint).
+ local undecided=K.sprintWaiver and t.sprint==nil and timed and active and p.mandatoryStops>0 and not csp and not t.opened and frame.length>0 and frame.sessionMinutes>0
+ if not csp and not short and not sprint and active and p.mandatoryStops>0 and (opening~=p.pitWindowOpenPct/100 or closing~=p.pitWindowClosePct/100) and not undecided then
+  local key=string.format('%.3f|%.3f',opening,closing)
+  if t.effectiveKey~=key then
+   t.effectiveKey=key
+   if t.note then t.note('INFO',string.format('fenetre d arret ajustee a la longueur de la course: %.0f a %.0f %% (reglee %.0f a %.0f %%), fermee avant le dernier tour',opening*100,closing*100,p.pitWindowOpenPct,p.pitWindowClosePct),-1) end
+  end
+ end
  -- F1 : deux composés secs obligatoires, sauf course mouillée (pneus pluie ou intermédiaires montés).
  local waived=p.pitCompoundChange and t.wetRace
- if waived and not t.waived and active and p.mandatoryStops>0 then
+ if waived and not t.waived and not sprint and active and p.mandatoryStops>0 then
   if t.note then t.note('INFO','arret obligatoire leve: course mouillee',-1) end
   if p.pitMessage and announce then announce('pitWaived') end
  end
+ -- Beta 1.64, lot 4 : course sprint levée avant l'avis de la course trop courte (jamais les deux).
+ if sprint then waived=true end
+ if short and not waived and not t.shortWaived and not undecided and active and p.mandatoryStops>0 then
+  if t.note then t.note('INFO','arret obligatoire leve: course trop courte (aucun tour ouvert avant le dernier)',-1) end
+  if p.pitMessage and announce then announce('pitShort') end
+ end
+ t.shortWaived=short and not waived and not undecided
+ waived=waived or short
  t.waived=waived
+ -- Beta 1.64, lot 4 : décision dite une fois, course lancée (journal ; message si course sprint).
+ if t.sprint~=nil and not t.sprintSaid and frame.started==true and not csp then
+  t.sprintSaid=true
+  t.dirty=true
+  if t.note and t.sprint and t.sprintLap>0 then t.note('INFO',string.format('arret obligatoire leve: course sprint estimee a %.1f km (%.0f min, meilleur tour %.1f s, %.0f km au plus)',t.sprintKm,frame.sessionMinutes,t.sprintLap,K.sprintMaxKm),-1) end
+  if t.note and t.sprint and t.sprintLap==0 then t.note('INFO',string.format('arret obligatoire leve: course sprint de %.1f km (%d tours, %.0f km au plus)',t.sprintKm,frame.sessionLaps,K.sprintMaxKm),-1) end
+  if t.note and not t.sprint and t.sprintKm>=0 then t.note('INFO',string.format('arret obligatoire maintenu: course de %.1f km (plus de %.0f km)',t.sprintKm,K.sprintMaxKm),-1) end
+  if t.note and not t.sprint and t.sprintKm<0 then t.note('INFO','arret obligatoire maintenu: distance inconnue avant l ouverture de la fenetre',-1) end
+  -- Relecture 164d : message à l'écran dit à part (jamais pendant les annonces du départ, busy).
+  t.sprintShow=t.sprint==true
+ end
+ t.sprintEmitted=false
+ if t.sprintShow and not busy and not csp then
+  t.sprintShow=false
+  t.sprintEmitted=t.sprint==true and p.pitMessage==true and announce~=nil
+  if t.sprint and p.pitMessage and announce then announce('pitSprint',t.sprintKm,K.sprintMaxKm) end
+ end
  local mandatory=active and p.mandatoryStops>0 and position>=0 and not waived
  local before=t.state
- t.state=not mandatory and 'off' or position<opening and 'pending' or position<=closing and 'open' or 'closed'
+ -- Beta 1.64 (décision du pilote, constat 5) : course au temps indécise (estimation possible, fenêtre jamais ouverte) :
+ -- fenêtre « en attente » jusqu'à la décision (une voiture à K.sprintLapsSeen tours), au plus jusqu'à sa fermeture ; la
+ -- décision se prend ainsi avant l'ouverture.
+ t.state=not mandatory and 'off' or position<opening and 'pending' or undecided and position<=closing and 'pending' or position<=closing and 'open' or 'closed'
  t.justClosed=before=='open' and t.state=='closed'
+ -- Relecture 164e (A4) : ouverture retardée par la décision (fenêtre « en attente » au-delà de son ouverture à l'image
+ -- précédente) : appels étalés depuis la position à l'ouverture réelle (t.openedPos, -1 sinon : depuis l'ouverture, comme
+ -- avant), annonce seulement si l'arrêt obligatoire du joueur n'est pas déjà fait (compté pendant l'attente).
  if t.state=='open' and not t.opened then
-  t.opened=true; t.openedAt=now
+  t.opened=true; t.openedAt=now; t.openedPos=t.heldOpen and position or -1
+  local playerDone=t.heldOpen==true and frame.player>0 and t.cars[frame.player].windowStops>=p.mandatoryStops
   if t.note then t.note('INFO',csp and 'fenetre d arret ouverte (CSP)' or string.format('fenetre d arret ouverte: %.0f a %.0f %% de la course',opening*100,closing*100),-1) end
-  if p.pitMessage and announce then if csp then announce('pitOpenCsp') else announce('pitOpen',opening*100,closing*100) end end
+  if p.pitMessage and announce and not playerDone then if csp then announce('pitOpenCsp') else announce('pitOpen',opening*100,closing*100) end end
  end
+ t.heldOpen=t.state=='pending' and position>=opening
  t.done=0; t.total=0
  -- Relecture 1.52 : relais maximal compté depuis le départ (front montant de frame.started), jamais depuis l'attente sur
  -- la grille.
@@ -165,11 +309,16 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
     -- l'ouverture de la fenêtre (Beta 1.48 : la F1 n'en a pas) ; jamais sinon. Joueur et changement de composé
     -- obligatoire : compté à la sortie de l'emplacement, seulement si le composé a changé. Relecture 1.52 : jamais après
     -- la fermeture de la fenêtre.
-    local counts=mandatory and position<=closing and (underRed and p.redFlagWork or not underRed and position>=opening) and not closed and not (dq and dq[i])
+    -- Beta 1.63 (règle réelle de la F1 : aucune fenêtre ; arrêt sous VSC ou voiture de sécurité compté comme un autre) :
+    -- changement de composé obligatoire (F1) et neutralisation en course (t.neutralCount, engine.lua) : compté aussi avant
+    -- l'ouverture de la fenêtre ; ailleurs, la fenêtre comme avant.
+    local early=not underRed and position<opening and p.pitCompoundChange and t.neutralCount==true
+    local counts=mandatory and position<=closing and (underRed and p.redFlagWork or not underRed and (position>=opening or early)) and not closed and not (dq and dq[i])
     c.pendingCompound=nil; c.pendingUntil=nil
     if counts and a.player and p.pitCompoundChange and a.compoundIndex~=nil then c.pendingCompound=a.compoundIndex
     elseif counts then c.windowStops=c.windowStops+1; t.dirty=true end
     countedNow=counts
+    if counts and early and t.note and active then t.note('INFO',string.format('arret aux stands compte sous neutralisation, avant la fenetre: %s',a.name),i) end
     if t.note and active then t.note('INFO',string.format('arret aux stands%s: %d (dont %d dans la fenetre)%s, %s',a.player and ' du joueur' or '',c.stops,c.windowStops,c.pendingCompound and ', compte au changement de compose (arrivee en '..tyreShort(a,c.pendingCompound)..')' or '',a.name),i) end
    end
    -- Beta 1.58 : demande d'arrêt obligatoire servie sans compter (dépannage de l'app, règles fermées…) : comptée pour la
@@ -204,6 +353,8 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
   end
  end
   cmd.rulePit=false; cmd.pitHold=false; cmd.pitCompound=-1; cmd.pitVisit=c.visit; cmd.pitRepair=false
+  -- Beta 1.64, lot 4 : course sprint, lue par M.compound ici et dans strategy.lua (même image, après).
+  cmd.sprintFree=sprint
   -- Beta 1.58 : servie dans ce passage de la voie et sortie de l'emplacement (la demande d'arrêt d'AC peut y être levée).
   local served=c.laneVisit~=nil and c.laneStopped and a.pit and not a.inPitBox
   cmd.laneServed=served
@@ -217,8 +368,13 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed)
     -- Relecture 1.52 : appel seulement fenêtre ouverte (jamais une fois fermée) ; un seul arrêt obligatoire depuis la
     -- 1.51, placé dans la fenêtre selon la graine.
     elseif t.state=='open' then
-     local span=closing-opening
-     want=position>=opening+span*K.pitSpread*U.unit(seed,i,K.pitSalt)
+     -- Relecture 164e (A4) : depuis l'ouverture réelle quand elle a été retardée par la décision.
+     local from=math.max(opening,t.openedPos or -1)
+     local span=closing-from
+     -- Affinage 1.63 (course courte) : appel au plus tard t.callBy (un tour avant la fermeture effective).
+     local at=from+span*K.pitSpread*U.unit(seed,i,K.pitSalt)
+     if callBy and at>callBy then at=callBy end
+     want=position>=at
      -- Beta 1.42 (stratégie individuelle) : arrêt obligatoire aligné sur l'arrêt prévu par le stratège s'il tombe plus
      -- tard dans la fenêtre (avancement relu de l'image précédente) ; jamais au-delà de la fin de la fenêtre (moins la
      -- marge de la stratégie).
@@ -347,15 +503,33 @@ end
 function M.serialize(t,session)
  local rows={tostring(session)}
  for i=1,K.maxCars do local c=t.cars[i]; if c.identity~='' and c.windowStops>0 and c.identity:match('^[%w_%-]+$') then rows[#rows+1]=c.identity..','..c.windowStops end end
+ -- Relecture 164d : décision de la course sprint (levée 0|1, km, tour retenu, dite 0|1) ; « * » : jamais pris pour une voiture.
+ if t.sprint~=nil then rows[#rows+1]=string.format('*sprint,%d,%.3f,%.3f,%d',t.sprint and 1 or 0,t.sprintKm,t.sprintLap,t.sprintSaid and 1 or 0) end
+ -- Relecture 164e (A2) : course encore indécise : « u » (jamais lu par le motif de la décision ni par celui des voitures).
+ if t.sprint==nil then rows[#rows+1]='*sprint,u' end
  return table.concat(rows,'\n')
 end
 -- Redémarrage de la session : les arrêts mémorisés avant le rechargement ne valent plus.
-function M.forget(t) t.restored={}; t.restoredSession=-1 end
+function M.forget(t) t.restored={}; t.restoredUndecided=false; t.restoredSession=-1; t.restoredSprint=nil end
 function M.restore(t,text,session)
  if type(text)~='string' or #text>K.maxZoneBytes or tonumber(text:match('^(%d+)'))~=session then return end
  t.restoredSession=session
  -- Relecture 1.52 : un seul arrêt obligatoire depuis la 1.51.
  for identity,stops in text:gmatch('\n([%w_%-]+),(%d+)') do t.restored[identity]=math.min(1,tonumber(stops)) end
+ -- Relecture 164d : décision de la course sprint de la même session, appliquée par M.update (après M.reset).
+ local lifted,km,lap,said=text:match('\n%*sprint,([01]),(%-?[%d%.]+),([%d%.]+),([01])')
+ t.restoredSprint=nil
+ if lifted then t.restoredSprint=lifted=='1'; t.restoredSprintKm=tonumber(km) or -1; t.restoredSprintLap=tonumber(lap) or 0; t.restoredSprintSaid=said=='1' end
+ -- Relecture 164e (A2) : course encore indécise à la sauvegarde (même session) : la règle de l'ancienne sauvegarde
+ -- (« fenêtre atteinte : maintenu ») ne vaut pas.
+ t.restoredUndecided=text:find('\n*sprint,u',1,true)~=nil
+end
+-- Relecture 164d : message de la course sprint émis dans cette image puis écarté par un plus important (engine.lua, avant
+-- Incidents.flushHeld) : redemandé, dit dès que le départ et les messages se sont tus.
+function M.confirmSprint(t,m)
+ if not t.sprintEmitted then return end
+ t.sprintEmitted=false
+ if not (m.messageKind=='pitSprint' and m.messageFrame==m.frameId) then t.sprintShow=true end
 end
 -- Beta 1.62 (règles de la course : priorité dans la voie des stands) : une IA arrêtée à son emplacement attend
 -- (cmd.pitHold) qu'une voiture déjà lancée dans la voie (plus de K.boxLaneKmh km/h, hors emplacement) et à moins de

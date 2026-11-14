@@ -39,6 +39,8 @@ def main():
         if key in INTERNAL:
             continue
         refs = consumers(r'\.'+re.escape(key)+r'\b', DECLARATIONS)
+        # Beta 1.64 : clés lues par une table de noms (desktops.lua : overlayDesk1..4 lus par g[M.keys[n]]).
+        refs = refs or consumers(r'[\'"]'+re.escape(key)+r'[\'"]', DECLARATIONS)
         assert refs, f'No runtime consumer for global {key}'
         bounds = config['globalBounds'][key]
         choices = config['globalChoices'][key]

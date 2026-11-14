@@ -140,7 +140,7 @@ end
 tests.PIT_LANE_FLICKER_159=function()
  local e,f=F.scene('C',3); local run={}; for k,v in pairs(e.run) do run[k]=v end
  run.mandatoryStops=1; run.pitWindowOpenPct=10; run.pitWindowClosePct=95; run.pitTyres=true; run.maxStintMin=0; run.minPitTime=0
- f.sessionLaps=10; f.leaderLaps=9; f.timedRace=false
+ f.sessionLaps=11; f.leaderLaps=9; f.timedRace=false
  local t=Pits.new(); local cmds={}; for i=1,f.count do cmds[i]={} end
  local now=100
  local function step() now=now+0.5; Pits.update(t,f,cmds,run,'C',now,1,nil,false,nil,false) end

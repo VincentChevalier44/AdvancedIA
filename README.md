@@ -6,9 +6,11 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 1.62. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 2.0.0. See [CHANGELOG.md](CHANGELOG.md).
+- **Interactive guide:** chapter-by-chapter videos and the full manual: https://vincentchevalier44.github.io/AdvancedIA/
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
+- **Support my work:** AdvancedIA is and stays free. If you enjoy it and want to support the time I spend on it, you can do so on Patreon: https://www.patreon.com/cw/WHKRacing. Thank you!
 
 ## Contents
 
@@ -103,6 +105,10 @@ The repository download also contains the test bench and the technical documents
 1. **Start an offline session** from Content Manager: Practice, Track day, Race weekend, Race or Hotlap.
 2. **Open the pause menu (Esc) or the setup/pits screen.** The AdvancedIA settings window opens there by itself.
    - It closes as soon as you drive again. While you drive, only the **in-game overlay** is shown.
+   - You can also open it while you drive from AC's apps bar, on any app desktop (it is listed with the other apps): it
+     shows a compact view (profile and preset, AI state, current flag, overlay on/off, overlay on this desktop, each
+     overlay element on this desktop, move or lock the overlay, put it back on this desktop) with a **Full view** button. It stays closed until you open it and costs nothing
+     while closed; settings read at the start of a session are greyed there and apply from the next session.
    - The app also has an icon among the setup screen's settings apps. Use it if the window does not appear.
    - The engine keeps running in the garage/setup screen, so a practice session goes on. Only the real pause freezes the commands.
 3. **Language.** The interface is in English on a first installation. Click **FR** or **EN** at the top right of the window to switch.
@@ -117,6 +123,9 @@ The repository download also contains the test bench and the technical documents
    - **Hotlap** gets no preset: only the racing rules are on (flag overlay, DRS beep, no AI to drive).
    - With that switch off, or with a manual profile, **Track day** stays fully native (*No section enabled: native AI*) until you load a preset on **HOME** or tick a section; the AI distribution and the CSP AI flood handling stay inactive too.
 6. **The overlay** appears centred at the top of the screen.
+   - **Per desktop (Beta 2.0.0):** each overlay element can be shown, hidden and placed separately on each AC
+     desktop; the app remembers it per desktop. Open AdvancedIA from AC's apps bar on that desktop to show,
+     hide, move or reset the overlay there.
    - Move it, resize it or choose its content in **SETTINGS › ADVANCED › Overlay**.
    - While the app is active, it hides Assetto Corsa's own flags and its top message banner (CSP options **Hide race flags** and **Hide system messages**). They stay ticked, also with the game closed, so Content Manager shows them ticked; your values come back when you switch the app or the option off (see [CSP display options](#csp-display-options)). CSP may only apply them at the next game launch; **HOME › TO CHECK** says so.
 7. **Track days on long circuits (7 km and more) with many AI.**
@@ -480,6 +489,8 @@ Section **Overtaking** (sidebar **TRAFFIC**).
   - Outside the race, before the cars are side by side: an attempt that gains less than 3 m on the target in 8 s is aborted (`sans progres`), and an attempt is capped at 15 s unless it gained ground in the last 4 s (`tentative trop longue`). An attempt that keeps gaining, like a slow pass on a long straight, is never cut. Both count as a failure on that car for the wait below. Never against you, unchanged in the race.
   - A target lost from sight for a moment (wheels off the track) no longer cancels the move (1 s tolerance).
   - **Target faster** (and, outside the race, **no progress** and **attempt too long**): when the target pulls away again, the AI leaves it alone for 45 s, then 3 min after a second failure on the same car, then 10 min. Outside the race it no longer flashes that car during the wait, and from the second failure on a quicker usual pace is no longer enough to try again: only a damaged, abnormally slow target or an invitation (the target yielding, or you moving aside) restarts an attempt. The session log notes `depassement suspendu` when that stricter wait starts.
+- **Attack push** (race, between AI; Beta 1.63): an AI attacking a car less than about 1 s ahead pushes on the straight and under braking (level +3 %, normal caution) for at most 10 s per attempt; never on the careful first lap, under a flag or against you.
+- **No hesitation** (race, Beta 1.63): a car less than about 1 s ahead with room on a side is attacked after 0.2 s, also at a corner exit; an attempt at equal speed carries on, it is dropped only if the gap really grows.
 - **Slipstream**: on a fast straight (over 150 km/h) behind a car, the AI lowers its caution after 1 s to use the tow.
   - **Slipstream seeking** (race, practice and qualifying, not track day): on a long straight, behind a car sitting at least 1 m off its lane within about 2 s, the AI moves in behind it, stays in the tow and pulls out late enough to get alongside before the next known braking point, then goes back to its line before the corner. Never towards an occupied side, under a flag, at the start, during the careful first lap, while yielding or braking; in qualifying only on a flying lap, never with a flying car just behind.
 - **Defending** (race only).
@@ -586,7 +597,7 @@ Formation lap and rolling start: ideas from Artood2s.
 
 **Realistic starts (off by default)** (section **Start**, Race profile, Beta 1.61) makes every start less uniform.
 - Each AI gets its own reaction time, and a few cars (three at most) make a poor getaway: wheelspin, or bogging down. It happens more often in the rain. No car is ever left standing on the grid.
-- With a formation lap (**Race start**: formation or rolling), the grid leaves row by row, the leader keeps a slow pace out of the grid and before the line so the pack closes up, and the AI weave on the straights to warm their tyres. They also weave behind the Safety Car.
+- With a formation lap (**Race start**: formation or rolling), the grid leaves row by row, the leader keeps a slow pace out of the grid and before the line so the pack closes up, and the AI weave on the straights to warm their tyres. Behind the Safety Car they weave only while their tyres are below working temperature.
 - In a rolling start the pack forms two files, and the pole car chooses its moment between 300 m and 100 m before the line. Still no overtaking before the line.
 - On the app's own grid (after a red flag or a formation lap), jump starts come in three grades: a small movement gives a warning, a jump start the usual penalty, a flagrant one a doubled penalty. Five seconds after lights out, a car that gained no place is judged one grade lower.
 - An AI can jump the start, rarely, and only when the jump-start sanction is on.
@@ -621,6 +632,8 @@ Section **Accidents** (sidebar **RACE & SAFETY**).
 - **Crashed AI stop** (off track only; on the track itself the AI moves off at once):
   - After a heavy deceleration with contact, an off or a spin, the AI stays still for 3 to 8 s, like a driver collecting their thoughts.
   - It then waits until no car at speed is within 120 m behind (at most 10 s more).
+- **Restart after a crash** (Beta 1.63): an AI stopped in an incident whose engine, suspension and gearbox still work is asked to restart when the track behind is clear (at most 3 times, every 6 s, within 40 s) and is not towed while it tries; once it has moved away it keeps lapping. It is towed only when it cannot go on (engine dead, suspension or gearbox broken, or no move after its attempts). It also restarts under a VSC, an FCY or the Safety Car and then follows the neutralisation rules; under a red flag the red-flag procedure applies.
+- **Cool-down lap** (race, Beta 1.63): an AI that has taken the chequered flag drives back to the pits at about 70 % of its usual pace, slowing gently, and moves towards the free side when a car still racing comes up behind; everything is given back to AC in the pit lane.
 - **Pit stop for damage** (Race, Practice and Qualifying; never on a track day or in hotlap; off by default).
   - With the switch on, the app also reads AI damage while they drive: one AI per frame, each at most every 2 s. Before, damage was only read below 25 km/h or in the pit box.
   - An AI is called in when its damage stays over one of these thresholds for 3 s:
@@ -660,6 +673,11 @@ Section **Accidents** (sidebar **RACE & SAFETY**).
 spot is marked (`point difficile: … m`): the AI drive there with 15% more caution and start no overtake within 100 m of it.
 It is forgotten after 10 minutes without an incident in a race, 30 minutes elsewhere. Never armed by the start, a restart or
 the careful first lap (a first-corner pile-up), and at most a quarter of the lap is covered.
+**Danger zone** (Beta 1.63, Accidents section): a difficult spot also caps the AI's speed there, from 150 m before it to
+100 m after it, at 4 % under the pace each AI learnt at that place (`zone dangereuse: … m`); after two more incidents
+close by, 7 % (`zone dangereuse relevee`). Some tracks have an AI line too fast for some cars in one corner; the cap stops
+the whole field going off there one after another. Never your car, never elsewhere; with the track memory on, a spot
+kept for the track (caution zone) gets the first level from the start.
 
 **Recovering stopped cars** (consistent with the racing rules):
 - **Alone on the track under a local yellow** (no rule can follow from it): the AI is returned to its pit box after 8 s, or after 3 s if it is broken (suspension, engine or gearbox out of use).
@@ -712,10 +730,11 @@ the careful first lap (a first-corner pile-up), and at most a quarter of the lap
 **AI sanctions** (**AI sanctions under flags**; Practice, Qualifying and Race):
 - An AI that overtakes under yellow, a neutralisation or a red flag lifts off for a few seconds. There is at most one sanction every 20 s, and a car that went off track during the pass does not count.
 - When a neutralisation or a red flag starts, an AI that passes during the braking lifts off clearly to give the place back. It is only sanctioned if it keeps the place.
+- Beta 1.63: under a VSC, Safety Car or FCY, an AI that passes is first told to give the place back (up to 30 s) and is only sanctioned if it keeps it. In a local yellow zone the same applies on the careful first lap, or when the car passed is avoiding or much slower (under 70 % of the passer's speed).
 - Beyond the allowed number of infringements, the AI is disqualified, returned to its pit box and parked until the end of the session.
 
 **AI sanctions** (sidebar **Sanctions**, section **Sanctions**; everything in Race; in Practice and Qualifying only track limits, wrong way, notices and, with **Collisions and blue flags: AI sanctions** on, warnings for contacts; never on a Track day or in Hotlap; never you, whom AC sanctions itself, unless you choose **Your track limits handled by the app** below). AC cannot give its own penalties to an AI nor change its results: everything below is applied by the app, and time penalties exist only in the app's **corrected classification**.
-- **Track limits** (three wheels or more off for 0.3 s, at 40 km/h or more, without a spin, not under a yellow flag, not while the app itself moves the car aside): in Practice and Qualifying the lap is invalidated in the app (journal and Diagnostic; AC's lap times and grid do not change), and the next lap too in the last sector. In the race: warnings (3 by default), then a time penalty for each further off; these time penalties never lead to a black flag. A place where three different AI go off within 5 minutes is the AI line itself leaving the limits: it is ignored, the warnings already given there are taken back, and it is forgotten after 30 minutes without an off.
+- **Track limits** (three wheels or more off for 0.3 s, at 40 km/h or more, without a spin, not under a yellow flag, not while the app itself moves the car aside; Beta 1.63: not with another car right beside or within 8 m, nor on the careful first lap): in Practice and Qualifying the lap is invalidated in the app (journal and Diagnostic; AC's lap times and grid do not change), and the next lap too in the last sector. In the race: warnings (3 by default), then a time penalty for each further off; these time penalties never lead to a black flag. A place where three different AI go off within 5 minutes is the AI line itself leaving the limits: it is ignored, the warnings already given there are taken back, and it is forgotten after 30 minutes without an off.
 - **Corner cut with a time gain** (race): an AI that gains 0.3 s or more on its learnt pace gets a throttle cut (5 s by default), lowered gradually to 35 % (never to zero), only on a straight (lateral acceleration at most 2 m/s²), without braking, above 80 km/h, not in the 3 s after rejoining or leaving the pits, never with a car behind closer than 30 m or 4 s at its closing speed (then not before 50 m), never under a flag. With no safe moment for 90 s it becomes a time penalty.
 - **Procedural offences** (race): jump start at the app's standing start (a held movement of 0.5 s, counted once), pit-lane speeding, crossing the pit-exit line. Penalty: drive-through (default), stop-and-go (a drive-through when the app cannot hold a car at its box) or time penalty.
 - **A car in trouble may be passed** (Beta 1.60). Under a yellow flag or a neutralisation, a car that was already a slow obstacle, or that has run for 3 s under half the pace it could hold there with nobody ahead of it, may be passed by the AI and by you without a sanction; the queue does not form behind it. Log: `voiture en difficulte: <name> (N km/h, M km/h permis), depassement permis sous drapeau`. Never under a red flag, on a relaunch or formation lap, in a slow corner or when the car's usual pace there is unknown.
@@ -746,7 +765,7 @@ the careful first lap (a first-corner pile-up), and at most a quarter of the lap
 - Columns: `corrected_pos`, `ac_pos`, `driver`, `car`, `class` (class rank in multi-class races), `laps`, `finished`, `player`, `track_warnings`, `track_penalties`, `track_time_s`, `laps_invalidated`, `throttle_cuts`, `drive_throughs`, `stop_and_gos`, `served`, `unserved_added_s`, `give_back_owed`, `give_back_given`, `time_added_s`, `black_flag`, `contacts` (contacts where the car was judged at fault, Beta 1.60).
 
 **Collisions** (Beta 1.60, optional, off by default; SETTINGS › Sanctions).
-- **Collisions: blame and AI sanctions.** In a corner the car whose nose is behind is at fault; on a straight, the car that hits from behind, or the car that moves across. When it is not clear (start, a car already stopped, spun or off the track, a pile-up, a light rub, noses level, red flag or neutralisation, pit lane), it is a racing incident and nobody is penalised. An AI at fault gets warnings, then a time penalty on the corrected classification, or a drive-through when the other car is out. Practice and qualifying: warnings only.
+- **Collisions: blame and AI sanctions.** (Beta 1.63: a nudge under 8 km/h of difference, or a first-lap contact under 30 km/h, is nobody's fault unless a car loses control.) In a corner the car whose nose is behind is at fault; on a straight, the car that hits from behind, or the car that moves across. When it is not clear (start, a car already stopped, spun or off the track, a pile-up, a light rub, noses level, red flag or neutralisation, pit lane), it is a racing incident and nobody is penalised. An AI at fault gets warnings, then a time penalty on the corrected classification, or a drive-through when the other car is out. Practice and qualifying: warnings only.
   - A time penalty or a drive-through given to an AI for a contact counts towards its black flag, like its other sanctions (track-limit penalties do not).
 - **Collisions: you are judged too** (race only). The same rules for you: two warnings on the overlay, then **Your race penalty (track limits, contacts)**. Never a black flag or a disqualification, nothing else is done to your car, and AC's own classification is never changed.
 - A contact is judged six seconds after it happens, so that its consequences count: it is serious when the other car spins, goes off or loses two places. Every verdict is written to the log (`responsabilite:` and `incident de course:` lines; `blame:` and `racing incident:` in English).
@@ -772,7 +791,7 @@ Tab **RACING RULES**.
 | Red flag on a pile-up (3 cars), real restart (also in practice and qualifying) | yes | yes, tyres changed | yes, tyres changed | yes, no work on the cars | yes, no work on the cars |
 | Restart after a red flag in the race | rolling (RS) | standing (SS) from the grid | standing (SS) | rolling (RS) | rolling (RS) |
 | DRS one leader lap after the start, a Safety Car or a red flag; off in the rain and under flags | yes | yes | active aero with no wait | yes | yes |
-| Mandatory stop in the race | off | on, different dry compound, between 20% and 95% of the race (waived if the race turns wet) | same | on, between 25 and 35 min of a one-hour race (42–58%), no minimum time | none imposed; stints of 50 min max |
+| Mandatory stop in the race | off | on, different dry compound, between 20% and 95% of the race; a stop under VSC, Safety Car or red flag counts even before the window, as in real F1 (waived if the race turns wet) | same | on, between 25 and 35 min of a one-hour race (42–58%), no minimum time | none imposed; stints of 50 min max |
 | Repairs at every stop in the race (3 s plus damage, 60 s max) | yes | yes | yes | yes | yes |
 | Fuel at enforced stops | refuel at the stop | race fuel from the start (refuelling banned since 2010) | same | race fuel from the start (no refuelling in GT World Challenge Sprint) | refuel at the stop |
 | Overtake Mode (within 1 s at the detection point, end of lap) | — | — | +2% level on the straights of the next lap | — | — |
@@ -833,6 +852,8 @@ Safety Car escalation (**Safety Car if the incident escalates**, on by default i
    - **Bunching** ignores cars that cannot join (stopped off the track, held, in trouble), waits 180 s at most, and the Safety Car always comes in before the time limit of a neutralisation ends it.
    - **Called back before leaving.** When the stopped cars are towed away before the Safety Car has left its box, the neutralisation ends and the log says `voiture de securite: rappelee avant sa sortie`.
 4. **In this lap.** Once the incident is cleared, it has been out for at least 60 s **and the field is bunched up behind it** (every car on track within 150 m of the car ahead), the overlay announces *Safety Car in this lap*. It does not wait for ever: after one more lap at 120 km/h it comes in anyway (`voiture de securite: peloton non regroupe (N / M dans la file)`).
+   - **Lapped cars** (race over a set number of laps or timed, single class, at least 3 laps to go): once the queue has formed, the lapped cars in it are allowed one at a time, by name, to overtake the queue and the Safety Car; the Safety Car then comes in at the end of the following lap. A car that makes no progress within one Safety Car lap loses its turn; the procedure stops after 10 minutes, on a new incident, a red flag or a switch to FCY. While a car unlaps it is not under the Safety Car rules (no delta for you, no penalty for its passes). Log: `voiture de securite: … autorisee a se dedoubler`, `… s est dedoublee`; with several classes recognised in the field, nothing is started and the log says so (`dedoublement non lance (course multi-classe, …)`).
+   - **Finish under the Safety Car**: when the last lap starts under the Safety Car, it comes in at the end of that lap with no green flag, and the cars take the chequered flag in queue order with no overtaking, at the pace they had behind it. Called during the last lap, it stays in the pits and the neutralisation holds to the flag. Cars that have finished are free (no penalty); the hold ends once every car has crossed the line (one Safety Car lap at most). If the leader crosses the line without the chequered flag, the usual restart takes over.
 5. **Green.** The green flag comes when it enters the pit lane (`voiture de securite: rentree a son stand` once in its box). There is **no overtaking until the line** for the cars queued behind it; a car elsewhere on the track races at once (`reprise: N voiture(s) hors de la file, depassement permis aussitot`). Then it is held in its box again. If it misses the pit entry and crosses the line, the green comes there and it is sent back to its box, but only once out of your sight (it keeps driving towards the pit entry for at most 60 s).
 6. **Fallbacks.** If it stops on the track during its intervention, it is returned to its pit box and the neutralisation continues as an FCY. After a VSC, your delta restarts at +1 s when the Safety Car takes over.
 
@@ -843,12 +864,13 @@ Safety Car escalation (**Safety Car if the incident escalates**, on by default i
 **Red flag on a serious accident (practice, qualifying, race)**, on by default.
 
 **In the race:**
-- **Trigger** (only when the track is really blocked). At least 3 cars (**Red flag: cars stopped on track**) stopped for 10 s **because of an incident**: damage, a spin, stopped off the racing line or off the track, or stopped alone on the track. Cars that only wait undamaged in the queue behind the accident, on the racing line, never count. And the track must be blocked: where those cars stand, they leave no 2.5 m passage across the width of the track. Otherwise the race goes on under yellow flags, VSC or Safety Car as before, and the journal says why (`pas de drapeau rouge: 5 voitures arretees dont 4 dans la file`). A car still spinning does not count, and neither does yours.
-- **The AI.** All AI return to their pit box at the red-flag delta (+60%, 80 km/h fallback) without overtaking, and stay there. An AI stopped on the track is recovered to its pit box.
+- **Pile-up** (Beta 1.63): a red flag also falls when 5 cars have spun, or stopped off the track or damaged, within the same 200 m in less than a minute, even if the track is still passable (debris, barriers); the careful first lap included, never the formation lap. Undamaged cars waiting on the track behind the accident never count. Journal: `drapeau rouge: carnage, …`.
+- **Trigger** (otherwise, only when the track is really blocked). At least 3 cars (**Red flag: cars stopped on track**) stopped for 10 s **because of an incident**: damage, a spin, stopped off the racing line or off the track, or stopped alone on the track. Cars that only wait undamaged in the queue behind the accident, on the racing line, never count. And the track must be blocked: where those cars stand, they leave no 2.5 m passage across the width of the track. Otherwise the race goes on under yellow flags, VSC or Safety Car as before, and the journal says why (`pas de drapeau rouge: 5 voitures arretees dont 4 dans la file`). A car still spinning does not count, and neither does yours.
+- **The AI.** All AI return to their pit box at the red-flag delta (+60%, 80 km/h fallback) without overtaking, and stay there. Each AI uses its own pit box: there is no queue in the fast lane, a simplification of the real procedure. An AI stopped on the track is recovered to its pit box.
 - **You.** Enter the pit lane too, within the delta. The overlay shows **RED FLAG**, flashing, with the *PIT: RETURN TO THE PIT LANE* pill.
   - The restart waits for you, at most until the maximum delay. Refusing to come in holds the AI until that delay.
   - Restarting outside the pits is penalised.
-- **The restart** comes once every AI is at its pit box (not just in the pit lane), the track is clear and the minimum suspension (60 s, **Red flag: minimum suspension (s)**) has passed. At the latest, it comes after one and a quarter laps at the return speed plus the pit lane (about 8 minutes at Spa).
+- **The restart** comes once every AI is at its pit box (not just in the pit lane), the track is clear and the minimum suspension (60 s, **Red flag: minimum suspension (s)**) has passed. At the latest, it comes after one and a quarter laps at the return speed plus the pit lane (5 to 30 minutes depending on the track). If AI are still stopped on the track at that point, they are first recovered to their pit box and the restart comes as soon as the track is clear (at most 15 s later). If they cannot be recovered (the CSP function that moves a car is missing or keeps failing) or are still there after those 15 s, the restart comes anyway: restart lap behind the Safety Car, or under VSC or FCY without one, with the yellow flag at the obstacle when yellow flags are on; the log says why (`drapeau rouge: piste non degagee …`). That restart lap keeps its normal length (the car left on the track no longer extends it), and a standing restart becomes a rolling start if that car is still on the track at the end of the lap (`relance arretee indisponible (piste non degagee)`). The restart never waits for you beyond the maximum delay.
 - **A real restart** (F1, WEC, GT):
   - **The order is frozen at the red flag**, you included: the classification at that moment, not the order in which cars reach the pits. It sets the pit exit, the grid of a standing restart, the overlay and the overtaking rule below.
   - The cars leave their boxes in that order, one every 2 s, each only once the car before it has left its box and passed its own (at most 20 s of waiting, 45 s behind you). The log notes `sortie des stands: X attend Y`.
@@ -866,7 +888,7 @@ Safety Car escalation (**Safety Car if the incident escalates**, on by default i
 - **DRS** is disabled until one lap after the restart.
 - **Limitation:** AC cannot suspend a race, so its race clock keeps running during the suspension.
 
-**In Practice and Qualifying**, the session is suspended the same way: every AI returns to its box at reduced speed. It then resumes at the green flag with no restart lap, the AI leaving the pits one at a time. Never on a Track day.
+**In Practice and Qualifying**, the session is suspended the same way: every AI returns to its box at reduced speed. It then resumes at the green flag with no restart lap, the AI leaving the pits one at a time. At the maximum delay the same clear-track rule applies; cars that cannot be recovered keep a local yellow flag (when yellow flags are on) and the session resumes. Never on a Track day.
 
 ### DRS and Overtake Mode
 
@@ -899,6 +921,7 @@ The settings are under **RACING RULES › Mandatory stop in the race**. They are
   - A recovery to the pits and the Safety Car do not count as stops, except under a red flag.
 - **You.** The overlay reminds you when the window opens and towards its end. A stop missing when the window closes means a penalty (throttle cut, counted as an infringement).
 - **F1 rules.** **Change dry compound (F1)**: a different dry compound at the stop. It is no longer mandatory if the race turns wet.
+- **Mandatory stop and race length.** A configured mandatory stop is always kept, whatever the race length (decision for 1.64). Only a stop that is impossible in a very short race (no lap left for the window) is lifted, with a message.
 - **Pit lane closed** (**Pit lane closed under neutralisation**; GT and Endurance rules):
   - No AI is called in, and a stop made with the pit lane closed does not count.
   - A tyre change for rain is still allowed. The overlay shows **PIT LANE CLOSED**.
@@ -1083,7 +1106,18 @@ The app draws its own overlay instead of a CSP app window. Set it in **SETTINGS 
 
 Position and size (**POSITION AND SIZE**):
 - **UNLOCK · MOVE · SIZE**: drag the overlay to move it, pull its bottom right corner to resize it, and right-click it to lock it again. **LOCK THE POSITION** locks it from the window.
-- **PUT BACK ON SCREEN**: back to the automatic position (centred at the top of the screen) at size 1.00x.
+- **Per AC app desktop**: each of AC's four app desktops keeps its own overlay position. Unlock the overlay, switch desktop
+  with AC's **Next desktop** control and drag it: the other desktops do not move. Drag the **session line** (the top
+  line) to place it on its own on that desktop; the flag panel stays where it is. The overlay can also be shown or
+  hidden per desktop (**App desktops**, below), and from the compact view of the window opened in game.
+- **Each overlay element, per desktop**: the overlay has four elements: **Session line**, **Flag panel**,
+  **Explanation and recap** and **Instruction pills**. Under **Elements on this desktop** (Overlay settings, and the
+  compact view of the window opened in game), switch each one on or off for the current desktop only. To place one on
+  its own, unlock the overlay and drag it out of the panel (the explanation and pills show an empty frame while the
+  overlay is unlocked, so you can grab them even when nothing is displayed): it becomes its own window on that desktop
+  and can then be dragged anywhere. **Reset** on an element shows it again at its default place (under the panel).
+- **PUT BACK ON SCREEN**: on the current desktop, back to the automatic position (centred at the top of the screen),
+  every element shown and attached again, at size 1.00x. The other desktops keep their position and elements.
 - **Size**: 0.50x to 2.50x (1.00x = 600 px wide). The overlay keeps its proportions at every size.
 
 Appearance (**APPEARANCE**):
@@ -1177,7 +1211,7 @@ The panels have their own section, **SETTINGS › RACE & SAFETY › Track light 
 | Yellow | A yellow zone ahead of you, Safety Car, VSC, FCY, the relaunch lap after a red flag |
 | White | A slow vehicle ahead of you |
 | Orange | Slippery track (rain starting, 30 s) |
-| Blue | A car lapping you is behind you (race) |
+| Blue | A car lapping you is behind you (race). Only your own blue flag: CSP has a single race flag, the player's, shared by every panel of the track, so a blue flag shown to an AI backmarker cannot appear on the panels (the AI still yield). |
 | Green | At the end of a neutralisation and at a restart (5 s by default), at the end of a yellow zone (3 s by default); see **Green duration (s)** |
 | AC's own | Nothing to report, your last lap in a lap race (AC's white flag), the finish (AC's chequered flag) |
 
@@ -1196,7 +1230,14 @@ AdvancedIA can share its live state with a companion app, today **SpotterEnginer
 - **Its pit plan** (Beta 1.59, read only): SpotterEnginer publishes the player's pit plan (`ac.store` key `SpotterEnginer.pitplan`, contract v1: `v=1;lap=N;compound=-;state=planned|boxnow|done|none;window=a-b;boxcalls=0|1;stamp=s`), read every second while it is installed. A fresh plan (its stamp moved in the last 6 s) is followed: nothing is said before the planned lap, and the stop reminder comes on the planned lap; near the end of the window (the last 20% of it) the app's own reminders come back; *box now* is never shown with the pits closed. A stale, absent, unreadable or *none* plan, a plan lap outside our window, or *done* while the stop is still owed: the app's own reminders apply. Nothing is written for it.
 
 - **Only when SpotterEnginer is installed**: at launch the app checks once for `apps/lua/SpotterEnginer/manifest.ini`. If it is absent, nothing is opened or computed and the journal says `pont des apps compagnes: SpotterEnginer absent, pont inactif`; AdvancedIA behaves exactly as without the bridge.
-- **When it is installed**: two shared structures are opened with `ac.connect` (`ACAdvancedIA.Bridge.Hello` and `ACAdvancedIA.Bridge.Data.v1`, layout in `src/bridge_layout.lua`, identical in both apps) and the engine state is copied into them every frame, read only: flags and neutralisations, the delta, the player's penalties, the pit window, the AI sanctions and stops. Journal: `pont des apps compagnes: ouvert (version 1)`.
+- **When it is installed**: two shared structures are opened with `ac.connect` (`ACAdvancedIA.Bridge.Hello` and `ACAdvancedIA.Bridge.Data.v2`, layout in `src/bridge_layout.lua`, identical in both apps) and the engine state is copied into them every frame, read only: flags and neutralisations, the delta, the player's penalties, the pit window, the AI sanctions and stops. Journal: `pont des apps compagnes: ouvert (version 1)`.
+- **Bridge v2 (Beta 2.0.0).** The data key is now `ACAdvancedIA.Bridge.Data.v2` and the hello carries
+  `bridgeVersion=2`; a reader built for v1 finds no data and stops cleanly. New fields at the end of each car:
+  `retired` (an AI towed to its pit box in a race and parked until the end; never a disqualification) and
+  `lastReason` (reason of the AI's last real sanction: 0 none, 2–13 the codes of `L.reasons` in
+  `src/bridge_layout.lua`, 99 other; a simple track-limit warning never writes it). New global fields at the end:
+  `trackWarnings` and `serveLaps` (the thresholds in effect). Companion apps need their bridge-v2 update
+  (SpotterEnginer 1.3.9 or later).
 - **Announcements** (`messageId`, `messageKind`, `messageValue`, `messageExtra`, `messageTitle`, `messageText`): one per event, in the app's language. Silent kinds (never a message at the top of the screen; re-sent on the next frame if another announcement takes their frame): `pitCompound`, `pitPlanSame`, `pitNotCounted`, `pitValidated` (F1 compound change), `pitPlanOk` (strategy fixed after a « same compound » warning; value = fitted compound index, extra = planned one); `scOut` (Safety Car on track, sent in the same frame as `safetyPhase` becoming `out`; value = AC index (0-based) of the first car behind it, -1 if none, extra = gap in m), `scLeading` (queue formed behind it; value = AC index of the first car, extra = gap in m), `restartPlace` (race, at the red flag and when you leave the pit lane on the relaunch lap; value = your frozen place (1-based), extra = AC index of the car to follow, -1 in P1), `restartRetake` (a car classed behind you is ahead; value = its AC index, extra = your place). Shown kind `fastCar` (Practice and Qualifying: a flying AI is coming while you are on an out-lap or cool-down lap; value = its AC index, extra = gap in s). The text names the driver. The internal Safety Car phase `exit` (released, in the pit lane) is published as `call`, as `place` is.
 - **Beta 1.60, layout unchanged.**
   - `wrong` is true for a car travelling nose first against the track direction; a reversing car is not wrong way.
@@ -1210,6 +1251,17 @@ AdvancedIA can share its live state with a companion app, today **SpotterEnginer
 - Beta 1.61 side keys, written only while SpotterEnginer is installed and their switch is on, when the text changes (`stamp` is the time of the last change, not a heartbeat):
   - `AdvancedIA.traffic` (**Lapped cars and classes: nuanced behaviour**): `v=1;blue=<none|lap|class>;stage=<none|advise|order>;car=<AC index|-1>;gap=<m>;closing=<km/h>;count=<n>;stamp=<s>`.
   - `AdvancedIA.weather` (**Live weather**): `v=1;wet=<0.00-1.00>;rain=<0.00-1.00>;water=<0.00-1.00>;trend=<wetting|steady|drying>;eta=<s|-1>;next=<dry|inter|wet|none>;forecast=<none|light|rain|heavy|unknown>;forecastIn=<s|-1>;aiDry=<n>;aiRain=<n>;stamp=<sim s>`.
+- **SetupLab** (Beta 1.63): when the SetupLab app is installed (apps/lua/SetupLab), the bridge also opens for it and the app writes a
+  read-only key `AdvancedIA.session`, at most twice a second and only when it changes; nothing is shown and nothing changes
+  for the AI. Format `k=v` pairs separated by `;`, `v=1` first, unknown keys to ignore:
+  `session=<P|Q|C|J|H>` (P practice, Q qualifying, C race, J track day, H hotlap; from AC's session type: 1 practice → P,
+  or J when Content Manager declares a Track Day or no race.ini says otherwise; 2 qualifying → Q, or J for a Track Day; 3 race → C;
+  4–7 hotlap, time attack, drift, drag → H), `rules=<rule set>`, `playerLapId=<car.lapCount during the lap>`,
+  `playerLapClean=<0|1>`, `reason=<red|sc|vsc|fcy|formation|blackflag|slowdown|delta|yellow>` (last event that dirtied a lap),
+  `lastLapId`, `lastLapClean` (the lap just completed, set at the very frame you cross the line), `drsAllowed=<0|1>`,
+  `compoundChange=<0|1>` (race only, mandatory change still owed), `compoundsAllowed=<CSP compound indices, comma-separated;
+  empty: no restriction>`, `wetWaived=<0|1>`, `costMs`, `aiLapMean` (s, clean AI laps of the session) and `aiLapCount`.
+  On unload it becomes `v=1;closed=1`.
   - Two message kinds with **Realistic starts**: `jumpWarn` (movement on the grid, value in metres) and `jumpFlagrant` (flagrant jump start, value = penalty seconds).
 
 ### Beeps
@@ -1929,7 +1981,7 @@ Summary counters: `tow` and `tow_end` (tows broken and ended), `dirtyAir` (dirty
 - **Recognised cars and tracks** (car signatures, tyre compounds, track configurations) are no driving validation: each track and car still has to be seen in game.
 
 **Known limitations.**
-- **AI turn signals cannot be driven from an app** in CSP 0.3.0-preview675: `ac.setTurningLights` only drives the player's car, and the per-car control has no indicator field.
+- **AI turn signals depend on the car model:** the app drives them through CSP's target car, but some car mods have no turn signals, or have them swapped left and right in their model.
 - **Red flag and penalties.**
   - AC has no native red flag; AdvancedIA shows its own on the overlay. AC cannot suspend a race, so its clock keeps running during a red flag.
   - AC adds no time to the classification, so penalties are native throttle cuts (no drive-through or stop-and-go imposed by the app). They need race settings that allow that penalty.
@@ -1946,6 +1998,7 @@ Summary counters: `tow` and `tow_end` (tows broken and ended), `dirtyAir` (dirty
 - **Without a measured left/right sign**, no lateral move is written (see [Troubleshooting](#troubleshooting)).
 - **Tyres.** A real compound is only changed in the pits (stopped, or driving in the pit lane) or on the grid before the start. The rain grip compensation is suspended when the native wet-tyre state cannot be confirmed.
 - **Spacing** needs `physics.setAITopSpeed` and only acts in the Track day profile.
+- **The Safety Car never leads the field through the pit lane**: the queue always stays on the track behind it.
 - **The Safety Car must be on the Content Manager grid.** Extra copies of its model appear in the driver list and classification, even though they never race. Its exit through the pit lane is still to be confirmed in game.
 - **The spacing speed cap** is restored to "unlimited": a cap set by another app cannot be restored exactly. How quickly the distances converge depends on the native driving and remains to be observed in game.
 - **CSP AI flood changes** only take effect at the next launch of the game.
@@ -1965,7 +2018,8 @@ Summary counters: `tow` and `tow_end` (tows broken and ended), `dirtyAir` (dirty
 - **With an older CSP** (before Beta 1.57, one missing field could make the app look "online" for ever): the log line `champs de CSP absents …` lists the fields your CSP lacks, and the app runs without them. If the status still says *Cannot read the game state*, the log names the essential field that is missing: updating CSP fixes it.
 
 **The settings window does not appear.**
-- It only shows in the pause menu (Esc) or the setup/pits screen, and closes itself while you drive.
+- It opens by itself in the pause menu (Esc) or the setup/pits screen, and closes itself when you drive again. While you
+  drive, open it from AC's apps bar if you want it.
 - Check that the folder is exactly `assettocorsa/apps/lua/AdvancedIA` (with `manifest.ini` directly inside, not `AdvancedIA-main` or a nested folder), and that CSP is enabled.
 - The app also has an icon among the setup screen's settings apps.
 
@@ -2125,6 +2179,7 @@ The kinematic bench does not replace an in-game validation of collisions or of t
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md), newest first; Beta 1.39 and older in [docs/HISTORY.md](docs/HISTORY.md). Each entry lists what changed, why (often from the author's own sessions and logs), and the verification run (checks, integration cases, mutations, soak, benchmark).
 - **License:** MIT. See [LICENSE](LICENSE).
 - **Author:** VincentChevalier44 (Vincent Chevalier / LHK Informatique).
+- **Support:** the app stays free; optional support on Patreon: https://www.patreon.com/cw/WHKRacing.
 - **Credits.**
   - Built on the Custom Shaders Patch Lua SDK. The CSP function signatures come from the local SDK and the CSP documentation.
   - No code from any other AI controller is imported.

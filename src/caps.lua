@@ -1,5 +1,5 @@
 local K=require('src/config').K
-local M={errorLength=160,names={'level','aggression','caution','offset','grip','brake','speed','rain','tyres','pit','stop','flag','flash','park','teleport','penalty','drs','drsActive','brakeMistake','tractionMistake','fuel','fuelSet','startDelay','awake','position','velocity','repairBody','repairSuspension','repairEngine','throttle','tyreKm'}}
+local M={errorLength=160,names={'level','aggression','caution','offset','grip','brake','speed','rain','tyres','pit','stop','flag','flash','park','teleport','penalty','drs','drsActive','brakeMistake','tractionMistake','fuel','fuelSet','startDelay','awake','noRetire','turnSignals','position','velocity','repairBody','repairSuspension','repairEngine','throttle','tyreKm'}}
 function M.new(port)
  -- Beta 1.52 : failureCount, échecs de toutes les capacités depuis le lancement (journal des capacités, seulement après
  -- un nouvel échec).

@@ -213,6 +213,9 @@ function M.create(native110,options)
  -- Beta 1.22 : attente native à l'emplacement (IA seulement ; 0, annulation, partout) ; Beta 1.20 : réparations d'une IA à son emplacement.
  physics.setAITimeToStart=function(index,time) weatherVerify(index); assert(index~=0 and h.cars[index].isAIControlled and time>=0 and time<1000 and (time==0 or h.cars[index].isInPit)); h.startDelays[index]=time; h.startDelayWrites=h.startDelayWrites+1 end
  physics.awakeCar=function(index) assert(h.cars[index] and h.cars[index].isAIControlled); h.awakes[index]=(h.awakes[index] or 0)+1 end
+ -- physics.preventAIFromRetiring : absente par défaut (la grille est jugée sans protection, borne de 10 s) ; posée par
+ -- LOCK_GRID_NO_RETIRE_APPLIER_163 (tests/extended.lua) le temps du test.
+ physics.preventAIFromRetiring=nil
  local function repairable(index) weatherVerify(index); assert(index~=0 and h.cars[index].isAIControlled and h.cars[index].isInPit,'repair in the pit box only') end
  physics.setCarBodyDamage=function(index,damage) repairable(index); assert(damage~=nil); h.bodyRepairs[index]=(h.bodyRepairs[index] or 0)+1; h.cars[index].damage={[0]=0,[1]=0,[2]=0,[3]=0,[4]=0} end
  physics.setSuspensionDamage=function(index,wheels,damage) repairable(index); assert(wheels==nil and damage==0); h.suspensionRepairs[index]=(h.suspensionRepairs[index] or 0)+1; h.cars[index].suspensionDamage={[0]=0,[1]=0,[2]=0,[3]=0} end

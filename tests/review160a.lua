@@ -227,7 +227,9 @@ tests.DEFENCE_EARLY_ONLY_160A=function()
   local s=e.states[2]; s.nextPerception=0; f.cars[2].lap=3; f.cars[3].lap=3; s.persona.awareness=e.run.awMin
   local t=0
   while t<0.5 do
-   if attacking then e.states[3].state='OVT_IN'; e.states[3].target=2; e.states[3].targetSide=-1 end
+   -- Série complète 1.63 : attaquant qui n'attaque pas encore gardé en conduite (l'armement rapide de la 1.63 le ferait
+   -- déboîter aussitôt et masquerait la règle de l'horizon).
+   if attacking then e.states[3].state='OVT_IN'; e.states[3].target=2; e.states[3].targetSide=-1 else e.states[3].state='DRIVE' end
    F.place(f,3,-gap-4.4,100+sa,x); s.nextPerception=0; s.persona.awareness=e.run.awMin; F.tick(e,f,1/60); t=t+1/60
    if s.state=='DEFEND' then break end
   end
@@ -297,6 +299,8 @@ tests.DEFENDER_HOLDS_LINE_160A=function()
  assert((s.committed or 0)==0 and Priority.held(o,e.time)==0,'released with the attempt')
 end
 tests.ATTACKER_BONUS_BOUNDED_160A=function()
+ -- Affinage 1.63 : l'attaque poussée (K.pushLevel) est coupée ici, ce test juge l'aide au dépassement seule.
+ local pushOld=K.pushLevel; K.pushLevel=0
  local function level(on,target,seconds)
   local e,f,s=passScene('C',on,5,2)
   if target==1 then F.place(f,1,5+4.4,100); F.place(f,3,5000,100); s.target=1 end
@@ -316,6 +320,7 @@ tests.ATTACKER_BONUS_BOUNDED_160A=function()
  e,f,s3=passScene('C',true,5,2); F.tick(e,f,1/60); s3.commitAt=e.time-K.passAidMax-1
  local before=e.commands[2].level; s3.aidPairUntil=0; F.tick(e,f,1/60)
  assert(s3.aidPairUntil==0 and e.commands[2].level<=before+1e-12,'after K.passAidMax s: no more bonus')
+ K.pushLevel=pushOld
 end
 tests.PASS_AID_NO_ABORT_SLOW_160A=function()
  local function run(on)

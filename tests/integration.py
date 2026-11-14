@@ -8,7 +8,9 @@ manifest.read(APP/'manifest.ini',encoding='utf-8')
 # Beta 1.25 : un seul rappel de dessin, l'overlay en jeu (IN_GAME) ; aucune mise à jour hors de script.update.
 assert not manifest.has_section('SIM_CALLBACKS') and dict(manifest['UI_CALLBACKS'])=={'in_game':'HUMANAI__HUD'}
 assert manifest['CORE']['LAZY']=='NONE'
-assert 'SETUP' in manifest['WINDOW_0']['FLAGS'].split(',') and manifest['WINDOW_0']['GROUP']=='SETTINGS'
+# Affinage 1.64 t1 (demande du pilote : la fenêtre dans la barre des apps d'AC, sur chaque bureau) : plus dans le groupe
+# SETTINGS de la barre (rangée à part), mais dans la liste des apps, comme les autres apps de course.
+assert 'SETUP' in manifest['WINDOW_0']['FLAGS'].split(',') and manifest['WINDOW_0'].get('GROUP') is None
 # Beta 1.45 : ni fond ni marge de CSP autour de la fenêtre (plus de cadre gris), comme SetupLab ; l'app peint tout.
 assert 'NO_BACKGROUND' in manifest['WINDOW_0']['FLAGS'].split(',') and manifest['WINDOW_0'].get('PADDING')=='0,0'
 assert 'background_color' not in manifest['WINDOW_0']

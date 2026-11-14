@@ -67,9 +67,12 @@ tests.GRID_BOUNDED_WAIT_161V=function()
  local t=e.incidents; local g=e.grid; t.standing='grid'; F.tick(e,f,0.1)
  F.place(f,2,slotZ(2),0); F.place(f,3,slotZ(3),0); F.tick(e,f,1/60)
  assert(g.held[2] and g.held[3] and not g.held[4] and t.standing=='grid','two held, one far behind')
- F.tick(e,f,K.gridWaitMax+2); assert(t.standing=='grid','player not in place: no lights')
- F.place(f,1,slotZ(1),0); F.tick(e,f,1/60)
- assert(t.standing=='lights' and count(e,'attente bornee')==1,'player in place, last arrival long ago: lights, one line')
+ -- Correctif 1.63 (Montréal : AC ramène à son stand une IA immobile depuis 12 s) : feux sans attendre ni le joueur ni
+ -- le retardataire, au plus tard GK.stillMax - séquence - marge après la première IA immobile.
+ local GK=Grid.GK; local lim=GK.stillMax-(K.lightStep*(K.gridLights-1)+K.lightsOutMin)-GK.lightsMargin
+ F.tick(e,f,lim-0.5); assert(t.standing=='grid','before the still limit: grid')
+ F.tick(e,f,0.7)
+ assert(t.standing=='lights' and count(e,'premiere IA immobile')==1,'still limit reached: lights without the player, one line')
  assert(not g.held[4] and not e.commands[4].stopHold and e.commands[4].speedLimit>K.gridCrawlKmh,'latecomer keeps driving to its slot during the lights')
  -- Joueur en place dès le début, une IA arrive tard : attente comptée depuis cette arrivée.
  local e2,f2=standingScene(4)
@@ -78,8 +81,11 @@ tests.GRID_BOUNDED_WAIT_161V=function()
  local t2=e2.incidents; t2.standing='grid'; F.tick(e2,f2,0.1)
  F.place(f2,1,slotZ(1),0); F.place(f2,2,slotZ(2),0); F.tick(e2,f2,1/60)
  F.tick(e2,f2,3); F.place(f2,3,slotZ(3),0); F.tick(e2,f2,1/60)
- F.tick(e2,f2,K.gridWaitMax-1); assert(t2.standing=='grid','measured from the last arrival: still waiting')
- F.tick(e2,f2,1.2); assert(t2.standing=='lights','lights after the bound from the last arrival')
+ -- Correctif 1.63 : mesurée depuis la première IA immobile (AC ramène une IA immobile à son stand), jamais depuis la
+ -- dernière arrivée.
+ local GK2=Grid.GK; local lim2=GK2.stillMax-(K.lightStep*(K.gridLights-1)+K.lightsOutMin)-GK2.lightsMargin
+ F.tick(e2,f2,lim2-3-0.5); assert(t2.standing=='grid','measured from the first still AI: still waiting')
+ F.tick(e2,f2,0.7); assert(t2.standing=='lights','lights at the still limit of the first AI')
 end
 -- Zigzag du tour de formation : borne propre, à K.formWeaveEdge m du bord, aussi aux points lus plus loin.
 tests.FORMATION_WEAVE_BOUND_161V=function()
@@ -113,11 +119,11 @@ tests.FORMATION_WARM_BRAKE_161V=function()
  Antics.launch(t,e,frame,at)
  assert(t.brakeUntil[1]>at,'brake application started on a straight with nobody close')
  e.commands[1].speedLimit=K.unlimitedSpeed; Antics.launch(t,e,frame,at+0.1)
- assert(math.abs(e.commands[1].speedLimit-(150-K.formBrakeDrop))<1e-9,'speed limit dropped for the warm-up')
- e.commands[1].speedLimit=K.unlimitedSpeed; Antics.launch(t,e,frame,at+K.formBrakeTime+0.05)
+ assert(math.abs(e.commands[1].speedLimit-(150-Antics.AK.brakeDrop))<1e-9,'speed limit dropped for the warm-up') -- Affinage 1.63 : freinage franc
+ e.commands[1].speedLimit=K.unlimitedSpeed; Antics.launch(t,e,frame,at+Antics.AK.brakeTime+0.05)
  assert(e.commands[1].speedLimit==K.unlimitedSpeed,'short: released after the application')
  -- Voiture proche derrière : pas de freinage.
- local t2=Antics.new(); t2.active=true; row.count=1; row.back=1; row.neighbors[1]={index=1,long=-30,lat=0,gap=30}
+ local t2=Antics.new(); t2.active=true; row.count=1; row.back=1; row.neighbors[1]={index=1,long=-9.5,lat=0,gap=9.5} -- Affinage 1.63 : garde AK.brakeBehind (au-delà de la garde du zigzag, AK.weaveBehind)
  Antics.launch(t2,e,frame,0); Antics.launch(t2,e,frame,t2.brakeAt[1])
  assert(not (t2.brakeUntil[1]>t2.brakeAt[1]-K.formBrakeEveryMax-1),'no warm-up brake with a car close behind')
  -- Hors tour de formation : rien.

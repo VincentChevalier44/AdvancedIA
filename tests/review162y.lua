@@ -41,9 +41,12 @@ tests.GRID_PLAYER_WAIT_162Y=function()
  local t=e.incidents; t.standing='grid'; F.tick(e,f,0.1)
  F.place(f,2,slotZ(2),0); F.place(f,3,slotZ(3),0); F.tick(e,f,1/60)
  assert(e.grid.held[2] and e.grid.held[3] and t.standing=='grid','AI in place, player far away')
- F.tick(e,f,K.gridPlayerWait-1); assert(t.standing=='grid','player still has time')
- F.tick(e,f,1.5)
- assert(t.standing=='lights','lights after the player wait, long before the hard timeout')
+ -- Correctif 1.63 (Montréal : AC ramène à son stand une IA immobile depuis 12 s) : les feux n'attendent plus le joueur
+ -- au-delà de la limite d'immobilité de la première IA.
+ local GK=require('src/grid').GK; local lim=GK.stillMax-(K.lightStep*(K.gridLights-1)+K.lightsOutMin)-GK.lightsMargin
+ F.tick(e,f,lim-0.5); assert(t.standing=='grid','player still has a little time')
+ F.tick(e,f,0.7)
+ assert(t.standing=='lights','lights at the still limit, long before the hard timeout')
  assert(count(e,'joueur pas en place')==1,'journal says the player was not in place')
  assert(K.gridPlayerWait<K.gridMax,'player wait shorter than the hard timeout')
 end

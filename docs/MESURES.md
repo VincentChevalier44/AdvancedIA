@@ -1,25 +1,25 @@
 # Release measurements
 
-Released version: Beta 1.62. All strict PDR criteria accepted: **no**, open points below. These results are not a guarantee of in-game FPS.
+Released version: Beta 2.0.0. All strict PDR criteria accepted: **no**, open points below. These results are not a guarantee of in-game FPS.
 
-- Catalogue and checks: **1189/1189**, including the 78 PDR situations and the 10,000-step fuzz.
-- Integration: **175 cases**, status True.
-- Linter: 66 files, status True.
+- Catalogue and checks: **1454/1454**, including the 78 PDR situations and the 10,000-step fuzz.
+- Integration: **187 cases**, status True.
+- Linter: 71 files, status True.
 - Soak: 1,728,000 frames, 8 simulated hours, 40 AI, 0 errors.
-- Memory after collection: 8640.2 to 20517.2 KiB; drift 11877.0 KiB after the bench warm-up phase.
-- Strict bench memory criterion (<256 KiB over the whole window): **False**. Drift during the last hour: **51.3 KiB**. The total variation is kept even when the last hour is more stable.
-- Core at 30 AI: mean **0.478 ms**, P99 **0.777 ms**, raw maximum **5.966 ms** over 30,000 frames.
+- Memory after collection: 15136.8 to 17244.9 KiB; drift 2108.1 KiB after the bench warm-up phase.
+- Strict bench memory criterion (<256 KiB over the whole window): **False**. Drift during the last hour: **40.9 KiB**. The total variation is kept even when the last hour is more stable.
+- Core at 30 AI: mean **0.309 ms**, P99 **0.702 ms**, raw maximum **3.339 ms** over 30,000 frames.
 - Mean <0.3 ms: **False**. Maximum <1 ms: **False**.
 
 The maximum is not filtered. This benchmark includes neither the real SDK nor the UI. The kinematic tests do not certify the physical driving.
 
-Comparison with Beta 1.61: same load (track day, multi-class, weather), 30,000 frames measured after warm-up, independent VMs, no profiler, each version measured by its own bench on the same machine. Both benches enable the same JIT compiler cache as the app in the game (since Beta 1.40; the `compilateur JIT` log line confirms that CSP accepts it).
+Comparison with Beta 1.63: same load (track day, multi-class, weather), 30,000 frames measured after warm-up, independent VMs, no profiler, each version measured by its own bench on the same machine. Both benches enable the same JIT compiler cache as the app in the game (since Beta 1.40; the `compilateur JIT` log line confirms that CSP accepts it).
 
-| AI | Mean Beta 1.61 / Beta 1.62 (ms) | P99 Beta 1.61 / Beta 1.62 (ms) | Raw peak Beta 1.61 / Beta 1.62 (ms) |
+| AI | Mean Beta 1.63 / Beta 2.0.0 (ms) | P99 Beta 1.63 / Beta 2.0.0 (ms) | Raw peak Beta 1.63 / Beta 2.0.0 (ms) |
 |---|---|---|---|
-| 9 | 0.078 / 0.091 | 0.484 / 0.521 | 2.520 / 2.437 |
-| 30 | 0.378 / 0.485 | 0.770 / 0.822 | 2.214 / 33.660 |
-| 60 | 1.288 / 1.267 | 2.121 / 1.916 | 5.321 / 25.067 |
+| 9 | 0.074 / 0.082 | 0.359 / 0.360 | 1.883 / 2.396 |
+| 30 | 0.363 / 0.429 | 0.564 / 0.757 | 1.689 / 1.755 |
+| 60 | 0.950 / 1.126 | 1.302 / 1.720 | 2.468 / 3.130 |
 
 Run-to-run variability (10 to 40%) forbids turning these figures into a guaranteed FPS gain. The separate benchmark and the one after the soak have different VM histories and are shown separately.
 

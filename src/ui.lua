@@ -466,6 +466,9 @@ local function drawGroup(v,group,view,p,x,y,w,shown,lockedKey)
    local h=settingControl(v,control,view,p,x,y,w,lockedKey==s.key)
    local parent=D.dependsOn[s.key]
    if parent and p[parent]~=true and W.visible(y,h) then W.rect(x,y,w,h,c.veil) end
+   -- Affinage 1.64 i1 : fenêtre ouverte en jeu : réglage lu au lancement de la séance grisé (modifiable, effet à la
+   -- prochaine séance, dit dans la description de la section).
+   if v.ingame and C.nextSessionKeys[s.key] and W.visible(y,h) then W.rect(x,y,w,h,c.veil) end
    y=y+h
    -- Jaune natif du HUD remplacé par les panneaux lumineux : note sous sa ligne (maquette).
    if lockedKey==s.key then y=y+W.paragraph(L.yellowHudLocked,x+2,y+3,w-4,11,c.label)+8 end
@@ -832,9 +835,38 @@ end
 D.overlayContentKeys={'overlayEnabled','overlaySession','overlayExplain','overlayRecap'}
 D.overlayNativeKeys={'overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags'}
 D.overlayBehaviourKeys={'overlayClickThrough','overlayHideReplay','overlayHidePits'}
+-- Beta 1.64 : overlay par bureau d'applications d'AC (src/desktops.lua).
+D.desk=require('src/desktops')
 D.overlayResetKeys={'overlayX','overlayY','overlayScale','overlayLocked','overlayBackground','overlayContent','panelOpacity','panelShow','panelInfoTime',
  'overlayEnabled','overlaySession','overlayExplain','overlayRecap','overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags','cspMessagesLost',
- 'overlayClickThrough','overlayHideReplay','overlayHidePits'}
+ 'overlayClickThrough','overlayHideReplay','overlayHidePits','overlayDesk1','overlayDesk2','overlayDesk3','overlayDesk4','overlayLayout','overlayParts'}
+-- Affinage 1.64 u2 (demande du pilote : chaque élément de l'overlay affiché sur un bureau et pas sur un autre, à sa place) :
+-- une ligne par élément : interrupteur « sur ce bureau » et bouton « Replacer » (affiché, à sa place par défaut) ;
+-- « Tout replacer sur ce bureau » en dessous. Bureau illisible : message seulement. Renvoie le y suivant.
+D.elementRows=function(v,g,desk,prefix,x,y,w,heading)
+ if heading then
+  if W.visible(y,24) then W.heading(desk and string.format(D.desk.text(g,'partsDesk'),desk) or D.desk.text(g,'parts'),x,y,w) end
+  y=y+30
+ end
+ if desk==nil then
+  if heading and W.visible(y,24) then y=y+4+W.message(D.desk.text(g,'partsUnknown'),x,y+4,w,'mut')+4 end
+  return y
+ end
+ if v.partsTipLang~=g.language then v.partsTipLang=g.language; v.partsTip=wrap(D.desk.text(g,'partsTip')); v.partsResetTip=wrap(D.desk.text(g,'resetTip')) end
+ local bw=math.min(110,math.max(70,w*0.28))
+ for _,el in ipairs(D.desk.elements) do
+  local on=D.desk.shown(g,desk,el)
+  local moved=el=='panel' and D.desk.layout(g,desk).x>=0 or el~='panel' and D.desk.place(g,desk,el)~=nil
+  if not heading or W.visible(y,28) then
+   local clicked,right=W.toggle(prefix..el,D.desk.text(g,el),x,y,w-bw-8,on,v.partsTip,false,not on or moved)
+   if clicked then D.desk.setShown(g,desk,el,not on); v.dirty()
+   elseif right then D.desk.resetElement(g,desk,el); v.dirty() end
+   if W.button(prefix..'reset_'..el,D.desk.text(g,'reset'),x+w-bw,y,bw,24,false,v.partsResetTip) then D.desk.resetElement(g,desk,el); v.dirty() end
+  end
+  y=y+28
+ end
+ return y+4
+end
 local backgroundKeys=C.globalChoices.overlayBackground
 local function switchList(v,g,keys,titles,x,y,w)
  if W.visible(y,24) then W.heading(titles[1],x,y,w,titles[2]) end
@@ -905,6 +937,20 @@ local function overlayBlock(v,e,x,y,w)
  if cspText then yr=yr+4+W.message(cspText,rx,yr+4,cw,cspKind)+4 end
  yr=yr+8
  yr=switchList(v,g,D.overlayBehaviourKeys,L.subgroups.overlayBehaviour,rx,yr,cw)
+ -- Beta 1.64 : overlay affiché ou masqué sur chaque bureau d'applications d'AC ; bureau actuel signalé.
+ yr=yr+8
+ if W.visible(yr,24) then W.heading(D.desk.text(g,'title'),rx,yr,cw,D.desk.text(g,'subtitle')) end
+ yr=yr+30
+ local deskNow=D.desk.current(Adapter.desktop())
+ if v.deskTipLang~=g.language then v.deskTipLang=g.language; v.deskTip=wrap(D.desk.text(g,'tip')) end
+ for n=1,D.desk.count do
+  if W.visible(yr,28) then globalSwitch(v,g,'overlay_desk_'..n,D.desk.keys[n],string.format(D.desk.text(g,n==deskNow and 'current' or 'label'),n),rx,yr,cw,v.deskTip) end
+  yr=yr+28
+ end
+ if deskNow==nil and W.visible(yr,24) then yr=yr+4+W.message(D.desk.text(g,'unknown'),rx,yr+4,cw,'mut')+4 end
+ -- Affinage 1.64 u2 : éléments de l'overlay affichés ou masqués et replacés, sur ce bureau seulement.
+ yr=yr+8
+ yr=D.elementRows(v,g,deskNow,'overlay_el_',rx,yr,cw,true)
  y=math.max(yl,yr)+10
  -- Panneaux lumineux du circuit : réglés dans leur section (Beta 1.37), une ligne y mène.
  if W.visible(y,24) then
@@ -1850,7 +1896,7 @@ local function sectionPane(v,e,group,view,p,opts)
  if group=='overlay' then
   local g=e.g; local bw=(iw-6)/2
   if W.button('overlay_lock',g.overlayLocked and L.overlayUnlock or L.overlayLock,ix,y,bw,28,not g.overlayLocked,v.globalTips.overlayLocked,g.overlayLocked and 'primary' or nil) then g.overlayLocked=not g.overlayLocked; v.dirty() end
-  if W.button('overlay_recenter',L.overlayRecenter,ix+bw+6,y,bw,28,false,v.tips.ui.overlayRecenter) then g.overlayX=-1; g.overlayY=-1; g.overlayScale=1; v.dirty() end
+  if W.button('overlay_recenter',L.overlayRecenter,ix+bw+6,y,bw,28,false,v.tips.ui.overlayRecenter) then D.recenter(g,D.desk.current(Adapter.desktop())); v.dirty() end
   y=y+34
   if not g.overlayLocked then y=y+W.message(L.overlayHint,ix,y,iw,'ok')+6 end
  end
@@ -1910,6 +1956,7 @@ local function settingsTab(v,e)
  -- Overlay : toujours actif, puce « Active » (Beta 1.38, maquette).
  o.state=sectionOn and L.chipSectionOn or L.chipSectionOff; o.stateKind=sectionOn and 'g' or 'a'
  o.modified=group~='overlay' and group~='globals' and modifiedCount(v,group,view,p) or 0
+ if v.ingame and D.hasNextSession(group) then o.description=(v.descriptions[group] or '')..' '..L.ingameNextSession end
  sectionPane(v,e,group,view,p,o)
 end
 -- Ligne de la colonne de gauche de l'onglet Règles de course : le titre affiche ses réglages à droite (surligné), seul
@@ -2341,9 +2388,69 @@ local function windowSetup(v)
  v.updateVersions=nil; v.updateHeaderFor=nil; v.updateAlertFor=nil; v.updateReportFor=nil; v.rollbackFor=nil; v.flashFor=nil; v.cspFor=nil; v.journalFor=nil; v.perfFor=nil
  v.scaleFor=nil; v.opacityFor=nil; v.contentFor=nil; v.infoFor=nil; v.seedFor=nil; v.gripFor=nil; v.guardKind=nil
 end
+-- Affinage 1.64 i1 (décision du pilote) : fenêtre ouverte en jeu (barre des apps d'AC) : vue compacte (profil et
+-- préréglage, IA gérées et état, drapeau en cours, overlay, vue complète) ; un onglet cliqué ouvre la vue complète.
+-- Fonctions rangées dans D (limite des valeurs locales du test statique LuaJIT).
+D.nextSessionGroups={}
+D.hasNextSession=function(group)
+ local known=D.nextSessionGroups[group]
+ if known==nil then
+  known=false
+  for key in pairs(C.nextSessionKeys) do for _,s in ipairs(C.schema) do if s.key==key and s.group==group then known=true end end end
+  D.nextSessionGroups[group]=known
+ end
+ return known
+end
+D.compactRow=function(label,value,x,y,w,col)
+ W.label(label,x,y+2)
+ W.cell(value,x+150,y,w-160,13,col,'cond')
+ return y+24
+end
+D.compactView=function(v,e)
+ local c=W.colors(); local fw,fh=W.frame().w,W.frame().h
+ local x,y,w=PAD,HEADER+10,fw-2*PAD
+ W.panel(x,y,w,fh-12-y)
+ local cx,cw=x+12,w-24
+ y=y+12
+ W.text(L.ingameTitle,cx,y,14,c.text,'display'); y=y+26
+ y=D.compactRow(L.ingameProfile,L.profiles[e.profile] or tostring(e.profile),cx,y,cw,c.text)
+ y=D.compactRow(L.ingamePreset,v.loadedName or '-',cx,y,cw,c.text)
+ local key=stateKey(e)
+ y=D.compactRow(L.ingameAI,string.format(L.ingameAIValue,aiCars(e),L.pillStates[key] or key),cx,y,cw,key=='ready' and c.ok or c.text)
+ local panel=e.panel
+ local flag=panel and panel.title~=nil and panel.title~='' and panel.title or L.ingameNoFlag
+ y=D.compactRow(L.ingameFlag,flag,cx,y,cw,c.text)
+ y=y+8; W.rect(cx,y,cw,1,c.ruleSoft); y=y+10
+ local overlayOn=e.g.overlayEnabled~=false
+ if W.switch('ingame_overlay',cx,y+2,overlayOn,v.ingameTips.overlay) then e.g.overlayEnabled=not overlayOn; v.dirty() end
+ W.text(L.ingameOverlay,cx+40,y+3,12,c.text,'cond'); y=y+30
+ -- Affinage 1.64 t1 : overlay sur ce bureau d'AC, déplacer ou verrouiller, replacer sur ce bureau.
+ local desk=D.desk.current(Adapter.desktop())
+ if desk~=nil then
+  local key=D.desk.keys[desk]; local on=e.g[key]~=false
+  if W.switch('ingame_desk',cx,y+2,on,v.ingameTips.desk) then e.g[key]=not on; v.dirty() end
+  W.text(string.format(L.ingameDesk,desk),cx+40,y+3,12,c.text,'cond'); y=y+30
+  -- Affinage 1.64 u2 : chaque élément de l'overlay sur ce bureau (affiché ou masqué, replacé).
+  y=D.elementRows(v,e.g,desk,'ingame_el_',cx,y,cw,false)
+ end
+ local bw=math.min((cw-8)/2,220)
+ if W.button('ingame_move',e.g.overlayLocked and L.ingameMove or L.ingameLock,cx,y,bw,26,not e.g.overlayLocked,v.ingameTips.move,e.g.overlayLocked and nil or 'primary') then e.g.overlayLocked=not e.g.overlayLocked; v.dirty() end
+ if W.button('ingame_recenter',L.ingameRecenter,cx+bw+8,y,bw,26,false,v.ingameTips.recenter) then D.recenter(e.g,desk); v.dirty() end
+ y=y+36
+ if W.button('ingame_full',L.ingameFull,cx,y,math.min(cw,220),26,false,v.ingameTips.full,'primary') then v.ingameFull=true end
+ y=y+36
+ W.paragraph(L.ingameNote,cx,y,cw,11,c.label)
+end
 local function drawWindow(v,e,host)
  windowSetup(v)
- headerBar(v,e)
+ if v.ingame and not v.ingameFull then
+  v.ingameTips=v.ingameTips or {overlay=wrap(L.ingameOverlayTip),full=wrap(L.ingameFullTip),desk=wrap(D.desk.text(e.g,'tip')),move=wrap(L.overlayHint),recenter=v.tips.ui.overlayRecenter}
+  local tab=v.tab
+  headerBar(v,e)
+  if v.tab~=tab then v.ingameFull=true else D.compactView(v,e); return end
+ else
+  headerBar(v,e)
+ end
  if v.tab=='home' then homeTab(v,e,host)
  elseif v.tab=='settings' then settingsTab(v,e)
  elseif v.tab=='rules' then rulesTab(v,e)
@@ -2408,10 +2515,10 @@ local function panelPalette(alpha)
  end
  return panelColors
 end
-D.flagColors={lap='pit',red='red',sc='yellow',scIn='yellow',fcy='yellow',vsc='yellow',vscEnd='yellow',restart='green',yellow='yellow',zone='yellow',zone1='yellow',native='yellow',blue='blue',green='green',pit='pit',slippery='yellow',black='ink',penalty='ink',checkered='ink',white='pit',
+D.flagColors={countdown='yellow',resumeGo='green',lap='pit',red='red',sc='yellow',scIn='yellow',fcy='yellow',vsc='yellow',vscEnd='yellow',restart='green',yellow='yellow',zone='yellow',zone1='yellow',slowWarn='yellow',native='yellow',blue='blue',green='green',pit='pit',slippery='yellow',black='ink',penalty='ink',checkered='ink',white='pit',
  slow='pit',warning='ink',meatball='orange',update='accent',rolling='yellow',standing='yellow',lights='yellow',go='green',jump='red',start='green',finish='pit'}
 -- Sigle inscrit dans le drapeau (rouge, bleu et vert parlent d'eux-mêmes) ; double jaune : « !! ».
-D.flagCodes={fcy='FCY',yellow='!',zone='!!',zone1='!',native='!',pit='P'}
+D.flagCodes={fcy='FCY',yellow='!',zone='!!',zone1='!',slowWarn='!',native='!',pit='P'}
 -- Pastille de lettres (cadre et lettres jaunes sur fond noir) : voiture de sécurité, VSC, départ lancé ou arrêté, feux.
 D.badgeCodes={sc='SC',scIn='SC',vsc='VSC',vscEnd='VSC',rolling='RS',standing='SS'}
 -- Points réutilisés (src/widgets) et cadres de texte réutilisés : aucune table ni point neufs à chaque image ; chaque
@@ -2675,6 +2782,8 @@ local parts={}
 local aiFree={green=true,start=true,lap=true,update=true}
 function M.overlayParts(v,force)
  local e=v.e; local g=e.g; local panel=e.panel; local now=e.time; local hud=e.hud
+ -- Affinage 1.64 u2 : éléments dessinés par la fenêtre en cours (D.only) ; par défaut, tout.
+ parts.drawBand=true; parts.ghostInfo=false; parts.ghostPills=false
  -- Beta 1.59 : overlay coupé : rien, dans tous les cas (drapeaux, pénalités, récapitulatif, avis, overlay déverrouillé),
  -- dès que CSP ne masque plus les affichages d'AC. Tant qu'il les masque encore (gui.ini pas relu, plafond d'écritures,
  -- fichier en lecture seule) : drapeaux et pénalités du jeu, messages d'AC, rien d'autre (sinon personne ne les dessine).
@@ -2718,9 +2827,9 @@ end
 function M.overlayHeight(p)
  local h=K.hudPad
  if p.strip then h=h+K.hudStripH end
- if p.band then h=h+K.hudBandH end
- if p.lines>0 then h=h+p.lines*K.hudExplainLine+6 end
- if p.pills then h=h+K.hudPillH+4 end
+ if p.band and p.drawBand~=false then h=h+K.hudBandH end
+ if p.lines>0 then h=h+p.lines*K.hudExplainLine+6 elseif p.ghostInfo then h=h+2*K.hudExplainLine+6 end
+ if p.pills or p.ghostPills then h=h+K.hudPillH+4 end
  return h
 end
 -- Ligne de session (bandeau) : libellé discret, valeur en chiffres alignés, de gauche à droite tant qu'il y a
@@ -2777,6 +2886,7 @@ end
 local function flags(v,force)
  local e=v.e; local panel=e.panel; local g=e.g; local now=e.time
  local p=M.overlayParts(v,force)
+ if p then p=D.only(v,p) end
  if not p then return 0 end
  local alpha=(g.overlayContent or 100)/100
  local colors=panelPalette(alpha)
@@ -2821,6 +2931,9 @@ local function flags(v,force)
  local dark=kind=='black' or kind=='penalty' or kind=='checkered' or kind=='warning' or kind=='ai' and hud.aiBlack
  local accent=dark and (flashing and not blink and back or colors.text) or shown
  -- Bande d'accent (3 px à l'échelle, couleur du drapeau) tout en haut de l'overlay, jusqu'au coin coupé, sous les textes.
+ -- Affinage 1.64 u2 : panneau des drapeaux masqué ou placé ailleurs sur ce bureau : géométrie gardée (explication et
+ -- pastilles s'alignent dessus), rien dessiné.
+ if p.drawBand~=false then
  local a=l.accent
  ui.drawRectFilled(pv(a[1],a[2]),pv(math.max(1,a[3]-12*u),a[4]),accent,0)
  local f=l.flag
@@ -2854,7 +2967,8 @@ local function flags(v,force)
   startLights(colors,r,kind=='lights' and (panel.lit or 0) or 0)
  end
  if l.detail then font('body',true); write(short,fitSize(short,l.fontDetail,l.detail[3]-l.detail[1]),l.detail,kind=='lap' and panel.lapRecord and colors.best or kind~='ai' and panel.finish and colors.text or colors.dim,START); font('body',false) end
- y=bandTop+K.hudBandH*u
+ end
+ y=bandTop+(p.drawBand~=false and K.hudBandH*u or 0)
  -- Explication de ce qui se passe, ou récapitulatif de course (une ligne par élément), alignées sur le titre.
  if p.lines>0 then
   local x1=l.title[1]; local right=w-K.hudPad*u; local lineH=K.hudExplainLine*u
@@ -2867,6 +2981,15 @@ local function flags(v,force)
    font('body',true); write(panel.explain,11.5*u,box(R1,x1,y,right,y+2*lineH),colors.dim,START,true); font('body',false); y=y+2*lineH
   end
   y=y+6*u
+ elseif p.ghostInfo then
+  -- Overlay déverrouillé : place de l'explication montrée (vide), pour la glisser à part.
+  local lineH=K.hudExplainLine*u
+  D.ghost(v,colors,box(R1,l.flag[1],y,w-K.hudPad*u,y+2*lineH),'info',u)
+  y=y+2*lineH+6*u
+ end
+ if p.ghostPills and not p.pills then
+  D.ghost(v,colors,box(R1,l.flag[1],y,w-K.hudPad*u,y+K.hudPillH*u),'pills',u)
+  y=y+K.hudPillH*u+4*u
  end
  if p.pills then
   local row=box(ROW,l.flag[1],y,w-K.hudPad*u,y+K.hudPillH*u)
@@ -2914,43 +3037,157 @@ local function nativeBox(v,hide)
 end
 function M.restoreNative(v) if v.sessionBoxHidden then nativeBox(v,false) end end
 local function screenSize() return Adapter.screen() or vec2(1920,1080) end
--- Contenu de la fenêtre transparente, puis, déverrouillée : glisser pour déplacer, coin bas droit pour la taille,
--- clic droit pour verrouiller ; verrouillée sans clics traversants : clic droit pour déverrouiller.
-local function hudContent(v)
+-- Affinage 1.64 t1 (demande du pilote : placer l'overlay à un endroit différent sur chaque bureau d'AC) : partie dessinée
+-- par une fenêtre ('band' : panneau des drapeaux sans la ligne de session ; 'strip' : ligne de session seule ; nil : tout).
+-- Affinage 1.64 u2 : v.hudOnly : éléments de cette fenêtre ({line,panel,info,pills}, nil : tout) ; v.hudGhost : overlay
+-- déverrouillé, place vide montrée pour l'explication et les pastilles (à glisser à part). Rien à dessiner : nil.
+D.only=function(v,p)
+ local want=v.hudOnly
+ if want==nil then return p end
+ p.strip=p.strip and want.line==true or false
+ p.drawBand=p.band and want.panel==true or false
+ if not want.info then p.lines=0; p.recap=false end
+ if not want.pills then p.pills=false end
+ p.ghostInfo=v.hudGhost==true and want.info==true and p.band and p.lines==0 or false
+ p.ghostPills=v.hudGhost==true and want.pills==true and p.band and not p.pills or false
+ if not (p.strip or p.drawBand or p.lines>0 or p.pills or p.ghostInfo or p.ghostPills) then return nil end
+ return p
+end
+-- Place vide d'un élément (overlay déverrouillé) : cadre fin et nom de l'élément.
+D.ghost=function(v,colors,r,element,u)
+ if callable(ui.drawRect) then ui.drawRect(pv(r[1],r[2]),pv(r[3],r[4]),colors.dim,0,nil,1) end
+ local name=D.desk.text(v.e.g,element) or element
+ font('body',true); write(string.format(D.desk.text(v.e.g,'ghost'),name),10*u,box(R2,r[1]+6*u,r[2],r[3]-6*u,r[4]),colors.dim,START); font('body',false)
+end
+-- Hauteurs (unités de référence) des parties d'une fenêtre : ligne, panneau, explication, pastilles ; même calcul que
+-- M.overlayHeight après D.only.
+D.heights=function(p,want,ghost)
+ local line=want.line and p.strip and K.hudStripH or 0
+ local band=want.panel and p.band and K.hudBandH or 0
+ local info=0
+ if want.info then
+  if p.lines>0 then info=p.lines*K.hudExplainLine+6 elseif ghost and p.band then info=2*K.hudExplainLine+6 end
+ end
+ local pills=want.pills and (p.pills or ghost and p.band) and K.hudPillH+4 or 0
+ return line,band,info,pills
+end
+-- Recentrer sur ce bureau seulement : les autres bureaux qui suivaient la position globale d'avant la gardent.
+D.recenter=function(g,desk)
+ if desk~=nil and (g.overlayX>=0 or g.overlayY>=0) then
+  for n=1,D.desk.count do
+   local l=D.desk.layout(g,n)
+   if n~=desk and l.x<0 and l.y<0 then D.desk.setLayout(g,n,g.overlayX,g.overlayY,l.sx,l.sy) end
+  end
+ end
+ if desk~=nil then D.desk.setLayout(g,desk,nil); D.desk.resetParts(g,desk) end
+ g.overlayX=-1; g.overlayY=-1; g.overlayScale=1
+end
+-- Affinage 1.64 u2 : fenêtres des éléments détachés (nom de fenêtre et contenu).
+D.apartIds={line='AdvancedIA_overlay_line',info='AdvancedIA_overlay_info',pills='AdvancedIA_overlay_pills'}
+D.apartWant={line={line=true},info={info=true},pills={pills=true}}
+-- Contenu d'une fenêtre transparente de l'overlay, puis, déverrouillée : glisser pour déplacer, coin bas droit pour la
+-- taille (panneau seulement), clic droit pour verrouiller ; verrouillée sans clics traversants : clic droit pour
+-- déverrouiller. Attachée, sur un bureau connu, la ligne de session se détache en la glissant.
+local function hudContent(v,win)
  local g=v.e.g
+ v.hudOnly=win.only; v.hudGhost=not g.overlayLocked and win.desk~=nil
  M.flags(v,not g.overlayLocked)
- local w,h=v.hudW,v.hudH
+ v.hudOnly=nil; v.hudGhost=nil
+ local w,h=win.w,win.h
  if not g.overlayLocked then
   local hw=K.hudHandle*g.overlayScale
-  ui.setCursor(vec2(0,0)); ui.invisibleButton('##aai_overlay_move',vec2(w,math.max(1,h-hw)))
+  local sizable=win.key=='main'
+  local top=0
+  local detach=sizable and win.desk~=nil and win.lineH~=nil and win.lineH>0 and win.lineH<h-hw
+  local lineMoving,lock=false,false
+  if detach then
+   ui.setCursor(vec2(0,0)); ui.invisibleButton('##aai_overlay_line',vec2(w,win.lineH)); top=win.lineH
+   lineMoving=ui.itemActive()
+   lock=ui.itemHovered() and ui.mouseClicked(1)
+  end
+  -- Affinage 1.64 u2 : explication et pastilles attachées sous le panneau : glissées, elles deviennent une fenêtre à part
+  -- sur ce bureau (le panneau ne bouge pas). Zones à gauche de la poignée de taille.
+  local zoneMoving=nil; local bottom=h
+  if sizable and win.desk~=nil and win.zoneCount>0 and win.zones then
+   for k=1,win.zoneCount do local z=win.zones[k]; if z.y0<bottom then bottom=z.y0 end end
+   for k=1,win.zoneCount do
+    local z=win.zones[k]
+    ui.setCursor(vec2(0,z.y0)); ui.invisibleButton('##aai_overlay_'..z.key,vec2(math.max(1,w-hw),math.max(1,z.y1-z.y0)))
+    if ui.itemActive() then zoneMoving=z end
+    lock=lock or ui.itemHovered() and ui.mouseClicked(1)
+   end
+  end
+  local id=win.key=='main' and '##aai_overlay_move' or win.key=='line' and '##aai_line_move' or '##aai_'..win.key..'_move'
+  local moveBottom=sizable and bottom>=h and h-hw or bottom
+  ui.setCursor(vec2(0,top)); ui.invisibleButton(id,vec2(w,math.max(1,moveBottom-top)))
   local moving=ui.itemActive()
-  local lock=ui.itemHovered() and ui.mouseClicked(1)
-  ui.setCursor(vec2(0,math.max(0,h-hw))); ui.invisibleButton('##aai_overlay_move2',vec2(math.max(1,w-hw),hw))
-  moving=moving or ui.itemActive()
   lock=lock or ui.itemHovered() and ui.mouseClicked(1)
-  ui.setCursor(vec2(math.max(0,w-hw),math.max(0,h-hw))); ui.invisibleButton('##aai_overlay_size',vec2(hw,hw))
-  local sizing=ui.itemActive()
-  if moving or sizing then
+  local sizing=false
+  if sizable then
+   if bottom>=h then
+    ui.setCursor(vec2(0,math.max(0,h-hw))); ui.invisibleButton('##aai_overlay_move2',vec2(math.max(1,w-hw),hw))
+    moving=moving or ui.itemActive()
+    lock=lock or ui.itemHovered() and ui.mouseClicked(1)
+   end
+   ui.setCursor(vec2(math.max(0,w-hw),math.max(0,h-hw))); ui.invisibleButton('##aai_overlay_size',vec2(hw,hw))
+   sizing=ui.itemActive()
+  end
+  if moving or sizing or lineMoving or zoneMoving then
    local d=ui.mouseDelta()
-   if moving then g.overlayX=v.hudX+d.x; g.overlayY=v.hudY+d.y end
+   local l=D.desk.layout(g,win.desk)
+   if lineMoving then
+    -- Ligne de session glissée : détachée sur ce bureau, le panneau reste où il était.
+    D.desk.setLayout(g,win.desk,win.x,win.y+win.lineH,win.x+d.x,win.y+d.y)
+   elseif zoneMoving then
+    D.desk.setPlace(g,win.desk,zoneMoving.key,win.x+d.x,win.y+zoneMoving.y0+d.y)
+   elseif moving then
+    if win.desk==nil then g.overlayX=win.x+d.x; g.overlayY=win.y+d.y
+    elseif win.key=='line' then D.desk.setLayout(g,win.desk,l.x,l.y,win.x+d.x,win.y+d.y)
+    elseif win.key~='main' then D.desk.setPlace(g,win.desk,win.key,win.x+d.x,win.y+d.y)
+    else D.desk.setLayout(g,win.desk,win.x+d.x,win.y+d.y,l.sx,l.sy) end
+   end
    if sizing then
     local k=math.abs(d.x)>=math.abs(d.y) and d.x/w or d.y/h
     local bounds=C.globalBounds.overlayScale
-    g.overlayScale=U.clamp(g.overlayScale*(1+k),bounds[1],bounds[2]); g.overlayX=v.hudX; g.overlayY=v.hudY
+    g.overlayScale=U.clamp(g.overlayScale*(1+k),bounds[1],bounds[2])
+    if win.desk==nil then g.overlayX=win.x; g.overlayY=win.y else D.desk.setLayout(g,win.desk,win.x,win.y,l.sx,l.sy) end
    end
-   v.hudMoved=true
-  elseif v.hudMoved then v.hudMoved=false; C.validateGlobals(g,g); v.dirty() end
+   v.hudMoved=true; v.hudMovedFrame=true
+  end
   if lock then g.overlayLocked=true; v.dirty() end
   -- Décor déverrouillé : cadre et poignée de taille cyan, consigne en capitales.
   local c=W.colors()
   if callable(ui.drawRect) then ui.drawRect(vec2(0,0),vec2(w,h),c.cyan,0,nil,1.5) end
-  if callable(ui.drawTriangleFilled) then ui.drawTriangleFilled(vec2(w,h-hw),vec2(w,h),vec2(w-hw,h),c.cyan) end
-  font('cond',true); write(L.hudUnlocked,10*g.overlayScale,box(R1,0,h-hw,math.max(1,w-hw-4),h),c.cyan,FINISH); font('cond',false)
+  if detach and callable(ui.drawLine) then ui.drawLine(vec2(0,win.lineH),vec2(w,win.lineH),c.cyan,1) end
+  if sizable and win.zones and callable(ui.drawLine) then for k=1,win.zoneCount do ui.drawLine(vec2(0,win.zones[k].y0),vec2(w,win.zones[k].y0),c.cyan,1) end end
+  if sizable then
+   if callable(ui.drawTriangleFilled) then ui.drawTriangleFilled(vec2(w,h-hw),vec2(w,h),vec2(w-hw,h),c.cyan) end
+   font('cond',true); write(L.hudUnlocked,10*g.overlayScale,box(R1,0,h-hw,math.max(1,w-hw-4),h),c.cyan,FINISH); font('cond',false)
+  end
  elseif callable(ui.windowHovered) and ui.windowHovered() and ui.mouseClicked(1) then g.overlayLocked=false; v.dirty() end
+end
+-- Une fenêtre transparente de l'overlay (état gardé d'une image à l'autre : aucun point créé à chaque image).
+local function hudWindow(v,key,id,only,x,y,w,h,desk,lineH,zones,zoneCount)
+ local g=v.e.g; local screen=screenSize()
+ x=U.clamp(x,0,math.max(0,screen.x-w)); y=U.clamp(y,0,math.max(0,screen.y-h))
+ v.hudWins=v.hudWins or {}
+ local win=v.hudWins[key]
+ if not win then
+  win={key=key,pos=vec2(x,y),size=vec2(w,h),zoneCount=0}
+  win.draw=function() local ok,err=pcall(hudContent,v,win); v.hudOnly=nil; v.hudGhost=nil; fontRelease(); if not ok then error(err,0) end end
+  v.hudWins[key]=win
+ end
+ win.only=only; win.x=x; win.y=y; win.w=w; win.h=h; win.desk=desk; win.lineH=lineH
+ win.zones=zones; win.zoneCount=zones and zoneCount or 0
+ win.pos.x=x; win.pos.y=y; win.size.x=w; win.size.y=h
+ if key=='main' then v.hudX=x; v.hudY=y; v.hudW=w; v.hudH=h end
+ ui.transparentWindow(id,win.pos,win.size,true,not g.overlayLocked or not g.overlayClickThrough,win.draw)
+ return win
 end
 -- Overlay en jeu (Beta 1.25) : fenêtre transparente dessinée par l'app (rappel IN_GAME du
 -- manifeste), à la position et à l'échelle réglées (position automatique : centrée, en haut), gardée dans l'écran ;
 -- masquée en rediffusion ou aux stands si réglé. Clics traversants une fois verrouillée (réglage).
+-- Affinage 1.64 t1 : position gardée par bureau d'AC ; la ligne de session peut être détachée et placée à part.
 function M.hud(v)
  local e=v.e; local g=e.g
  -- Bandeau « en ligne » masqué par « Compris » : remis dès que la garde change, fenêtre fermée comprise.
@@ -2958,21 +3195,58 @@ function M.hud(v)
  fontsOnce(v)
  if not callable(ui.transparentWindow) then nativeBox(v,false); return end
  local frame=e.frame; local player=frame and frame.player>0 and frame.cars[frame.player] or nil
+ local desk=D.desk.current(Adapter.desktop())
  local hidden=not frame or frame.replay and g.overlayHideReplay or g.overlayHidePits and player~=nil and player.pit
+ -- Beta 1.64 : bureau d'applications d'AC où l'overlay est masqué : rien n'est dessiné (le moteur continue).
+    or not D.desk.visible(g,desk)
  local unlocked=not g.overlayLocked
  local p=not hidden and M.overlayParts(v,unlocked) or nil
- nativeBox(v,not hidden and g.overlayEnabled~=false and g.overlayNativeBox and g.overlaySession)
+ nativeBox(v,not hidden and g.overlayEnabled~=false and g.overlayNativeBox and g.overlaySession and D.desk.shown(g,desk,'line'))
+ v.hudMovedFrame=false
  if not p then return end
- local s=g.overlayScale; local w=K.hudWidth*s; local h=M.overlayHeight(p)*s
+ local s=g.overlayScale; local w=K.hudWidth*s
  local screen=screenSize()
- local x=g.overlayX>=0 and g.overlayX or (screen.x-w)*0.5
- local y=g.overlayY>=0 and g.overlayY or screen.y*K.hudTop
- x=U.clamp(x,0,math.max(0,screen.x-w)); y=U.clamp(y,0,math.max(0,screen.y-h))
- v.hudX=x; v.hudY=y; v.hudW=w; v.hudH=h
- -- Polices dépilées dans la fenêtre qui les a poussées, même après une erreur (renvoyée ensuite).
- if not v.hudDraw then v.hudDraw=function() local ok,err=pcall(hudContent,v); fontRelease(); if not ok then error(err,0) end end end
- -- Position et taille gardées d'une image à l'autre (Beta 1.36 : aucun point créé à chaque image).
- if v.hudPos then v.hudPos.x=x; v.hudPos.y=y; v.hudSize.x=w; v.hudSize.y=h else v.hudPos=vec2(x,y); v.hudSize=vec2(w,h) end
- ui.transparentWindow('AdvancedIA_overlay',v.hudPos,v.hudSize,true,unlocked or not g.overlayClickThrough,v.hudDraw)
+ local l=D.desk.layout(g,desk)
+ local x=l.x>=0 and l.x or g.overlayX>=0 and g.overlayX or (screen.x-w)*0.5
+ local y=l.y>=0 and l.y or g.overlayY>=0 and g.overlayY or screen.y*K.hudTop
+ -- Affinage 1.64 u2 : chaque élément affiché ou masqué et placé par bureau ; la fenêtre principale porte le panneau et
+ -- les éléments attachés, chaque élément détaché a sa fenêtre (rien dessiné deux fois). Bureau inconnu : tout, comme avant.
+ local main=v.hudMain; if not main then main={}; v.hudMain=main end
+ local ghost=unlocked and desk~=nil
+ local apart=v.hudApart; if not apart then apart={}; v.hudApart=apart end
+ for _,el in ipairs(D.desk.elements) do
+  local shown=D.desk.shown(g,desk,el)
+  local px,py=nil,nil
+  if el~='panel' and shown then px,py=D.desk.place(g,desk,el) end
+  main[el]=shown and px==nil
+  local a=apart[el]; if not a then a={}; apart[el]=a end
+  a.on=px~=nil; a.x=px or 0; a.y=py or 0
+ end
+ -- Hauteurs calculées avant tout dessin (chaque fenêtre refait ses parties dans la table partagée).
+ for _,el in ipairs(D.desk.elements) do
+  local a=apart[el]; a.h=0
+  if a.on then local lu,bu,iu,pu=D.heights(p,D.apartWant[el],ghost); a.h=lu+bu+iu+pu end
+ end
+ local lineU,bandU,infoU,pillsU=D.heights(p,main,ghost)
+ if lineU+bandU+infoU+pillsU>0 then
+  local h=(K.hudPad+lineU+bandU+infoU+pillsU)*s
+  local lineH=lineU>0 and bandU+infoU+pillsU>0 and (K.hudPad*0.5+K.hudStripH)*s or nil
+  -- Zones de l'explication et des pastilles attachées (déverrouillé, bureau connu) : à glisser à part.
+  local zones=v.hudZones; if not zones then zones={{},{}}; v.hudZones=zones end
+  local n=0
+  if unlocked and desk~=nil then
+   local yz=(K.hudPad*0.5+lineU+bandU)*s
+   if infoU>0 then n=n+1; local z=zones[n]; z.key='info'; z.y0=yz; z.y1=yz+infoU*s; yz=z.y1 end
+   if pillsU>0 then n=n+1; local z=zones[n]; z.key='pills'; z.y0=yz; z.y1=yz+pillsU*s end
+  end
+  hudWindow(v,'main','AdvancedIA_overlay',main,x,y,w,h,desk,lineH,zones,n)
+ end
+ -- Éléments détachés sur ce bureau : chacun dans sa fenêtre, à sa place.
+ for _,el in ipairs(D.desk.elements) do
+  local a=apart[el]
+  if a.on and a.h>0 then hudWindow(v,el,D.apartIds[el],D.apartWant[el],a.x,a.y,w,(K.hudPad+a.h)*s,desk,nil) end
+ end
+ -- Glisser fini (aucune fenêtre déplacée à cette image) : réglages validés et enregistrés une fois.
+ if v.hudMoved and not v.hudMovedFrame then v.hudMoved=false; C.validateGlobals(g,g); v.dirty() end
 end
 return M

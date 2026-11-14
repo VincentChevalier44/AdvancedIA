@@ -20,6 +20,36 @@ local K=require('src/config').K
 local Antics=require('src/antics')
 local max=math.max
 local M={}
+-- Correctif 1.63 (Montréal, 12 novembre : toute la grille « ramenee aux stands par AC (a l arret depuis 12 s) », le
+-- joueur seul sur la grille) : AC renvoie à son stand une IA immobile depuis environ 12 s. Aucune IA ne reste donc
+-- immobile plus de GK.stillMax s avant l'extinction : les feux s'allument au plus tard GK.stillMax - (séquence des
+-- feux) - GK.lightsMargin s après la première IA immobilisée (joueur en place ou non : il est jugé comme d'habitude), et
+-- l'extinction ne dépasse jamais GK.stillMax s après elle. Tant que des voitures sont encore loin de leur place (plus de
+-- GK.creepSpread m), une IA qui arrive près de la sienne (GK.creepZone m) s'en approche au pas (GK.creepKmh km/h) au lieu
+-- de s'y arrêter tôt.
+local GK={stillMax=10,lightsMargin=0.5,creepZone=25,creepKmh=5,creepSpread=25,stillMaxGuarded=40,waitFirstGuarded=30,
+ -- Affinage 1.63 (Imola, 13 novembre : « feux apres 61 s de grille, premiere IA immobile depuis 30.0 s (8 / 22 IA en
+ -- place) » : avec la protection, la première IA n'était retenue qu'après 31 s, toute la file avançant au pas derrière
+ -- les IA déjà près de leur place) : protection active (M.retireGuard), plus d'approche au pas ni de feux à la limite
+ -- d'immobilité ; les feux attendent toutes les IA, au plus stallGuarded s sans nouvelle arrivée ou fillGuarded s
+ -- après la première en place (le délai maximal K.gridMax reste). Aux feux, IA pas en place : une ligne (missMax noms).
+ stallGuarded=20,fillGuarded=60,missMax=6,fillTarget=20,
+ -- Avec la protection : approche plus vive (approachKmh au plus, freinage prévu à approachDecel m/s²) : la file, encore
+ -- à 500 m de la ligne quand la grille commence (K.gridFormFrom), rejoint ses places sans traîner.
+ approachKmh=120,approachDecel=2.5,
+ -- Arrêt de la progression : aucune arrivée ET aucune IA attendue au-dessus de movingKmh depuis stallGuarded s.
+ movingKmh=3}
+M.GK=GK
+-- Affinage 1.63 (Bakou, 13 novembre : les cinq premières IA « ramenee aux stands par AC (a l arret depuis 5 a 7 s) »,
+-- feux allumés avec 9 / 22 IA en place) : le compteur d'AC part dès l'approche au pas, bien avant l'arrêt. Toute IA de la
+-- grille (en approche, en place, ou partant des stands) porte cmd.noRetire pendant la grille et les feux : l'applicateur
+-- appelle alors à chaque image physics.preventAIFromRetiring (CSP : « If not moving, they will still retire some time
+-- after this function is called, unless you'll keep calling it »), la protection prévue par CSP contre ce renvoi.
+-- Quand l'applicateur la sait disponible (M.retireGuard, posé par lui), la grille attend toutes les IA (au plus
+-- GK.waitFirstGuarded s après la première en place, extinction au plus GK.stillMaxGuarded s après elle) ; sinon, la
+-- borne de temps de la 1.63 (GK.stillMax) reste la seule défense.
+M.retireGuard=false
+local function stillMax() return M.retireGuard and GK.stillMaxGuarded or GK.stillMax end
 function M.new()
  return {phase='none',slots={},slotOf={},held={},pit={},order={},source='',since=0,lightsAt=0,outAt=0,goUntil=-math.huge,
   ref=0,refSet=false,jump=false,count=0,heldCount=0,nodes=nil,timedOut=false,woke=false,aiRef={},aiJump={},aiJumpAt={},
@@ -29,16 +59,22 @@ function M.new()
   aiRelease={},aiReleased={},aiJumpGrade={},realism=false,jumpMoved=0,jumpKmh=0,jumpLead=0,jumpSlot=0,
   -- Correctif 1.61 (Spa, 11 novembre) : heure de retenue de chaque IA, IA ramenée aux stands par AC pendant la grille,
   -- première retenue (attente bornée avant les feux).
-  heldAt={},lost={},firstHeldAt=nil,burstDone={},burstUntil={}}
+  heldAt={},lost={},firstHeldAt=nil,burstDone={},burstUntil={},
+  -- Beta 1.64 (lot 2) : origine d'une grille de l'app ('start' : fin du tour de formation, 'red' : relance) ; '' : posée
+  -- à la main (départ avorté traité comme avant).
+  from='',
+  -- Relecture 1.64 (lot 2) : IA tenue à sa place et heurtée pendant la grille ou les feux (victime, jamais marquée).
+  hit={}}
 end
 local function clearCars(g) for i=1,K.maxCars do g.slotOf[i]=0; g.held[i]=false; g.pit[i]=false; g.aiRef[i]=nil; g.aiJumpAt[i]=nil; g.aiRelease[i]=nil; g.aiReleased[i]=nil; g.heldAt[i]=nil; g.lost[i]=nil; g.burstDone[i]=nil; g.burstUntil[i]=nil end; g.firstHeldAt=nil; g.lastHeldAt=nil; g.aiReadyAt=nil end
 local function clearPlayer(t) t.gridPlaced=false; t.gridPassed=false end
 function M.reset(g)
- g.phase='none'; g.source=''; g.since=0; g.lightsAt=0; g.outAt=0; g.goUntil=-math.huge; g.ref=0; g.refSet=false; g.jump=false
- g.count=0; g.heldCount=0; g.timedOut=false; clearCars(g)
+ g.guardLogged=false; g.phase='none'; g.source=''; g.since=0; g.lightsAt=0; g.outAt=0; g.goUntil=-math.huge; g.ref=0; g.refSet=false; g.jump=false
+ g.count=0; g.heldCount=0; g.timedOut=false; g.movingAt=nil; clearCars(g)
  for i=1,K.maxCars do g.aiJump[i]=nil; g.aiJumpAt[i]=nil end
  for i=1,K.maxCars do g.aiJumpGrade[i]=nil end
  g.jumpGrade=nil; g.jumpMoved=0; g.jumpKmh=0; g.jumpLead=0; g.jumpSlot=0; g.jumpLaunchAt=nil
+ g.from=''
 end
 function M.rebase(g,amount)
  g.since=g.since-amount; g.lightsAt=g.lightsAt-amount; g.outAt=g.outAt-amount
@@ -49,6 +85,7 @@ function M.rebase(g,amount)
  if g.firstHeldAt then g.firstHeldAt=g.firstHeldAt-amount end
  if g.lastHeldAt then g.lastHeldAt=g.lastHeldAt-amount end
  if g.aiReadyAt then g.aiReadyAt=g.aiReadyAt-amount end
+ if g.movingAt then g.movingAt=g.movingAt-amount end
  for i=1,K.maxCars do if g.heldAt[i] then g.heldAt[i]=g.heldAt[i]-amount end; if g.burstUntil[i] then g.burstUntil[i]=g.burstUntil[i]-amount end end
 end
 -- Ordre du classement de la course (positions inconnues à la fin, départage par indice) : un seul comparateur, sans
@@ -123,10 +160,40 @@ function M.resolve(nodes,length,count,out)
  for k=#out,count+1,-1 do out[k]=nil end
  return out,'calculees',why
 end
+-- Correctif 1.63 (règlement) puis Beta 1.64 (lot 2) : voiture retardée (incident pendant le tour de formation, bySince ;
+-- ou voiture à l'origine d'un départ avorté, toujours) doublée par une voiture partie derrière elle : arrière de la grille.
+local function toBack(g,t,frame,order,n,rank,bySince,now,log)
+ local back=g.back or {}; g.back=back; local nb=0; local keep=0
+ for k=1,n do
+  local i=order[k]; local ri=rank[i]; local pi=frame.cars[i].position or 0; local lost=false
+  local ci=t.cars and t.cars[i]; local delayed=ci~=nil and (ci.abortMark or bySince and (ci.since or 0)~=0 and (ci.since or 0)>=(t.formationAt or math.huge))
+  if ri and pi>=1 and delayed then
+   for m=1,n do local j=order[m]; local rj=rank[j]; local pj=frame.cars[j].position or 0; if rj and rj>ri and pj>=1 and pj<pi and (ci.abortMark or not frame.cars[j].player) then lost=true; break end end
+  end
+  if lost then nb=nb+1; back[nb]=i else keep=keep+1; order[keep]=i end
+ end
+ for m=1,nb do local i=back[m]; order[keep+m]=i; U.log(log,now,'INFO',string.format('grille: %s part de l arriere de la grille (%s)',frame.cars[i].name,t.cars[i].abortMark and 'depart avorte' or 'place perdue pendant le tour de formation'),i) end
+ g.backN=nb
+end
+-- Relecture 1.64 (lot 2) : relance après un drapeau rouge : voitures renvoyées à l'arrière de la grille aussi à la fin de
+-- l'ordre figé (rangs renumérotés, mêmes voitures, voitures aux stands comprises) : ni « reprend sa place » ni place du
+-- joueur fausses jusqu'à l'extinction.
+local function redBack(t,back,nb)
+ local N=t.redOrderN or 0; local k=0
+ for r=1,N do
+  local i=t.redOrder[r]; local out=false
+  for m=1,nb do if back[m]==i then out=true; break end end
+  if i and not out then k=k+1; t.redOrder[k]=i end
+ end
+ for m=1,nb do local i=back[m]; if t.redRank[i] then k=k+1; t.redOrder[k]=i end end
+ for r=1,k do t.redRank[t.redOrder[r]]=r end
+end
 -- Formation : places attribuées dans l'ordre du classement aux voitures en piste (voiture de sécurité et voitures
 -- arrivées exclues) ; les voitures aux stands partent de la voie des stands.
 function M.start(g,t,frame,now,log)
  clearCars(g); clearPlayer(t)
+ local from=t.startAbortFrom; t.startAbortFrom=nil
+ if g.hit then for i=1,K.maxCars do g.hit[i]=nil end end
  local order=g.order; local n=0
  for i=1,frame.count do
   local a=frame.cars[i]
@@ -135,7 +202,22 @@ function M.start(g,t,frame,now,log)
   end
  end
  -- Beta 1.48 : ordre figé au drapeau rouge (t.redRank) ; voitures absentes de l'ordre ensuite, au classement.
- if (t.redOrderN or 0)>0 then M.sortByRank(order,n,frame.cars,t.redRank) else M.sortByPosition(order,n,frame.cars) end
+ if (t.redOrderN or 0)>0 then M.sortByRank(order,n,frame.cars,t.redRank)
+  -- Beta 1.64 (lot 2) : relance après un départ avorté : la voiture à l'origine, doublée, part de l'arrière.
+  if (t.abortMarks or 0)>0 then toBack(g,t,frame,order,n,t.redRank,false,now,log) end
+  if (t.abortMarks or 0)>0 and (g.backN or 0)>0 then redBack(t,g.back,g.backN) end
+ elseif (t.formationRankN or 0)>0 and t.formationRank then
+  -- Correctif 1.63 (règlement du tour de formation) : grille dans l'ordre du départ ; une voiture doublée par une
+  -- voiture partie derrière elle (place perdue et pas reprise) part de l'arrière de la grille, dans l'ordre du départ.
+  -- Relecture 1.63 (N2) : seulement une voiture retardée (incident pendant le tour : tête-à-queue, arrêt) ; une voiture
+  -- simplement doublée reprend sa place d'origine, celle qui l'a doublée aussi (ordre du départ rétabli).
+  M.sortByRank(order,n,frame.cars,t.formationRank)
+  toBack(g,t,frame,order,n,t.formationRank,true,now,log)
+  t.formationRankN=0
+ else M.sortByPosition(order,n,frame.cars) end
+ -- Beta 1.64 (lot 2) : marques d'un départ avorté : servent une seule fois (cette grille). Le choc qui a fait avorter le
+ -- départ est oublié (fenêtre K.crashWindow) : la fautive arrêtée à sa nouvelle place n'est pas un nouvel incident.
+ if (t.abortMarks or 0)>0 and t.cars then for i=1,#t.cars do local c=t.cars[i]; if c.abortMark then c.lastCrash=-math.huge end; c.abortMark=false; c.abortHold=false end; t.abortMarks=0; t.abortHolds=0 end
  local slots,source,why=M.resolve(g.nodes,frame.length,n,g.slots)
  if not slots then return false end
  g.slots=slots; g.source=source
@@ -143,6 +225,7 @@ function M.start(g,t,frame,now,log)
  g.phase='grid'; g.since=now; g.count=n; g.heldCount=0; g.jump=false; g.refSet=false; g.timedOut=false
  g.jumpGrade=nil; g.jumpMoved=0; g.jumpKmh=0; g.jumpLead=0; g.jumpSlot=0; g.jumpLaunchAt=nil
  t.standing='grid'
+ g.from=from or ''
  U.log(log,now,'INFO',string.format('grille: formation, %d voitures, %s',n,source=='AC_START' and string.format('%d places (AC_START)',#g.nodes) or 'places calculees ('..why..')'),-1)
  return true
 end
@@ -165,12 +248,16 @@ local function approach(g,frame,i,cmd,offsetSign,still,now)
  if not g.held[i] and (still or d<=K.gridHoldDistance or a.kmh<K.gridStillKmh and d<=K.gridSlotRadius) then
   g.held[i]=true; g.heldCount=g.heldCount+1; g.heldAt[i]=now; if now and not g.firstHeldAt then g.firstHeldAt=now end; if now then g.lastHeldAt=now end
  end
- local cap=U.clamp(math.sqrt(2*K.gridApproachDecel*math.max(0,d-K.gridHoldDistance))*3.6,K.gridCrawlKmh,K.gridApproachKmh)
+ cmd.noRetire=true
+ local cap=M.retireGuard and U.clamp(math.sqrt(2*GK.approachDecel*math.max(0,d-K.gridHoldDistance))*3.6,K.gridCrawlKmh,GK.approachKmh)
+  or U.clamp(math.sqrt(2*K.gridApproachDecel*math.max(0,d-K.gridHoldDistance))*3.6,K.gridCrawlKmh,K.gridApproachKmh)
  -- Correctif 1.61 (départs réalistes, demande du pilote) : coup d'accélérateur juste avant la place (« burnout »), une
  -- fois par départ, entre K.formBurstFrom et K.formBurstTo m de la place : plafond relevé de K.formBurstKmh km/h pendant
  -- K.formBurstTime s, jamais au-dessus de l'allure qui s'arrête encore à la place en K.formBurstDecel m/s².
  if g.realism and now and not g.held[i] and not g.burstDone[i] and d<=K.formBurstFrom and d>=K.formBurstTo then g.burstDone[i]=true; g.burstUntil[i]=now+K.formBurstTime end
  if g.realism and now and now<(g.burstUntil[i] or -math.huge) and not g.held[i] then cap=math.min(cap+K.formBurstKmh,math.sqrt(2*K.formBurstDecel*math.max(0,d-K.gridHoldDistance))*3.6) end
+ -- Correctif 1.63 : approche au pas tant que d'autres voitures sont encore loin de leur place (jamais immobile trop tôt).
+ if g.creep and not g.held[i] and d<=GK.creepZone and d>K.gridHoldDistance then cap=math.min(cap,GK.creepKmh) end
  cmd.speedLimit=math.min(cmd.speedLimit or K.unlimitedSpeed,g.held[i] and K.gridCrawlKmh or cap)
  if g.held[i] then cmd.stopHold=true
  elseif d<K.gridBrakeFrom and a.kmh>cmd.speedLimit+K.gridBrakeMargin then cmd.brake=math.max(cmd.brake or 0,U.clamp((a.kmh-cmd.speedLimit)/K.gridBrakeScale,K.gridBrakeMin,K.brakeMax)) end
@@ -181,6 +268,7 @@ end
 -- les feux), retenue là où elle rejoint la piste, au pas, jusqu'à l'extinction (jamais lancée sur la grille arrêtée).
 local function pitStarter(a,cmd)
  if a.player or not a.valid then return end
+ cmd.noRetire=true
  if a.pit then cmd.pitHold=true else cmd.stopHold=true; cmd.speedLimit=math.min(cmd.speedLimit or K.unlimitedSpeed,K.gridCrawlKmh) end
 end
 -- Levée de toutes les retenues : réveil des IA (impulsion d'une image), plus aucune commande de grille. Beta 1.35 :
@@ -188,6 +276,7 @@ end
 local function release(g,frame,commands,offsetSign,states)
  for i=1,frame.count do
   if g.slotOf[i]>0 or g.pit[i] then commands[i].gridWake=true; g.woke=true end
+  commands[i].noRetire=false -- Affinage 1.63 : protection levée à l'extinction (ou à l'annulation)
   local k=g.slotOf[i]; local s=states and states[i]
   -- Beta 1.36 : seulement une IA retenue près de sa place (jamais une voiture lâchée par le délai loin de sa place, ni
   -- une voiture aux stands) : aucun saut latéral au départ ni à la sortie des stands.
@@ -238,15 +327,116 @@ local function early(g,frame,i,commands,now,log)
  end
  return true
 end
+-- Correctif 1.63 : heure de la première IA immobilisée encore sur la grille (ni ramenée aux stands, ni aux stands).
+local function firstStill(g,frame)
+ local first=nil
+ for i=1,frame.count do
+  local at=g.heldAt[i]
+  if at and g.held[i] and g.slotOf[i]>0 and not g.lost[i] and not frame.cars[i].pit and not frame.cars[i].player and (not first or at<first) then first=at end
+ end
+ return first
+end
+M.firstStill=firstStill
+-- Plus grande distance à sa place d'une IA attendue pas encore retenue (approche au pas des autres, GK.creepSpread).
+local function farthest(g,frame,dq)
+ local far=0
+ for i=1,frame.count do
+  local a=frame.cars[i]
+  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) then local d=gap(g,frame,i); if d>far then far=d end end
+ end
+ return far
+end
+-- Affinage 1.63 : une IA attendue pas encore en place roule-t-elle encore (au-dessus de GK.movingKmh) ?
+function M.rolling(g,frame,dq)
+ for i=1,frame.count do
+  local a=frame.cars[i]
+  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) and (a.kmh or 0)>GK.movingKmh then return true end
+ end
+ return false
+end
+-- Affinage 1.63 (Imola, 13 novembre) : aux feux, IA attendues pas encore en place : nom, place, distance, vitesse.
+local missBuf={}
+function M.missing(g,frame,now,log,dq)
+ local m=0; local total=0
+ for i=1,frame.count do
+  local a=frame.cars[i]
+  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) then
+   total=total+1
+   if m<GK.missMax then m=m+1; missBuf[m]=string.format('%s (place %d, %.0f m, %.0f km/h)',a.name,g.slotOf[i],gap(g,frame,i),a.kmh or 0) end
+  end
+ end
+ for k=#missBuf,m+1,-1 do missBuf[k]=nil end
+ if total>0 then U.log(log,now,'INFO',string.format('grille: %d IA pas en place aux feux : %s%s',total,table.concat(missBuf,', '),total>m and ', ...' or ''),-1) end
+end
 local function placedPlayer(g,frame,player)
  local a=frame.cars[player]
  return math.abs(gap(g,frame,player))<=K.gridSlotRadius and a.kmh<K.gridStillKmh
+end
+-- Beta 1.64 (lot 2) : départ avorté d'une grille gérée par l'app : tentative comptée, voitures en cause marquées (toutes
+-- celles de cette image), places de la grille avortée relevées (ordre du tour en plus), tour en plus demandé au moteur.
+function M.abortMarks(g,t,frame)
+ t.startAborts=(t.startAborts or 0)+1; t.startAbortPending=g.from; t.abortMarks=0
+ for i=1,frame.count do
+  local c=t.cars[i]; c.abortSlot=g.slotOf[i] or 0
+  if c.since>=g.since and c.incident then c.abortMark=true; t.abortMarks=t.abortMarks+1 end
+  -- Relecture 1.64 : IA tenue à sa place et heurtée : victime, jamais à l'origine (le départ reste avorté).
+  if c.abortMark and g.hit and g.hit[i] then c.abortMark=false; t.abortMarks=t.abortMarks-1 end
+  -- Relecture 1.64 : choc pendant la grille avortée oublié (une victime arrêtée à sa nouvelle place, circuit court, n'est
+  -- pas un nouvel incident) ; celui de la voiture marquée l'est à la nouvelle grille (M.start).
+  if not c.abortMark and (c.lastCrash or -math.huge)>=g.since then c.lastCrash=-math.huge end
+ end
+end
+-- Beta 1.64 (lot 2) : toutes les voitures parties derrière la fautive (place de la grille avortée) et encore en course
+-- sont devant elle au classement d'AC (même mesure que la règle 163D) ; place inconnue : jamais (attente maximale).
+local function passed(t,frame,i)
+ local pi=frame.cars[i].position or 0; local si=t.cars[i].abortSlot or 0
+ if pi<1 or si<=0 then return false end
+ for j=1,frame.count do
+  local b=frame.cars[j]; local cj=t.cars[j]
+  if j~=i and not cj.abortMark and (cj.abortSlot or 0)>si and b.valid and not b.pit and not b.finished and (b.position or 0)>pi then return false end
+ end
+ return true
+end
+-- Beta 1.64 (lot 2) : fautive retenue sur place (arrêt tenu, protection contre le renvoi, aucun dépannage) pendant le tour
+-- en plus jusqu'au passage du peloton, au plus K.startBackHold s (K.startBackHoldBare sans protection) ; puis réveillée
+-- une image : elle part derrière le peloton, jamais téléportée.
+function M.holdBack(g,t,frame,commands,now,log)
+ local n=0; local live=t.neutral and t.relaunch and not t.red
+ for i=1,frame.count do
+  local c=t.cars[i]
+  if c.abortHold then
+   local a=frame.cars[i]; local why=nil
+   if not live or not a.valid or a.pit or a.finished then why='retenue annulee'
+   elseif passed(t,frame,i) then why='peloton passe'
+   elseif not c.incident then why='incident termine'
+   elseif now-c.abortHoldAt>=(M.retireGuard and K.startBackHold or K.startBackHoldBare) then why='attente maximale' end
+   -- Relecture 1.64 : attente maximale seulement piste libre derrière (même règle que la reprise d'une IA accidentée,
+   -- c.abortTraffic posé par src/incidents.lua) ; sinon tenue au plus K.gridMax s (protection) ou K.startBackHoldBareMax s
+   -- (sans : avant le renvoi d'AC).
+   if why=='attente maximale' and c.abortTraffic and now-c.abortHoldAt<(M.retireGuard and K.gridMax or K.startBackHoldBareMax) then why=nil end
+   if why then
+    c.abortHold=false
+    if a.valid and not a.pit then commands[i].gridWake=true; g.woke=true end
+    -- Relecture 1.64 : dépannage reparti de zéro (temps d'arrêt imposé par l'app jamais compté), dès cette image.
+    if a.valid and not a.pit then commands[i].recover=false; c.still=0; c.stuckFor=0; c.anchorX=a.x; c.anchorZ=a.z end
+    U.log(log,now,'INFO',string.format('depart retarde: %s repart derriere le peloton apres %.0f s (%s)',a.name,now-c.abortHoldAt,why),i)
+   else
+    local cmd=commands[i]; n=n+1
+    cmd.noRetire=true; cmd.stopHold=true; cmd.recover=false; cmd.speedLimit=math.min(cmd.speedLimit or K.unlimitedSpeed,K.gridCrawlKmh)
+   end
+  end
+ end
+ t.abortHolds=n
 end
 -- À chaque image tant qu'un départ arrêté est en cours. Renvoie 'go' à l'extinction des feux ('jump' s'il y a eu faux
 -- départ du joueur : à sanctionner par le moteur, une fois le joueur passé la ligne).
 function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
  -- Réveil d'une seule image : effacé à l'image suivante (aucune boucle tant qu'il n'y en a pas eu).
  if g.woke then for i=1,K.maxCars do commands[i].gridWake=false end; g.woke=false end
+ -- Affinage 1.63 : protection contre le renvoi d'AC reposée à chaque image par la grille (approach, pitStarter).
+ for i=1,K.maxCars do commands[i].noRetire=false end
+ -- Beta 1.64 (lot 2) : fautive d'un départ avorté retenue sur place pendant le tour en plus.
+ if (t.abortHolds or 0)>0 then M.holdBack(g,t,frame,commands,now,log) end
  if t.standing=='none' then if g.phase~='none' then M.reset(g); clearPlayer(t) end; return nil end
  if t.standing=='grid' and g.phase=='none' and not M.start(g,t,frame,now,log) then
   t.standing='none'; t.greenUntil=now+K.greenShow; U.log(log,now,'INFO','relance arretee indisponible (grille): depart lance',-1); return nil
@@ -254,10 +444,13 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
  local player=frame.player
  -- Nouvel incident pendant la formation ou les feux : départ annulé.
  if g.phase=='grid' or g.phase=='lights' then
+  -- Relecture 1.64 (lot 2) : IA tenue à sa place et heurtée par une autre voiture (victime d'un choc sur la grille).
+  local hit=g.hit; if hit then for i=1,frame.count do if g.held[i] and (frame.cars[i].collidedWith or -1)>=1 then hit[i]=true end end end
   for i=1,frame.count do
    local c=t.cars[i]
    if c.incident and c.since>=g.since then
     U.log(log,now,'INFO','depart arrete annule: nouvel incident',i)
+    if g.from~='' and not t.red then M.abortMarks(g,t,frame) end
     release(g,frame,commands,offsetSign,states); M.reset(g); t.standing='none'; t.gridLit=0; clearPlayer(t); return nil
    end
   end
@@ -266,12 +459,15 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
  if g.phase=='grid' then
   local timeout=now-g.since>=K.gridMax
   lostCars(g,frame,now,log)
+  g.creep=not M.retireGuard and farthest(g,frame,dq)>GK.creepSpread
   for i=1,frame.count do
    local a=frame.cars[i]
    if g.slotOf[i]>0 and not a.player and a.valid and not a.pit and not g.lost[i] then approach(g,frame,i,commands[i],offsetSign,timeout,now)
    elseif g.pit[i] then pitStarter(a,commands[i]) end
   end
   local n,held=expected(g,frame,dq)
+  -- Affinage 1.63 : une ligne par grille sur la protection contre le renvoi d'AC (vérification en jeu).
+  if not g.guardLogged then g.guardLogged=true; U.log(log,now,'INFO',string.format(M.retireGuard and 'grille: %d IA protegees du renvoi aux stands, tenue sans limite de temps' or 'grille: %d IA sans protection du renvoi aux stands, attente bornee',n),-1) end
   if timeout and not g.timedOut then g.timedOut=true; U.log(log,now,'INFO',string.format('grille: delai maximal, %d IA retenues sur place',n-held),-1) end
   local placed=not slotted or frame.cars[player].pit or placedPlayer(g,frame,player)
   -- Correctif 1.61 : attente bornée à K.gridWaitMax s après la première IA retenue (une IA tenue à l'arrêt trop longtemps
@@ -279,21 +475,31 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
   -- Relecture 1.62 (S3) : attente mesurée depuis la dernière arrivée (K.gridWaitMax s), au plus K.gridWaitFirstMax s
   -- depuis la première (avant qu'AC ne ramène une IA immobile à son stand) ; jamais sans le joueur en place, sauf le
   -- délai maximal (K.gridMax s).
-  local waited=g.lastHeldAt~=nil and now-g.lastHeldAt>=K.gridWaitMax or g.firstHeldAt~=nil and now-g.firstHeldAt>=K.gridWaitFirstMax
+  -- Affinage 1.63 : avec la protection, une IA qui roule encore vers sa place compte comme une progression.
+  if M.retireGuard and M.rolling(g,frame,dq) then g.movingAt=now end
+  local stallFrom=M.retireGuard and g.lastHeldAt~=nil and max(g.lastHeldAt,g.movingAt or g.lastHeldAt) or g.lastHeldAt
+  local waited=stallFrom~=nil and now-stallFrom>=(M.retireGuard and GK.stallGuarded or K.gridWaitMax) or g.firstHeldAt~=nil and now-g.firstHeldAt>=(M.retireGuard and GK.fillGuarded or K.gridWaitFirstMax)
   -- Beta 1.62 (relecture 162v, point 1) : IA prêtes (toutes en place, ou attente bornée écoulée) ; le joueur pas encore en
   -- place a sa propre attente bornée, K.gridPlayerWait s après ce moment, puis les feux partent (il est jugé comme
   -- d'habitude par les règles du faux départ). Avant, les IA restaient immobiles jusqu'au délai maximal (120 s).
   local aiReady=held>=n or waited
   if aiReady and not g.aiReadyAt then g.aiReadyAt=now end
   local playerLate=aiReady and not placed and g.aiReadyAt~=nil and now-g.aiReadyAt>=K.gridPlayerWait
-  if aiReady and (placed or playerLate) or timeout then
+  -- Correctif 1.63 : feux au plus tard quand la première IA immobile atteint GK.stillMax moins la séquence des feux.
+  local seq=K.lightStep*(K.gridLights-1)+K.lightsOutMin
+  local first=firstStill(g,frame)
+  -- Affinage 1.63 : protection active : jamais de feux à la limite d'immobilité (l'IA retenue n'est plus renvoyée).
+  local due=not M.retireGuard and first~=nil and now-first>=stillMax()-seq-GK.lightsMargin
+  if aiReady and (placed or playerLate) or due or timeout then
    if not timeout and not (placed and held>=n) then
-    local since=g.lastHeldAt or g.firstHeldAt or now
-    U.log(log,now,'INFO',string.format('grille: attente bornee (%.0f s), feux sans attendre les retardataires (%d / %d IA en place%s)',now-since,held,n,placed and '' or ', joueur pas en place'),-1)
+    U.log(log,now,'INFO',string.format('grille: feux apres %.0f s de grille, premiere IA immobile depuis %.1f s (%d / %d IA en place%s)',now-g.since,first and now-first or 0,held,n,placed and '' or ', joueur pas en place'),-1)
    end
-   g.phase='lights'; g.lightsAt=now; t.standing='lights'
+   g.phase='lights'; g.lightsAt=now; t.standing='lights'; g.creep=false
    -- Cinquième feu après (K.gridLights-1) pas, extinction entre K.lightsOutMin et K.lightsOutMax s plus tard.
-   g.outAt=now+K.lightStep*(K.gridLights-1)+K.lightsOutMin+U.unit(seed or 0,t.reds or 0,K.lightsOutSalt)*(K.lightsOutMax-K.lightsOutMin)
+   g.outAt=now+K.lightStep*(K.gridLights-1)+K.lightsOutMin+U.unit(seed or 0,(t.reds or 0)+(t.startAborts or 0)*K.startAbortSalt,K.lightsOutSalt)*(K.lightsOutMax-K.lightsOutMin)
+   -- Correctif 1.63 : extinction au plus tard GK.stillMax s après la première IA immobile (jamais avant la séquence).
+   if first and not M.retireGuard then g.outAt=max(now+seq,math.min(g.outAt,first+stillMax())) end
+   if held<n then M.missing(g,frame,now,log,dq) end
    U.log(log,now,'INFO',string.format('feux: allumage (%d / %d IA en place)',held,n),-1)
   end
  end
@@ -348,7 +554,15 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
   local a=slotted and frame.cars[player] or nil
   if a and a.valid and not a.pit and a.splineValid and (not g.jump or g.realism) then
    if not g.refSet then
-    if placedPlayer(g,frame,player) then g.ref=a.spline; g.refSet=true end
+    if placedPlayer(g,frame,player) then g.ref=a.spline; g.refSet=true
+    -- Relecture 1.63 (N1) : joueur pas encore en place quand les feux s'allument (feux tenus sous la limite d'AC) : s'il
+    -- atteint sa place en roulant (au-dessus de K.jumpSpeed km/h) avant l'extinction, faux départ comme à l'arrêt (aucun
+    -- avantage à partir lancé).
+    elseif g.phase=='lights' and now<g.outAt and gap(g,frame,player)<=0 and a.kmh>K.jumpSpeed then
+     g.ref=a.spline; g.refSet=true; g.jump=true; g.jumpLead=g.outAt-now
+     if g.realism then g.jumpMoved=max(g.jumpMoved,K.jumpDistance+1); g.jumpKmh=max(g.jumpKmh,a.kmh); g.jumpLaunchAt=g.jumpLaunchAt or now end
+     U.log(log,now,'WARN',string.format('faux depart du joueur: %.1f m, %.0f km/h, %.1f s avant l extinction',-gap(g,frame,player),a.kmh,g.outAt-now),player)
+    end
    else
     local moved=U.spline(a.spline-g.ref)*frame.length
     if g.realism then g.jumpMoved=max(g.jumpMoved,moved); g.jumpKmh=max(g.jumpKmh,a.kmh); if a.kmh>K.jumpSpeed and not g.jumpLaunchAt and now<g.outAt then g.jumpLaunchAt=now end end

@@ -34,13 +34,15 @@ local function deployed(setup)
 end
 
 tests.K_160Y=function()
- assert(K.passIgnoreMaxRace==180 and K.passIgnoreMaxRace<K.passIgnoreMax and K.scFreeGap<K.scLeadGap and K.scFreeMargin>0 and K.scBunchMax==180)
+ assert(K.passIgnoreMaxRace==180 and K.passIgnoreMaxRace<K.passIgnoreMax and K.scFreeGap<K.scLeadGap and K.scFreeMargin>0 and K.scBunchMax==420)
  assert(K.scGiveFloor>K.trafficMinSpeed and K.scGiveStuck<K.scPassedMax and K.troubleAheadGap==30 and K.planSpreadLaps==2)
  assert(K.scNominalKmh+K.scCatchUp-K.scFreeMargin>K.scLeadKmh,'free pace with unknown pace: above the slow pace, under the catch-up of the field')
 end
 -- Tentative en cours de l'IA 2 sur la voiture 3 qui s'échappe : « cible plus rapide ».
 local function failed(profile,already,lapsAhead)
- local e,f=scene(profile,3,function(p) p.startDelay=0; p.startRelax=0 end); F.tick(e,f,0.2)
+ -- Affinage 1.63 : drapeau bleu coupé (la cible prise d'un tour, à 12 m, lui céderait désormais : drapeau bleu tenu par
+ -- l'écart en temps) ; ce test ne juge que l'attente après un échec.
+ local e,f=scene(profile,3,function(p) p.startDelay=0; p.startRelax=0; p.blueFlagEnabled=false end); F.tick(e,f,0.2)
  F.place(f,1,-5000,100); F.place(f,2,0,100); F.place(f,3,12+4.4,108)
  if lapsAhead then f.cars[2].lap=f.cars[2].lap+lapsAhead end
  local s=e.states[2]
@@ -85,6 +87,12 @@ tests.BLUE_FLAG_AI_JOURNAL_160Y=function()
  F.place(g,1,-5000,100); t=0
  while t<5 do F.rear(n,g,50,35); g.cars[3].lap=3; F.tick(n,g,1/60); t=t+1/60 end
  assert(count(n,'drapeau bleu IA')==0,'setting off: nothing logged')
+ -- Même réglage coupé, voiture rapide proche et attardée en plein virage (cas où un retard serait noté) : rien non plus
+ -- (ajouté après la série longue 1.64 : depuis que le retard n'est noté que de près, la scène à 50 m ne le prouvait plus).
+ local o,q=scene('C',3,function(p) p.startDelay=0; p.startRelax=0; p.blueFlagEnabled=false end)
+ F.place(q,1,-5000,100); t=0
+ while t<K.blueLogTime+2 do F.rear(o,q,30,2); q.cars[3].lap=3; q.cars[2].yawRate=o.run.cornerYawRef; F.tick(o,q,1/60); t=t+1/60 end
+ assert(count(o,'drapeau bleu IA')==0 and (o.stats.blueAiLate or 0)==0,'setting off, close and late: nothing logged')
  -- Même tour : pas un drapeau bleu.
  local m,h=scene('C',3,function(p) p.startDelay=0; p.startRelax=0 end)
  F.place(h,1,-5000,100); t=0
@@ -164,17 +172,19 @@ tests.TROUBLE_HEAD_ONLY_160Y=function()
 end
 -- Allure libre de la voiture de sécurité : nombre fini quand l'allure du peloton est inconnue ; hystérésis sur l'écart.
 tests.SC_FREE_PACE_BOUNDED_160Y=function()
+ -- Correctif 1.63 (le pilote : « elle ne doit pas plafonner ») : file loin ou proche, allure du peloton inconnue :
+ -- aucune limite ; l'hystérésis de l'écart (annonce « en tête de la file ») reste.
  local e,f,t=deployed()
- local free=K.scNominalKmh+K.scCatchUp-K.scFreeMargin
- assert(e.commands[5].scSpeed==K.scLeadKmh and t.safetySlow,'slow while the field is far behind')
+ local U=K.unlimitedSpeed
+ assert(e.commands[5].scSpeed>=U and t.safetySlow,'field far behind: flagged, never slowed')
  F.place(f,2,1200-100,120); F.place(f,3,1000,120); F.tick(e,f,0.2)
- assert(t.safetySlow and e.commands[5].scSpeed==K.scLeadKmh,'100 m behind after being slow: still slow (hysteresis)')
+ assert(t.safetySlow and e.commands[5].scSpeed>=U,'100 m behind after being far: still flagged (hysteresis)')
  F.place(f,2,1200-K.scFreeGap+10,120); F.tick(e,f,0.2)
- assert(not t.safetySlow and e.commands[5].scSpeed==free,'under K.scFreeGap: free, a finite pace while the pace of the field is unknown: '..tostring(e.commands[5].scSpeed))
+ assert(not t.safetySlow and e.commands[5].scSpeed>=U,'under K.scFreeGap: queue formed, no limit while the pace of the field is unknown: '..tostring(e.commands[5].scSpeed))
  F.place(f,2,1200-100,120); F.tick(e,f,0.2)
- assert(not t.safetySlow and e.commands[5].scSpeed==free,'back to 100 m: still free (hysteresis)')
+ assert(not t.safetySlow and e.commands[5].scSpeed>=U,'back to 100 m: still formed (hysteresis)')
  F.place(f,2,1200-K.scLeadGap-10,120); F.tick(e,f,0.2)
- assert(t.safetySlow and e.commands[5].scSpeed==K.scLeadKmh,'beyond K.scLeadGap: slow again')
+ assert(t.safetySlow and e.commands[5].scSpeed>=U,'beyond K.scLeadGap: flagged again, never slowed')
 end
 -- Zone d'incident en piste ou son approche : allure nominale au plus.
 tests.SC_ZONE_NOMINAL_160Y=function()

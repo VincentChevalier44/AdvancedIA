@@ -159,7 +159,8 @@ tests.FORMATION_STRUNG_QUEUE_162B=function()
  place()
  local gap=Formation.worstGap(fo,f)
  assert(math.abs(gap-100)<1e-6,'worst gap among AI only (the player far behind is ignored): '..gap)
- for _=1,10 do Formation.bunch(fo,e,f,e.time,1) end
+ -- Correctif 1.63 : ralentissement progressif (Formation.FK.slowRate km/h par seconde au plus).
+ for _=1,40 do Formation.bunch(fo,e,f,e.time,1) end
  assert(t.formationKmh==base and t.formationSlowFrom,'base pace kept, cars ahead of the gap flagged')
  assert(math.abs(t.formationSlowKmh-base*K.formationWaitMult)<1e-9,'slowed pace not compounded: '..tostring(t.formationSlowKmh))
  assert(count(e,'file etiree')==1,'one line')

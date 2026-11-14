@@ -2,6 +2,245 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 2.0.0 — November 2026
+
+A big one. Everything below was built and tuned over many long test races since Beta 1.62, with your reports from
+Overtake. Two new settings (AI turn signals, overlay per desktop); everything else is for everyone. The interactive
+guide shows how it all works: https://vincentchevalier44.github.io/AdvancedIA/
+
+### Highlights
+
+#### Racing and duels
+- **Corner priority with real racing marks:** on the inside, a car keeps its right to the corner while its front axle
+  is level with the other car's mirror; on the outside, while it is ahead of the other car's front axle.
+- **Clean side-by-side in chicanes and slow corners:** under heavy braking, the car without the right to the corner
+  now lifts clearly, brakes a little earlier, leaves a car's width and tucks in behind; the car with the right never
+  squeezes the other one. After losing a duel, a car does not dive straight back in at the next part of the corner.
+- **Passing at the corner exit:** an AI right behind that gets a better exit (close, and clearly faster) pulls out at
+  once to the free side and goes for the pass instead of lifting behind the slower car.
+- **Using a mistake ahead:** when the car ahead runs wide, slides or loses speed after a mistake, the AI behind no
+  longer slows down with it: it passes on the other side, and leaves room to a car rejoining the track.
+- **Grip guard in corners:** the app no longer pushes an AI's level above 103 % or its caution below 0.8 in a corner;
+  the extra push of an attack and the low caution used to close in now stay on the straights.
+- **Exits no longer held back by a kept danger zone:** a danger zone kept for a track now only slows the AI on the
+  way in and just after the spot, never all along the exit.
+
+#### Defence and slipstream
+- **Anticipated defence:** the car ahead now covers the inside of the next corner before the attacker gets alongside,
+  with a single move made before the braking zone, as in real racing. Never in the braking zone, never once the
+  attacker is alongside, never against a car lapping it, never on the first lap.
+- **Slipstream taken every time:** an AI in tow range lines up right behind the car ahead on the straights (within
+  about 30 cm), stays in the tow and pulls out at the last moment: about 1 m behind, at the point where it can still
+  get alongside before braking, or as soon as its speed lets it complete the pass, whichever comes first. The attack
+  stays alive while it waits in the tow.
+
+#### Blue flags and traffic
+- **Backmarkers let the leaders through cleanly in corners:** while the faster car is alongside or just ahead, the
+  backmarker keeps lifting, brakes earlier and keeps its side through the corner, and does not attack the car that
+  just passed it for a few seconds.
+- **AI turn signals:** an AI moving aside signals on the side it moves to, and a slow AI at the edge turns on its
+  hazard lights (new setting, on in every preset; some car mods have no turn signals).
+
+#### Incidents and yellow flags
+- **Crashed AI keep their chance:** while the app tries to restart a crashed AI, AC no longer sends it back to its
+  pit box after a few seconds.
+- **Retirements in races:** an AI towed back to its pit box in a race (broken or stuck) now retires and stays parked
+  until the end, as in real racing (not after a red flag).
+- **Tail of the field on the first lap:** in braking zones, a car arriving much faster reacts earlier.
+- **Track light panels while you watch:** when your car is in the pits, the CSP track light panels follow the car the
+  camera is on and turn yellow as it nears a yellow zone (CSP has a single flag for the whole track).
+
+#### Safety Car, red flag and starts
+- Lapped cars unlap behind the Safety Car (single class), finish under the Safety Car, red flag that waits for a
+  clear track, Safety Car leaving first after a red flag, aborted start with an extra formation lap. See the details
+  below.
+
+#### Strategy and pits
+- A configured mandatory stop is always kept, whatever the race length; only a stop that is impossible in a very
+  short race is lifted. A stop made under a neutralisation counts as the mandatory stop (F1 rules).
+
+#### Overlay and window
+- **Each overlay element can be shown, hidden and placed separately on each AC desktop**, and the app remembers it
+  per desktop. The AdvancedIA window is now in AC's apps bar on every desktop and can be opened while you drive
+  (compact view, full view a click away).
+
+#### Companion apps: bridge v2
+- The read-only bridge for companion apps moves to version 2: it now tells which AI retired, the reason for each
+  AI's last sanction, and the track-limit and penalty-serving thresholds. Companion apps need their bridge-v2 update
+  (SpotterEnginer 1.3.9 or later). AdvancedIA never depends on them.
+
+### Details: the 2.0.0 work after the first test builds
+
+#### AI turn signals
+- **AI cars now use their turn signals:** an AI moving aside to let a car through signals on the side it moves to
+  (track day, practice, qualifying; in a race only for blue flags or a faster class), and a slow AI held at the edge
+  turns on its hazard lights. Never while attacking or defending, never on your car. On by default (Clignotants des
+  IA / AI turn signals, in the lateral settings). Some car mods have no turn signals or have them swapped in their
+  model.
+
+#### Start
+- **Aborted start on an app grid:** a new incident on the grid or at the lights of a standing start run by the app
+  (after the formation lap, or a standing restart after a red flag) no longer launches the race under yellows. The
+  whole field does one more formation or restart lap in single file, without overtaking, announced as « start
+  delayed », then forms a new grid with new lights. The AI at the origin is held in place until the field has passed
+  and moves off behind it, never teleported; a car at the origin that has been passed starts from the back of the new
+  grid. A car hit while waiting in its place is not treated as the origin. After three aborted starts in a row, the
+  extra lap ends with a rolling start. In a race too short for one more lap and a new start, the race is launched as
+  before. AI jump starts at an app grid are now taken at lights out, so an aborted start forgets them, as it already
+  did for the player.
+  Verified by new locked tests (extra lap, back of the grid, hold, traffic behind, recovery, red-flag order, rolling
+  start) and mutations.
+
+#### Rules
+- **Red flag: clear track at the maximum delay:** at the maximum delay, AI still stopped on the track are recovered
+  to their pit box and the restart waits for a clear track (15 s at most); if they cannot be recovered, the restart
+  comes anyway (race: behind the Safety Car, or under VSC/FCY; practice and qualifying: session resumed) with a log
+  line naming the first car and where it stands. After such a forced restart, the restart lap keeps its normal length
+  (the car left on the track stays under yellow, when yellow flags are on, and no longer extends it), and a standing
+  restart becomes a rolling start if that car is still on the track at the end of the lap. Each AI keeps its own pit
+  box (documented as a simplification).
+  Verified by new locked tests (clear track, forced restart, practice and qualifying, scope, recovery line, restart
+  lap, standing restart), integration cases and mutations.
+- **Mandatory stop kept in short races:** a configured mandatory stop (from a rule set or set by hand) is always
+  kept, whatever the race length, and never announced as a sprint race; the 1.63 short-race window still closes
+  before the last lap. Only a stop that is impossible in a very short race (no lap left for the window) is lifted.
+  Verified by locked tests and mutations.
+
+#### Safety Car
+- **Lapped cars unlap behind the Safety Car:** in a single-class race with a known length and at least three laps to
+  go, once the queue has formed, the lapped cars in it are allowed one at a time, by name (overlay message and
+  companion-app bridge), to overtake the queue and the Safety Car, which comes in at the end of the following lap. A
+  car allowed to unlap is not under the Safety Car rules (no delta, no penalty for its passes) and drives at most
+  30 km/h faster than the car it passes; the procedure has time limits and stops on a new incident, a red flag or a
+  switch to FCY. Behind the Safety Car, the AI now weave only while their tyres are below working temperature.
+- **Finish under the Safety Car:** when the last lap starts under the Safety Car, it comes in without a restart and
+  the cars take the chequered flag in queue order, without overtaking; called during the last lap, it stays in the
+  pits. No red flag after the chequered flag; finished cars are free; the hold ends once every car is home (one Safety
+  Car lap at most), and the usual restart takes over if no chequered flag is shown. The Safety Car never leads the
+  field through the pit lane (documented as a limitation).
+  Verified by new locked tests and mutations.
+- **Safety Car procedures, review fixes:** in a timed race with an extra lap, the neutralised finish waits for the
+  real last lap, and the extra lap is counted in the laps left for unlapping. Unlapping now checks before each car is
+  allowed that enough laps remain for the cars still to unlap plus the Safety Car's last laps, so it never makes the
+  race end behind the Safety Car. Unlapped cars drive close to race pace until they near the back of the queue, then
+  take its pace; the Safety Car still comes in at the same moment. A car on the leader's lap far behind him in a long
+  queue is no longer taken for a lapped car. Multi-class detection now looks at every classified car, yours included.
+  If the finish is neutralised while the Safety Car is leaving its box, it is brought back to its box, and a Safety
+  Car that is neither leading the queue nor coming in is never a queue target and passing it is no offence. A
+  neutralised finish cancelled with the Safety Car already recalled gives the green flag at once, with the usual
+  restart rule. The last-lap message no longer says the Safety Car comes in.
+  Verified by new locked tests and mutations.
+
+#### Interface
+- **Window in game:** the AdvancedIA window can now be opened while you drive from AC's apps bar. It opens on a
+  compact view (profile and preset, AI state, current flag, overlay on/off) with a full view a click away; it stays
+  closed until you open it, and settings read at the start of a session are greyed there.
+
+
+### Details: the first 2.0.0 test builds
+
+#### Replay and panels (community reports)
+- Watching a replay in the middle of a race no longer ends the race in the app: while a replay is shown, nothing is read for the finish, the lap, the passes or a session change, and on return the app settles for 2 s before detecting a finish again; a real finish is still recognised.
+- Track light panels: documented that they only show your own blue flag (CSP has a single race flag, the player's); AI backmarkers still get their blue flags and yield.
+
+#### Rules
+- **Mandatory stop under neutralisation (F1 rules, compound change on):** as in real F1, a stop made under a VSC, a
+  Safety Car or an FCY now counts as the mandatory stop even before the window opens (the « cheap stop » strategy); the
+  AI strategists no longer hold that stop back. A red-flag tyre change still counts as before; a green-flag stop before
+  the window still does not; other rule sets keep their window. Journal: « arret aux stands compte sous neutralisation,
+  avant la fenetre: <name> ».
+
+- **Restart after a red flag:** the Safety Car now leaves first and the AI stay in their pit boxes until it is on
+  track and 150 m past its entry, then leave one by one in the red-flag order; the restart waits for a calm pit lane.
+  A Safety Car that stays stopped in its box is placed near the pit exit after 4 s, with every hold cleared and the
+  field still held; the pit-exit position is kept per track for the next launch.
+- **Safety Car pace:** no fixed speed cap any more (it no longer sat at 160–180 km/h on straights); it never goes
+  faster than the car right behind it can follow, and cars far behind catch up relative to its own speed. A car that
+  is ahead of it without having passed it lifts until it is back in front. It waits up to 3 laps for the queue to form.
+- **Red flag on a pile-up:** only when 5 cars are still stopped for 10 s within the same 200 m; spins that rejoin no
+  longer trigger it.
+- **Danger zones kept per track:** a corner that produces a pile-up (first lap and restarts included) is kept in a small
+  file per track, even with track memory off, and slows the AI there from lap 1 of the next launch; it goes up a level
+  when incidents keep happening and fades after calm launches. Never applied to the player, a hotlap or a flying lap.
+
+#### Racing
+- **Danger zone:** a difficult spot (three cars off at the same place within five minutes) now also caps the AI's
+  speed there, 4 % under the pace each AI learnt at that place, from 150 m before to 100 m after it; raised to 7 % after two
+  more incidents close by. Some tracks have an AI line too fast for some cars in one corner, and the whole field went off
+  there one after another (caution alone was not enough). Never the player's car; a spot kept by the track memory gets the
+  first level. Journal: « zone dangereuse », « zone dangereuse relevee ».
+- **Red flag on a pile-up:** 5 cars spun, stopped off the track or damaged within the same 200 m in less than a minute now
+  bring out the red flag even when the track is still passable (first lap included, never the formation lap). Undamaged
+  cars waiting behind the accident never count. Otherwise the rule is unchanged (track really blocked).
+- **Cool-down lap after the chequered flag** (race): an AI that has crossed the finish line no longer does its in-lap
+  flat out. Its top speed is capped at 70 % of the pace it learnt at each place (fallback: 70 % of its speed when it
+  finished, never under 50 km/h), lowered by at most 3 m/s² so it never brakes hard; with a car still racing less
+  than 150 m behind, it moves gently towards the wider free side (never towards a car alongside). The cap is kept once
+  the session is over (the engine no longer drives the field then) and given back to AC in the pit lane, at the next
+  session and when the app stops. The player's car is never touched. Journal: « tour de deceleration: <name> ».
+- **Crashed AI that can still drive:** an AI stopped in an incident (3 s, or 8 s without moving away, against a wall)
+  whose engine, suspension and gearbox still work is asked to restart (AC's post-incident wait lifted, car woken up)
+  when the track behind is clear, at most 3 times, every 6 s, within 40 s; while it tries it is not towed. Once it
+  has moved away it keeps lapping (the damage pit stop calls it in if needed). Towed as before only when it really
+  cannot go on: engine dead, suspension or gearbox broken, or no move after its attempts. Red flag and neutralisation
+  keep their own rules. Journal: « IA accidentee: redemarrage demande », « IA accidentee repart (redemarree, …) »,
+  « IA accidentee ne peut plus rouler: <reason> ».
+
+#### Tuning for single-seaters
+- **Attack push between AI (race):** an AI attacking a car less than about 1 s ahead (in the tow, pulling out or alongside) pushes like a real driver: level +3 % and normal caution on the straight and under braking, at most 10 s per attempt, not again on the same car for 20 s; never on the careful first lap, under a flag or against you. The F1 races showed 17 attempts and no completed pass between identical cars.
+- **No hesitation when a pass is on (race):** with a car less than about 1 s ahead, the attack arms after 0.2 s instead of the usual confirmation and needs half the ground gained; it can arm at a corner exit (no brake, throttle down, not on the careful first lap); « no closing » now ends an attempt only when the gap has really grown (3 m), an attempt at equal speed carries on (at most 30 s before being side by side).
+- **Turn-1 pile-ups (careful first lap):** in a braking zone, a driver already braking with a car less than 6 m ahead gets a dosed brake (at most 0.3) instead of a lift that did nothing, even with a car right behind; a car touching close ahead in a corner (under 2.5 m, closing slowly) is now seen by the front radar.
+- **Crashed AI under a neutralisation:** an AI that can still drive restarts under a VSC, an FCY or the Safety Car too (it was towed after 20 s); never under a red flag.
+- **Journal:** one line per attack push (« attaque poussee: X -> Y ») and its count in the minute summary; a crashed AI declared unable to drive is no longer logged as restarting a second later, and its last restart attempt gets 6 s more before the verdict.
+- **Slipstream:** an attacker right in the wake of the car ahead stays in the tow and pulls out at the last moment:
+  3 m behind, when it can no longer close in, or when the straight left is just long enough to get alongside before
+  braking (before: up to about 22 m behind at speed).
+- **Blue flags in the race:** a lapping car less than 1.5 s behind keeps the blue flag shown even if it is briefly
+  slower (braking); the lapped car lifts to 15 km/h under the lapping car on the straight, and its yield is not ended
+  by the maximum duration while the lapping car is still right behind. The car lapping another one never gives it
+  the corner.
+- **Avoidance:** the swerve and the slowdown match how much the stopped car really overlaps the AI path; a car
+  stopped beside the line (verge, corner) no longer makes the AI swerve or lift hard in a fast corner.
+- **First lap:** extra caution capped lower (1.6 times the usual, was 2) and no extra caution below 70 % of the
+  learned pace (was 60 %), so the back of the field flows through the first corners.
+- **Damage pit stops:** bodywork threshold 150 (was 80): light touches no longer call a car in.
+
+#### Big grids: fewer sanctions, fairer judging
+- Under a Virtual Safety Car, Safety Car or FCY, an AI that passes another car is first told to give the place back; it is
+  sanctioned only if it keeps the place beyond the give-back time. Before, every small reshuffle of a dense queue gave an
+  immediate sanction.
+- In a local yellow zone, a pass made on the careful first lap, or on a car that is avoiding or braking hard (under 70 % of
+  the passer's speed), is also a place to give back first.
+- Contacts: a nudge without loss of control (under 8 km/h of speed difference), or a first-lap contact under 30 km/h, is
+  nobody's fault; a contact that sends the other car off is still judged.
+- Track limits for the AI: an exit with another car right beside or just ahead or behind (pushed wide), or on the careful
+  first lap, is excused; it still helps detect places where the AI line itself runs wide.
+
+#### Journal
+- A line when a yellow zone opens (car, place, single or double), when it turns double and when it closes, with
+  yellow flags on.
+- Internal: an unused field shared with the companion app is no longer reset (the companion app never read it).
+
+#### SetupLab
+- When the SetupLab app is installed, a read-only key `AdvancedIA.session` tells it the session, the rules, whether
+  your current and last laps were clean (neutralisation, red flag, yellow, delta, penalty), whether DRS is allowed, the
+  compound change still owed, the app's frame cost and the mean clean AI lap. Nothing is shown, no setting, nothing changes
+  for the AI or for SpotterEnginer.
+
+#### Review fixes
+- Danger zones: an AI capped in a danger zone no longer learns its pace there (the learnt pace, the fleet median and the saved pace map no longer drift down lap after lap); never in hotlap or on a qualifying flying lap; on a track day the traffic cap no longer inherits the zone cap.
+- Avoidance by overlap: the share is fixed when the avoidance starts and never decreases, so the AI clears the obstacle completely and no longer hesitates between the gap and its line.
+- Corner priority: a car being lapped by the player is still given the corner when its nose is ahead (the player is not driven by the app); an AI being lapped gives the corner to the car lapping it even with its nose ahead (blue flag: it lifts and keeps its line).
+- Red flag on carnage: only cars still down when the verdict falls (stopped or immobilised in an incident) count; spins that drive away do not.
+- Crashed AI restart: attempts are counted per incident (a car that moves 15 m and stops again does not get three new attempts); on the track with traffic that never clears, it is towed after the usual delay.
+- Attack push: never on a wet track nor while giving up an attempt; no extra level under braking.
+- Corner-exit arming only on a real exit (curvature decreasing), never in the middle of a fast corner; in a race, an invitation in a corner starts in the armed state.
+- Late pull-out from the wake and eager arming: between AI only, never behind the player.
+- Blue flag hold: only for a blue flag already shown, and never against the « nuanced lapped cars » option.
+- Formation lap: only a delayed car (spin or stop during the lap) loses its place; a car simply passed keeps its starting place, and the one that passed it goes back to its own.
+- Grid: when the lights come on before the player has reached his place, reaching it at speed before the lights go out is a jump start, as from standstill.
+- Race: an overtaking attempt now ends after 30 s without getting alongside (the pair is then put on hold), so a hopeless attempt does not block the attacker for ever.
+
 ## Beta 1.62 — November 2026
 
 Built from test sessions and from rules

@@ -94,6 +94,8 @@ end
 -- Régime de delta du joueur hors zone : genre, pourcentage et vitesse de repli. Voiture de sécurité appelée ou encore
 -- dans la voie des stands : delta FCY. Drapeau rouge : jusqu'à la voie des stands.
 local function regime(inc,frame,p,a)
+ -- Beta 1.64 (lot 5) : joueur autorisé à se dédoubler, ou arrivé pendant une arrivée neutralisée : aucun delta.
+ local pc=frame.player>0 and inc.cars and inc.cars[frame.player]; if pc and pc.scFree==true then return '' end
  if inc.red then if a.pit then return '' end; return 'red',p.redDeltaPct,p.redFlagSpeedKmh end
  if not inc.neutral then return '' end
  -- Beta 1.60 (tranche E) : tour de formation du départ : aucun temps delta (tenir sa place suffit).
@@ -102,6 +104,8 @@ local function regime(inc,frame,p,a)
  if mode=='vsc' then return 'vsc',p.vscDeltaPct,p.fcySpeedKmh end
  if mode=='sc' then
   local merging=inc.safetyPhase=='call' or inc.safety>0 and frame.cars[inc.safety].pit
+  -- Beta 1.64 (lot 5) : arrivée neutralisée : delta de la file derrière la voiture de sécurité jusqu'au damier.
+  if inc.scFinal==true then return 'sc',K.scCatchPct,K.scNominalKmh+K.scCatchUp end
   if merging then return 'scCall',p.fcyDeltaPct,p.fcySpeedKmh end
   -- Relecture du lot 3 (S5) : voiture de sécurité en piste à son allure libre : la référence du joueur est celle du
   -- rattrapage des IA (K.scCatchPct), sinon il ne pouvait pas rejoindre la file sans infraction.
@@ -173,6 +177,12 @@ function M.update(d,frame,p,inc,states,now,dt,queued)
  -- Double drapeau jaune : delta propre à la zone, remis à zéro à l'entrée (depuis l'extérieur de toute zone), plancher
  -- de freinage depuis le panneau d'approche. Simple jaune (incident hors piste) : pas de delta.
  local z=d.zone
+ -- Correctif 1.63 (règlement du tour de formation) : jaunes locaux sans delta de zone pendant le tour de formation.
+ if inc.formation and not inc.red then
+  z.on=false; d.inside=false; d.wasZone=inc.playerZone
+  if c.on and not c.pit then d.value=c.delta; d.kind=c.kind end
+  return
+ end
  if inc.playerZone and not d.wasZone then d.signalAt=now; d.signalKmh=a.kmh end
  d.wasZone=inc.playerZone
  local inside=inc.playerInside and not a.pit and a.valid and a.splineValid

@@ -26,7 +26,9 @@ end
 tests.FIRST_LAP_STRAIGHT_150=function()
  -- Approche modérée (+50 km/h) à 1,1 s : pied tenu, compté ; pas de prudence d'écart en temps en ligne droite.
  local cmd,e=straight(20,100)
- assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9 and (e.stats.flHold or 0)>=1,'1.1 s on a straight: foot kept down, counted')
+ -- Premier tour 1.63 : à 1,1 s du contact, le radar n'agit plus du tout (garde-fou sous K.flGuardTTC s) : pied tenu, sans
+ -- même passer par la règle (plus de compte).
+ assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9 and ((e.stats.flHold or 0)>=1 or (e.states[2].radarTTC or 99)>=K.flGuardTTC),'1.1 s on a straight: foot kept down')
  assert(math.abs((e.states[2].flFactor or 1)-1)<1e-6,'no time-gap caution on the straight')
  -- 0,55 s, couloir libre : pied tenu ; piste étroite : levée dosée.
  cmd=straight(12,100); assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'free lane: foot kept down')
@@ -67,7 +69,8 @@ tests.START_REPLAY_PUSHED_150=function()
  for _=1,20 do F.tick(e,f,1/60) end
  local cmd=e.commands[2]
  assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'pushed by the player at full throttle: no lift, no brake')
- assert((e.startHold or 0)>=1 and count(e,'radar avant: ')==0,'held and not logged as a radar event')
+ -- Premier tour 1.63 : contact à 0,88 s, au-delà du garde-fou (K.flGuardTTC s) : le radar n'agit pas (rien à tenir).
+ assert(((e.startHold or 0)>=1 or (e.states[2].radarTTC or 99)>=K.flGuardTTC) and count(e,'radar avant: ')==0,'held and not logged as a radar event')
  -- Sous K.radarStraightTTC s sans couloir (5 m à +41 km/h), joueur à 3 m à +71 km/h : ni levée ni frein.
  local e3,f3=careful(4)
  F.place(f3,3,5+4.4,120); F.place(f3,2,0,161); F.place(f3,1,-(3+4.4),232); F.place(f3,4,-3000,100)
@@ -107,6 +110,8 @@ tests.START_REAL_1309_150=function()
   local cmd,e=real(case[1],case[2],case[3],case[4])
   assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,string.format('AI braking to follow, %d m +%d km/h, follower %d m, %d s after the start: foot kept down',case[1],case[2],case[3],case[4]))
   assert(count(e,'radar avant: ')==0,'not a radar event')
+  -- Beta 2.0.0 (mutation 1.50 restée invisible) : un freinage de suivi n'est jamais le premier freinage du peloton.
+  assert(e.startPackSpline==nil and not e.states[2].startBraked,'follow brake: not the pack first braking')
  end
  local cmd=real(3,13,4,18,true); assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'behind the player, 3 m +13 km/h: foot kept down')
  cmd=real(10,41,4,30,false,true); assert(cmd.brake==0 and (cmd.throttleLimit or 1)>=1-1e-9,'after the launch, first lap, braking to follow, 0.88 s, no lane: foot kept down')
@@ -124,7 +129,7 @@ end
 -- Stratégie corrigée pendant la course : avertissement levé, annonce « pitPlanOk » une fois.
 tests.PIT_PLAN_OK_150=function()
  local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); C.applyRules('F1',e.profiles); E.changed(e)
- f.sessionLaps=10; f.leaderLaps=3
+ f.sessionLaps=11; f.leaderLaps=3
  local a=f.cars[1]; a.compoundIndex=0; a.tyresKnown=true; a.tyreNames={[0]='SS',[1]='S',[2]='M'}; a.dryList={0,1,2}; a.dryCompounds={[0]=true,[1]=true,[2]=true}
  local spinner={name='TYRES',type='compound',min=0,max=2,value=0,values={0,0,0}}
  e.pitSpinners=function() return {spinner},0 end
@@ -152,7 +157,7 @@ end
 -- Stratégie des stands lue après des redémarrages de session avant le vrai départ (journal du 5 novembre, 11:23).
 tests.PIT_PLAN_RESTARTS_150=function()
  local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); C.applyRules('F1',e.profiles); E.changed(e)
- f.sessionLaps=10; f.leaderLaps=3
+ f.sessionLaps=11; f.leaderLaps=3
  local a=f.cars[1]; a.compoundIndex=0; a.tyresKnown=true; a.tyreNames={[0]='SS',[1]='S',[2]='M'}; a.dryList={0,1,2}; a.dryCompounds={[0]=true,[1]=true,[2]=true}
  local reads=0
  e.pitSpinners=function() reads=reads+1; return {{name='TYRES',type='compound',min=0,max=2,value=0,values={0,0,0}}},0 end
@@ -165,7 +170,7 @@ end
 -- sans entrer : fini pour ce tour ; tour suivant : de nouveau, une fois.
 tests.PIT_HINT_LATCH_150=function()
  local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); C.applyRules('F1',e.profiles); E.changed(e)
- f.sessionLaps=10; f.leaderLaps=5
+ f.sessionLaps=11; f.leaderLaps=5
  local a=f.cars[1]; a.compoundIndex=0; a.tyresKnown=true; a.tyreNames={[0]='SS',[1]='S',[2]='M'}; a.dryList={0,1,2}; a.dryCompounds={[0]=true,[1]=true,[2]=true}
  F.tick(e,f,0.5)
  local b=f.cars[2]; F.place(f,2,3000,150); F.tick(e,f,0.2); b.pit=true; F.tick(e,f,0.2); b.pit=false; F.place(f,2,6000,150)
@@ -276,9 +281,12 @@ tests.SC_RELAUNCH_EXIT_150=function()
  f.cars[1].pit=true; F.place(f,1,100,0); f.cars[1].pit=true; f.cars[1].inPitBox=true
  for _=1,200 do if not t.red then break end; F.tick(e,f,0.5) end
  assert(t.relaunch and t.safetyPhase=='exit' and e.commands[6].scRelease,'relaunch: it leaves first')
- F.tick(e,f,K.scLeaveStill-2); assert(e.commands[2].pitHold and t.restartState=='wait','field and player wait while it is still in its box')
+ F.tick(e,f,2); assert(e.commands[2].pitHold and t.restartState=='wait','field and player wait while it is still in its box (1.63: placed after 4 s still)')
  f.cars[6].inPitBox=false; F.tick(e,f,K.scExitGap-1); assert(e.commands[2].pitHold and t.restartState=='wait','just left: still held')
- F.tick(e,f,1.5); assert(t.safetyPhase=='exit' and t.restartState=='go','then the player (P1) goes')
+ -- Correctif 1.63 : retenus aussi tant qu'elle n'est pas en piste et à K.scExitGap s… puis 150 m de son entrée en piste.
+ F.tick(e,f,1.5); assert(t.safetyPhase=='exit' and t.restartState=='wait','1.63: still in the pit lane: still held')
+ f.cars[6].pit=false; F.place(f,6,400,80); F.tick(e,f,0.2); F.place(f,6,600,80); F.tick(e,f,0.2)
+ assert(t.safetyPhase=='out' and t.restartState=='go','then the player (P1) goes')
  f.cars[1].inPitBox=false; F.place(f,1,300,60); f.cars[1].pit=true
  for _=1,40 do F.tick(e,f,0.25); if not e.commands[2].pitHold then break end end
  assert(not e.commands[2].pitHold,'released behind them, in the frozen order')
@@ -338,9 +346,10 @@ local function neutralScene()
 end
 tests.NEUTRAL_GIVEBACK_150=function()
  local e,f=neutralScene(); local ai=e.penalties.ai
- -- IA passée devant le joueur sous neutralisation : sanction ET place à rendre.
+ -- IA passée devant le joueur sous neutralisation : place à rendre (correctif 1.63 : la sanction ne tombe que si elle
+ -- est gardée au-delà de K.aiGiveBackMax s).
  F.place(f,1,1000,70); F.place(f,2,1030,120); e.states[2].nextPerception=0; F.tick(e,f,1/60)
- assert((ai.count[2] or 0)==1 and ai.owe[2]==1 and count(e,'rend la place a Driver_1')==1,'illegal pass under FCY: place to give back')
+ assert((ai.count[2] or 0)==0 and ai.owe[2]==1 and count(e,'rend la place a Driver_1')==1,'illegal pass under FCY: place to give back first')
  for _=1,30 do F.place(f,1,1000,70); F.place(f,2,1030,ai.giveFrom[2] and e.commands[2].yellowLimit or 120); F.tick(e,f,1/60) end
  assert(ai.giveBack[2]==1 and e.commands[2].yellowLimit<120-1,'slowing down to let the player through: '..e.commands[2].yellowLimit)
  assert(Penalties.mayPass(e.penalties,1,2,e.time,f.player),'the player may retake the place')

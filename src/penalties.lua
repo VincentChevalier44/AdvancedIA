@@ -10,7 +10,7 @@ local M={}
 function M.new()
  return {lastAt=-math.huge,requestId=0,seconds=0,reason='',count=0,ahead={},regime=false,passedUnder=false,passMade=false,
   redBefore=false,redPending=false,stopPending=false,jumpPending=false,waiting={},regimeAt=-math.huge,whole=false,wholeAt=-math.huge,giveBack=0,giveBackUntil=0,deltaKind='',deltaValue=0,passed=0,kind='slow',disqualified=false,
-  ai={count={},slowUntil={},slowKmh={},slowFrom={},slowAt={},dq={},ahead={},regime={},passed={},lastAt={},waiting={},giveBack={},giveFrom={},giveAt={},owe={},oweUntil={},notes={}},
+  ai={count={},slowUntil={},slowKmh={},slowFrom={},slowAt={},dq={},ahead={},regime={},passed={},lastAt={},waiting={},giveBack={},giveFrom={},giveAt={},owe={},oweUntil={},oweLate={},notes={}},
   retake={},rel={index=0,long=0,lat=0,gap=0,sa=0,ttc=math.huge,same=false,alongside=false}}
 end
 local function clear(map) for k in pairs(map) do map[k]=nil end end
@@ -42,7 +42,7 @@ end
 -- Beta 1.59.1 (bedstyboi : pénalité pour avoir doublé des voitures accidentées) : aussi pendant K.passAfterIncident s
 -- après son accident ou la fin de son incident (elle repart au ralenti, souvent abîmée, la zone d'une autre encore active).
 -- Beta 1.60 : aussi une voiture nettement en difficulté sous drapeau (c.trouble, posé par src/director.lua).
-local function passable(b,c,p,now) return not b.valid or b.pit or b.offtrack or c.incident or c.holding or c.trouble==true or now-c.clearedAt<math.max(p.yellowHold,K.passAfterIncident) or now-c.lastCrash<K.passAfterIncident or b.kmh<p.obstacleSpeedKmh end
+local function passable(b,c,p,now) return not b.valid or b.pit or b.offtrack or c.incident or c.holding or c.trouble==true or c.scFree==true or now-c.clearedAt<math.max(p.yellowHold,K.passAfterIncident) or now-c.lastCrash<K.passAfterIncident or b.kmh<p.obstacleSpeedKmh end
 M.passable=passable
 -- Voiture qui purge une sanction (IA au pied levé, joueur aux gaz coupés ou disqualifié) : elle peut être doublée.
 local function serving(t,j,now,player)
@@ -92,9 +92,14 @@ function M.update(t,frame,p,profile,inc,now,_,d)
  -- jusqu'à la ligne après une reprise derrière la voiture de sécurité. Un dépassement en attente survit à la fin du
  -- régime : il est pardonné si la place est rendue, sanctionné à l'échéance sinon.
  local regime=inc.playerNoPass or inc.neutral or inc.red or inc.playerRestart==true
+ -- Beta 1.64 (lot 5) : joueur autorisé à se dédoubler, ou arrivé pendant une arrivée neutralisée : rien de jugé.
+ if i>0 and inc.cars and inc.cars[i] and inc.cars[i].scFree then regime=false end
  -- Beta 1.60 (fusion, doute de la tranche E) : tour de formation, les K.formationGrace premières secondes après le feu
  -- vert d'AC : un meilleur envol que la voiture voisine n'est pas un dépassement à rendre (rien de jugé, rien à rendre).
  if regime and inc.formation and not inc.red and not inc.playerNoPass and now-(inc.neutralSince or now)<K.formationGrace then regime=false end
+ -- Correctif 1.63 (règlement du tour de formation) : aucune pénalité du joueur pendant tout le tour de formation
+ -- (dépassement, delta) ; une zone jaune locale s'affiche, sans sanction.
+ if inc.formation and not inc.red then regime=false end
  if not regime then t.passMade=false; if t.retake[i] then clear(t.retake[i]) end end
  -- Fin d'un drapeau rouge : le joueur devait attendre la reprise dans la voie des stands (pas s'il a été annulé).
  local redEnded=t.redBefore and not inc.red and not inc.redCancelled; t.redBefore=inc.red
@@ -114,7 +119,7 @@ function M.update(t,frame,p,profile,inc,now,_,d)
  if ready and t.jumpPending and t.jumpMult then local mult=t.jumpMult; t.jumpPending=false; t.jumpMult=nil; return decide(t,'jump',p.penaltySeconds*mult,now,p) end
  if ready and t.jumpPending then t.jumpPending=false; return decide(t,'jump',p.penaltySeconds,now,p) end
  -- Delta négatif au passage d'un mini-secteur ou à la sortie d'un double drapeau jaune : nouveau départ du delta.
- if ready and d and d.infraction then
+ if ready and d and d.infraction and not (inc.formation and not inc.red) then
   t.deltaKind=d.infractionKind; t.deltaValue=d.infractionValue; Delta.penalized(d)
   return decide(t,'delta',p.penaltySeconds,now,p)
  end
@@ -131,7 +136,7 @@ function M.update(t,frame,p,profile,inc,now,_,d)
    local retake=entitled(t,i,j)
    -- Beta 1.48 : le joueur reprend sa place de l'ordre figé au drapeau rouge (reprise) : dépassement permis.
    local restore=Incidents.restoring(inc,i,j)
-   if restore then local r=P.relative(a,b,frame.length,t.rel); if r.same and r.long<-(a.length+b.length)*0.5 then Incidents.restored(inc,frame,i,j) end end
+   if restore then local r=P.relative(a,b,frame.length,t.rel); if r.same then Incidents.restored(inc,frame,i,j,r.long,(a.length+b.length)*0.5) end end
    local owed=(t.ai.waiting[j] and t.ai.waiting[j][i] or 0)>now or retake or restore
    if retake then local r=P.relative(a,b,frame.length,t.rel); if r.same and r.long<-(a.length+b.length)*0.5 then t.retake[i][j]=nil end end
    if passable(b,inc.cars[j],p,now) or serving(t,j,now,i) or owed then t.ahead[j]=nil; t.waiting[j]=nil
@@ -209,6 +214,8 @@ end
 -- sinon. Une zone jaune s'annonce, elle : dépassement sanctionné aussitôt. Renvoie les IA sanctionnées.
 function M.ai(t,frame,p,profile,inc,states,rows,now)
  if not p.aiPenalties or C.solo(profile) then clear(t.ai.giveBack); return nil end
+ -- Correctif 1.63 (règlement du tour de formation) : aucune sanction d'IA ni place à rendre pendant le tour de formation.
+ if inc.formation and not inc.red then clear(t.ai.giveBack); t.whole=false; return nil end
  local s=t.ai; local events=nil
  local whole=inc.neutral or inc.red
  if whole and not t.whole then t.wholeAt=now end
@@ -226,6 +233,8 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
    -- doubler reste un dépassement sous drapeau).
    local relaunch=inc.cars[i].restart==true and inc.standing~='grid' and inc.standing~='lights'
    local regime=states[i].yellow or whole or relaunch or a.offtrack and s.regime[i]==true
+   -- Beta 1.64 (lot 5) : IA autorisée à se dédoubler, ou arrivée pendant une arrivée neutralisée : rien de jugé.
+   if inc.cars[i] and inc.cars[i].scFree then regime=false end
    -- Beta 1.50 : neutralisation (VSC, FCY, voiture de sécurité) ou tour de relance : la place prise est à rendre.
    local neutral=inc.neutral and not inc.red or relaunch
    -- Place due après un dépassement interdit sous neutralisation : rendue dès que la voiture doublée est de nouveau
@@ -238,9 +247,12 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
      or s.dq[owed] and 'disqualifiee' or now>=(s.oweUntil[i] or 0) and 'delai depasse'
     local back=P.relative(a,b,frame.length,t.rel)
     if not why and back.same and back.long>(a.length+b.length)*0.5 then
-     s.notes[#s.notes+1]={kind='given',i=i,j=owed}; s.owe[i]=nil; s.oweUntil[i]=nil
+     s.notes[#s.notes+1]={kind='given',i=i,j=owed}; s.owe[i]=nil; s.oweUntil[i]=nil; s.oweLate[i]=nil
     elseif why then
      s.notes[#s.notes+1]={kind='dropped',i=i,j=owed,why=why}; s.owe[i]=nil; s.oweUntil[i]=nil
+     -- Correctif 1.63 : place à rendre d'abord (sans sanction) et jamais rendue à temps : sanction maintenant.
+     if s.oweLate[i] and why=='delai depasse' then events=sanction(t,s,i,owed,a,p,now,events,false) end
+     s.oweLate[i]=nil
     else s.giveBack[i]=owed end
    end
    local was=s.regime[i]; s.regime[i]=regime
@@ -263,7 +275,7 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
      local retake=entitled(t,i,j)
      -- Beta 1.48 : reprise de sa place de l'ordre figé au drapeau rouge : dépassement permis.
      local restore=Incidents.restoring(inc,i,j)
-     if restore and r.same and r.long<-(a.length+b.length)*0.5 then Incidents.restored(inc,frame,i,j) end
+     if restore and r.same then Incidents.restored(inc,frame,i,j,r.long,(a.length+b.length)*0.5) end
      local owed=(s.waiting[j] and s.waiting[j][i] or 0)>now or j==frame.player and (t.waiting[i] or 0)>now or retake or restore
      if retake then local fresh=P.relative(a,b,frame.length,t.rel); if fresh.same and fresh.long<-(a.length+b.length)*0.5 then t.retake[i][j]=nil end end
      if passable(b,inc.cars[j],p,now) or owed or not r.same or abs(r.long)>K.passWatch then ahead[j]=nil
@@ -273,7 +285,15 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
       if r.long>half then ahead[j]=true; waiting[j]=nil
       elseif r.long<-half then
        if ahead[j] and regime then
+        -- Correctif 1.63 (grilles de 60, rapport public : une sanction à chaque petite permutation du peloton dense) :
+        -- sous neutralisation (hors transition), la place se rend d'abord (owe, K.aiGiveBackMax s au plus), sanction
+        -- seulement si elle n'est pas rendue à temps ; dans une zone jaune, au premier tour attentif ou en doublant une
+        -- voiture qui évite ou lève fortement le pied (moins de K.passLenientRatio de la vitesse du doubleur) : place à
+        -- rendre avant l'échéance K.passGiveBack, sinon sanction. Règle réelle : « rendre la place ».
+        local lenient=not transition and not inc.red and (neutral or (states[i].flW or 0)>0 or states[j]~=nil and states[j].state=='AVOID' or (b.kmh or 0)<(a.kmh or 0)*K.passLenientRatio)
         if transition then waiting[j]=deadline(t.wholeAt,now)
+        elseif lenient and neutral then grant(t,j,i); if not s.owe[i] then owe(s,i,j,now); s.oweLate[i]=true end
+        elseif lenient then waiting[j]=deadline(now,now)
         -- Une infraction au plus par délai, comme pour le joueur : plusieurs voitures doublées d'un coup, une sanction ;
         -- la voiture doublée peut reprendre sa place dans tous les cas.
         else grant(t,j,i); if now-(s.lastAt[i] or -math.huge)>=K.penaltyCooldown then events=sanction(t,s,i,j,a,p,now,events,neutral) elseif neutral then owe(s,i,j,now) end end
@@ -292,7 +312,7 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
    end
   -- Voie des stands : rien n'est suivi (places gagnées par un arrêt).
   elseif a.pit then clear(ahead); clear(waiting)
-   if s.owe[i] then s.notes[#s.notes+1]={kind='dropped',i=i,j=s.owe[i],why='aux stands'}; s.owe[i]=nil; s.oweUntil[i]=nil end
+   if s.owe[i] then s.notes[#s.notes+1]={kind='dropped',i=i,j=s.owe[i],why='aux stands'}; s.owe[i]=nil; s.oweUntil[i]=nil; s.oweLate[i]=nil end
   end
  end
  return events

@@ -269,6 +269,7 @@ return function(trackName,setName,opts)
       if not pair[key] then
        pair[key]=true; R.contacts=R.contacts+1
        if o.appUntil>t then R.contactsApp=R.contactsApp+1; R.why=R.why or {}; R.why[o.appWhy]=(R.why[o.appWhy] or 0)+1 end
+       R.contactLog=R.contactLog or {}; R.contactLog[#R.contactLog+1]=string.format('%.1f s, %d touche %d, %.0f km/h vs %.0f km/h, voiture touchee: %s',t,k,ord[q],c.v*3.6,o.v*3.6,o.appUntil>t and o.appWhy or '-')
        local zz=c.z%L
        if c.z>=L*(laps-1) and c.z<L*laps and zz>=corners[1].at-400 and zz<=corners[1].at+corners[1].len then R.contactsFirst=R.contactsFirst+1 end
       end
@@ -287,7 +288,13 @@ return function(trackName,setName,opts)
    if opts.formation then a.position=c.rank or c.grid end
    if c.z>=L*laps and not lapDone[k] then lapDone[k]=true; if k~=1 then lapSum=lapSum+t; lapN=lapN+1; R.lap1Last=max(R.lap1Last,t) end end
   end
+  -- Affinage 1.63 (lot 3) : vitesse la plus basse des voitures parties de la 8e rangée ou plus loin (place 15+) dans
+  -- les trois premiers virages du premier tour (R.minRear, m/s).
+  do local zEnd=corners[math.min(3,#corners)].at+corners[math.min(3,#corners)].len
+   for k=2,n+1 do local c=cars[k]; if c.grid>=15 and c.z>=corners[1].at-300 and c.z<=zEnd then R.minRear=math.min(R.minRear or math.huge,c.v) end end end
   F.tick(e,f,dt)
+  -- Affinage 1.63 (tour de formation) : mesure facultative à chaque image (outil seulement).
+  if opts.each then opts.each(e,f,t,cars) end
   -- Mesures (premier tour de chaque IA).
   for k=2,n+1 do
    local c=cars[k]; local s=e.states[k]; local cmd=e.commands[k]

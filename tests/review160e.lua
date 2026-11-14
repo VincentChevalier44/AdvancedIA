@@ -144,26 +144,18 @@ tests.ROLLING_EXTRA_LAP_160E=function()
  local e2,f2=start(5,'rolling',function(e3,f3) e3.profiles.C.neutralization='local'; f3.cars[5].position=5; F.place(f3,5,700,0,5.5); f3.cars[5].offtrack=true; f3.cars[5].frozen=true end)
  assert(roll(e2,f2,90,function() return not e2.incidents.neutral end) and count(e2,'un tour de plus')==0,'incident beyond K.rollClearAhead: green')
 end
--- Incident majeur pendant le tour : formation abandonnée, FCY ordinaire (delta jugé), puis départ lancé sans grille.
+-- Correctif 1.63 (règlement du tour de formation) : incident majeur pendant le tour : jaunes locaux, jamais de FCY, de
+-- VSC ni de voiture de sécurité, aucun delta ; le tour de formation continue jusqu'à la grille.
 tests.FORMATION_INCIDENT_160E=function()
  local e,f=start(5,'formation',function(e2,f2)
-  e2.profiles.C.neutralization='fcy'; e2.profiles.C.redRestart='standing'; e2.profiles.C.safetyCarEscalation=false
+  e2.profiles.C.neutralization='fcy'; e2.profiles.C.redRestart='standing'; e2.profiles.C.safetyCarEscalation=true
   f2.cars[5].position=5; F.place(f2,5,600,0); f2.cars[5].frozen=true
  end)
  local t=e.incidents
- assert(roll(e,f,60,function() return t.formationAborted end),'formation abandoned on a major incident')
- assert(not t.formation and t.neutral and t.relaunch and t.neutralMode=='fcy','ordinary FCY takes over')
- assert(count(e,'depart: tour de formation abandonne (incident), neutralisation fcy')==1 and t.messageKind=='fcy','logged, FCY announced')
- F.tick(e,f,0.2)
- assert(e.panel.short==L.flagShort.formationOff,'panel: '..tostring(e.panel.short))
- assert(e.delta.course.on and e.delta.course.kind=='fcy','delta judged again: '..tostring(e.delta.course.kind))
- assert(published(e,f).standing=='form' and published(e,f).neutral==true,'bridge: an aborted formation lap stays « form » while its neutralisation lasts')
- -- Incident dégagé : drapeau vert au délai, départ lancé (jamais la grille, même avec redRestart=standing).
- f.cars[5].pit=true
- assert(roll(e,f,120,function() return not t.neutral end),'green flag')
- assert(t.standing=='none' and t.restart and not t.formationAborted and not t.relaunch,'rolling start, no grid')
- assert(e.fl.on and e.fl.kind=='depart lance' and t.messageKind=='rollGreen' and e.formation.phase=='none','race started at the green')
- assert(count(e,'formation de la grille')==0,'no grid')
+ assert(not roll(e,f,25,function() return t.formationAborted or not t.formation end),'formation lap kept on a major incident')
+ assert(t.formation and t.zoneCount>0,'local yellow zone shown')
+ assert(count(e,'tour de formation abandonne')==0 and count(e,'neutralisation: sc')==0 and count(e,'neutralisation: fcy')==0,'no FCY, VSC or Safety Car')
+ assert(not e.delta.course.on and not e.delta.zone.on,'no delta during the formation lap')
 end
 -- Refus : circuit trop long, en ligne ; grille indisponible : départ lancé ; course relancée par AC ; drapeau rouge.
 tests.FORMATION_REFUSED_160E=function()
@@ -239,7 +231,9 @@ end
 tests.START_BENCH_ROLLING_160E=function()
  local run=require('tests/startbench147')
  for _,sc in ipairs({{'short','gt3'},{'monza','f1'}}) do
-  local r=run(sc[1],sc[2],{mode='app',seed=1,laps=2,formation=true,seconds=900,tune=function(e) e.profiles.C.raceStart='rolling'; E.changed(e) end})
+  -- Premier tour 1.63 : journal du banc agrandi (les lignes de dépassement, plus nombreuses, chassaient celles du départ
+  -- du tampon de 200 lignes).
+  local r=run(sc[1],sc[2],{mode='app',seed=1,laps=2,formation=true,seconds=900,tune=function(e) local L=e.log; e.log=require('src/util').newLog(4000,L.rate,L.dedup); e.profiles.C.raceStart='rolling'; E.changed(e) end})
   local scene=sc[1]..'/'..sc[2]
   local function n(text) local c=0; for k=1,r.log.limit do local row=r.log[k]; if row and row.message and row.message:find(text,1,true) then c=c+1 end end return c end
   assert(n('depart: tour de formation (')==1 and n('depart lance: drapeau vert')==1 and n('abandonne')==0 and n('un tour de plus')==0,scene..': one formation lap, one green')
@@ -298,9 +292,11 @@ tests.FORMATION_BRIDGE_EDGES_160M2=function()
   e2.profiles.C.neutralization='fcy'; e2.profiles.C.safetyCarEscalation=false
   f2.cars[5].position=5; F.place(f2,5,600,0); f2.cars[5].frozen=true
  end)
+ -- Correctif 1.63 (règlement du tour de formation) : jamais abandonné sur incident (jaunes locaux) : « form » tenu.
  local aborted=false
- seen,rose,fell=watch(a,fa,60,function() if a.incidents.formationAborted then aborted=true end; return aborted end)
- assert(aborted and published(a,fa).standing=='form' and published(a,fa).neutral==true,'aborted formation lap: still « form » under its FCY')
+ seen,rose,fell=watch(a,fa,30,function() if a.incidents.formationAborted then aborted=true end; return aborted end)
+ local st=published(a,fa).standing
+ assert(not aborted and a.incidents.formation and (st=='form' or st=='roll') and published(a,fa).neutral==true,'formation lap kept: still « form » or « roll » ('..tostring(st)..')')
 end
 -- Annonce « formation » : extra 0 quand un départ arrêté suit le tour, 1 quand un départ lancé suit.
 tests.FORMATION_ANNOUNCE_EXTRA_160M2=function()
@@ -311,5 +307,14 @@ tests.FORMATION_ANNOUNCE_EXTRA_160M2=function()
  for i=1,4 do fq.cars[i].position=place(i); F.place(fq,i,slotZ(place(i)),0) end
  E.changed(q); q.gridCaps=false; F.tick(q,fq,1/60); fq.started=false; F.tick(q,fq,1/60); fq.started=true; F.tick(q,fq,1/60)
  assert(q.incidents.formation and q.incidents.formationKind~='formation' and q.incidents.messageExtra==1,'grid unavailable: rolling start announced')
+end
+-- SÃ©rie complÃ¨te 1.63 : dÃ©part lancÃ© choisi, relances arrÃªtÃ©es rÃ©glÃ©es (redRestart='standing') : Ã  la fin du tour de
+-- formation, jamais de grille (le choix du dÃ©part l'emporte sur la rÃ¨gle de relance).
+tests.FORMATION_ROLLING_REDSTANDING_163G=function()
+ local e,f=start(4,'rolling',function(e2) e2.profiles.C.redRestart='standing' end)
+ local t=e.incidents
+ assert(t.formationKind=='rolling','rolling start chosen')
+ assert(roll(e,f,90,function() return not t.neutral end),'green flag')
+ assert(t.standing~='grid' and count(e,'formation de la grille')==0,'rolling start kept: no grid, got '..tostring(t.standing))
 end
 return tests

@@ -31,7 +31,7 @@ function M.summary(e)
     if e.commands[i].active then managed=managed+1
     -- IA non gérée et sa raison (voiture de sécurité exclue).
     elseif not a.safetyCar then
-     unmanaged[#unmanaged+1]=i..' '..(a.pit and 'stands' or a.offtrack and 'hors piste' or a.finished and 'arrivee' or s.disqualified and 'disqualifiee' or s.excluded and 'ecartee' or e.time<s.errorUntil and 'erreur' or 'attente')
+     unmanaged[#unmanaged+1]=i..' '..(a.pit and 'stands' or a.offtrack and 'hors piste' or a.finished and 'arrivee' or s.disqualified and 'disqualifiee' or s.retired and 'abandonnee' or s.excluded and 'ecartee' or e.time<s.errorUntil and 'erreur' or 'attente')
     end
     if state=='DRIVE' then drive=drive+1 elseif state:sub(1,5)=='YIELD' then yield=yield+1
     elseif state:sub(1,3)=='OVT' then pass=pass+1 elseif state=='AVOID' then avoid=avoid+1 elseif state=='CALM' then calm=calm+1 end
@@ -92,6 +92,8 @@ function M.summary(e)
  local rCorner,rBudget,rfSide,rCorr,rClose,rAdv,rOther,soonRoom=c('refCorner'),c('refBudget'),c('refSide'),c('refCorridor'),c('refClosing'),c('refAdv'),c('refOther'),c('passSoonRoom')
  local rAll=rRoom+rShort+rSusp+rFirst+rZone+rFlag+rStart+rCorner+rBudget+rfSide+rCorr+rClose+rAdv+rOther
  local seekN=c('slipSeek') -- Affinage 1.62 : recherche de l'aspiration en ligne droite
+ local pushN=c('attackPush') -- Affinage 1.63 (lot 3) : attaques poussées
+ local diveN,slowN=c('diveOpen'),c('slowOpen') -- Premier tour 1.63 : attaques au freinage, voiture devant qui ralentit
  for key in pairs(n) do n[key]=0 end
  t.started=0; t.held=0
  -- Pneus des IA à l'instant du résumé, et météo retenue par l'app.
@@ -140,6 +142,8 @@ function M.summary(e)
   ..(rAll>0 and string.format(' | departs de depassement refuses : pas de place %d, ligne droite trop courte %d, paire suspendue %d, premier tour attentif %d, zone interdite %d, sous drapeau %d, phase de depart %d, virage ou freinage %d, budget de direction %d, cote occupe %d, couloir occupe %d, rapprochement insuffisant %d, avance insuffisante %d, autre raison %d',rRoom,rShort,rSusp,rFirst,rZone,rFlag,rStart,rCorner,rBudget,rfSide,rCorr,rClose,rAdv,rOther) or '')
   ..(soonRoom>0 and string.format(' | departs du cote qui s ouvre %d',soonRoom) or '')
   ..(seekN>0 and string.format(' | aspirations recherchees %d',seekN) or '')
+  ..(pushN>0 and string.format(' | attaques poussees %d',pushN) or '')
+  ..((diveN>0 or slowN>0) and string.format(' | attaques au freinage %d, voiture lente devant %d',diveN,slowN) or '')
   ..(r162>0 and string.format(' | regles des sessions : attaquant libre %.1f s, fin de tour gardee %d, tours refaits %d, ecart de sortie %d, chauffes en journee circuit %d, refroidissements en journee circuit %d, file de formation etiree %d, penalites drapeaux bleus %d',r162v[1],r162v[2],r162v[3],r162v[4],r162v[5],r162v[6],r162v[7],r162v[8]) or '')
  -- Fusion 1.61 : zones (tranche A), mémoire du circuit (tranche B), météo en direct (tranche E) ; compteurs de la minute
  -- remis à zéro après l'écriture (attaques attendues, lignes alternatives, anticipations, paris).

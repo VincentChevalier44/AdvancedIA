@@ -154,16 +154,33 @@ tests.FIRST_LAP_PASS_STRAIGHT_ONLY_147=function()
   return F.passing(e.states[2].state),e
  end
  assert(run(false),'straight, real advantage: pass')
- local passing,e=run(true); assert(not passing and (e.stats.flPass or 0)>=1,'braking point ahead: held, counted')
+ -- Premier tour 1.63 (consigne du pilote : « s'il y a de la place, ils doivent se doubler, même au premier virage ») :
+ -- un point de freinage devant ne retient plus l'attaque (côté libre et couloir vérifiés comme toujours).
+ local passing=run(true); assert(passing,'braking point ahead: attack still allowed')
+ -- Beta 2.0.0 (mutation 1.47 restée invisible) : la retenue du premier tour joue toujours quand son seuil l'exige
+ -- (marge d'avance forcée : la vraie avance ne suffit plus).
+ local margin=K.firstLapPassMargin; K.firstLapPassMargin=1e3
+ local ok,held=pcall(run,false); K.firstLapPassMargin=margin
+ assert(ok,held); assert(not held,'first lap: held without enough advance')
 end
 -- Tour suivant inchangé : une fois le mode fini et rendu, mêmes commandes qu'une course sans le mode.
 tests.FIRST_LAP_LAP2_UNCHANGED_147=function()
  local function place(e,f) F.place(f,1,-3000,0); for i=2,5 do F.place(f,i,-(i-2)*30,150) end end
+ -- Beta 2.0.0 (mutation 1.47 restée invisible) : plafond de l'agressivité du premier tour vérifié avec un plafond forcé.
+ do
+  local cap=K.firstLapAggr; K.firstLapAggr=0.8
+  local ok,err=pcall(function()
+   local c,fc=race(5,place); F.tick(c,fc,K.firstLapLineGrace+1)
+   for i=2,5 do assert(c.commands[i].aggression<=c.states[i].baseAggression*0.8+1e-3,'careful lap: aggression capped') end
+  end)
+  K.firstLapAggr=cap; assert(ok,err)
+ end
  local on,fon=race(5,place)
  local off,foff=race(5,function(e,f) e.profiles.C.firstLapCare=false; place(e,f) end)
  assert(on.fl.on and not off.fl.on)
  F.tick(on,fon,K.firstLapLineGrace+1); F.tick(off,foff,K.firstLapLineGrace+1)
- for i=2,5 do assert(on.commands[i].aggression<=on.states[i].baseAggression*K.firstLapAggr+1e-3 and off.commands[i].aggression>on.commands[i].aggression,'careful lap: aggression capped below the base') end
+ -- Premier tour 1.63 (« prudents mais très rapides ») : l'agressivité n'est plus plafonnée au premier tour (K.firstLapAggr=1).
+ for i=2,5 do assert(on.commands[i].aggression<=on.states[i].baseAggression*K.firstLapAggr+1e-3,'careful lap: aggression within the base') end
  for i=2,5 do fon.cars[i].lap=fon.cars[i].lap+1; foff.cars[i].lap=foff.cars[i].lap+1 end
  F.tick(on,fon,K.firstLapRelease+0.5); F.tick(off,foff,K.firstLapRelease+0.5)
  assert(not on.fl.on,'mode over')
@@ -268,7 +285,10 @@ tests.START_SCENES_147=function()
    assert(r.radarStraight-(r.radarLast or 0)<=5,scene..': no braking wave on the straights ('..r.radarStraight..', last resort '..(r.radarLast or 0)..')')
    -- Beta 1.50 : la règle du premier tour (évitement d'une voiture vraiment lente seulement) jugée sur l'IA qui évite ;
    -- les évitements d'une voiture à 18-24 km/h par des IA à 36-106 km/h (urbain, voitures de route) sont permis.
-   assert(r.avoidWave==0 and r.avoidPack<=4,scene..': no avoidance of a car at pack speed ('..r.avoidWave..', pack '..r.avoidPack..')')
+   -- Premier tour 1.63 : plus de dépassements, donc parfois un accrochage de plus ; les évitements comptés « peloton » sont
+   -- alors ceux de voitures accrochées à 15-25 km/h (état CALM, Monza voitures de route : 8) : plafond 8, règle inchangée
+   -- (avoidWave toujours 0).
+   assert(r.avoidWave==0 and r.avoidPack<=8,scene..': no avoidance of a car at pack speed ('..r.avoidWave..', pack '..r.avoidPack..')')
    assert(r.lap1Mean<=r.soloMean*1.12,scene..': no jam ('..r.lap1Mean..' s, alone '..r.soloMean..' s)')
   end
  end

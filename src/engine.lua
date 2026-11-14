@@ -7,6 +7,7 @@ local Classes=require('src/classes')
 local Traffic=require('src/traffic')
 local Weather=require('src/weather')
 local Incidents=require('src/incidents')
+local Dangerfile=require('src/dangerfile')
 local Pits=require('src/pits')
 local Pitplan=require('src/pitplan')
 local Panel=require('src/panel')
@@ -272,7 +273,7 @@ function M.new(g,profiles)
  e.rear=Rear.new(); e.blame=Blame.new(); e.mood=Mood.new(); e.wear=Wear.new(); e.pitloss=Pitloss.new(); e.formation=Formation.new()
  -- Beta 1.61 : états des modules des tranches A à E ; textes des clés annexes publiées pour SpotterEnginer (clé → texte,
  -- écrits par l'hôte quand ils changent).
- e.zonelearn=ZoneLearn.new(); e.pacemap=Pacemap.new(); e.nuance=Nuance.new(); e.antics=Antics.new(); e.wx=Wx.new(); e.sideText={}
+ e.zonelearn=ZoneLearn.new(); e.pacemap=Pacemap.new(); e.danger=Dangerfile.new(); e.nuance=Nuance.new(); e.antics=Antics.new(); e.wx=Wx.new(); e.sideText={}
  for i=1,K.maxCars do
   local s=Director.newState(); s.slot=i; e.states[i]=s
   -- Relecture 1.52 : dernier saut de position (IA anormalement lente), décalé par M.rebase (C.optionalTimerFields).
@@ -384,15 +385,101 @@ local function names(e,frame,now)
  end
 end
 M.names=names
+-- Beta 1.63 (coût par image) : pilotage étalé sur les grandes grilles. Une IA en conduite simple, loin de toutes les
+-- autres (aucun voisin à moins de STAGGER.gapTime s ni à moins de STAGGER.gapMin m, aucun à hauteur), hors stands,
+-- drapeaux, incident, premier tour, tour de formation, départ et neutralisation, n'est pilotée qu'une image sur
+-- STAGGER.stride2 (à partir de STAGGER.min2 voitures) ou STAGGER.stride3 (à partir de STAGGER.min3), à tour de rôle ;
+-- entre-temps elle garde ses commandes (l'applicateur les écrit à chaque image) et le temps écoulé est rendu au pas
+-- suivant (s.lagDt). La part du directeur dans le plafond d'accélérateur (remis à 1 à chaque image) est reprise.
+-- Coupé (enabled=false) : même limité aux voitures isolées, il fait diverger la course de ±1 à 2 événements dans les
+-- scènes de référence (une voiture pilotée à 30 Hz suit une trajectoire très légèrement différente) ; le pilote veut un
+-- comportement inchangé. Gardé, testé, pour une décision en jeu.
+local STAGGER={enabled=false,min2=25,min3=45,stride2=2,stride3=3,gapTime=3,gapMin=60,startGuard=30}
+M.STAGGER=STAGGER
+local function staggerStride(e,frame,now)
+ local count=frame.count
+ if not STAGGER.enabled or count<STAGGER.min2 then return 1 end
+ local inc=e.incidents
+ -- Prudence (demande du pilote) : rien d'étalé dès qu'une zone d'incident, un drapeau ou une phase particulière existe.
+ if inc.neutral or inc.red or inc.zoneCount>0 or inc.activeCount>0 or inc.holdCount>0 or e.fl.on or (e.formation.phase or 'none')~='none' then return 1 end
+ if e.launchAt and now-e.launchAt<STAGGER.startGuard then return 1 end
+ return count>=STAGGER.min3 and STAGGER.stride3 or STAGGER.stride2
+end
+local function farFromAll(e,i,s,now)
+ local a=e.frame.cars[i]
+ if s.state~='DRIVE' or a.player or a.pit or a.merging or a.finished or a.offtrack or a.teleport or (a.pitDistance and a.pitDistance<K.pitZone) or s.yellow or s.returning or s.bluePending or s.yieldBlue
+  or (s.seekFront or 0)~=0 or now<(s.lapseUntil or 0) or now<(s.pitExitUntil or 0) or (s.flW or 0)>0 then return false end
+ local ic=e.incidents.cars[i]
+ if ic and (ic.incident or ic.trouble or ic.holding) then return false end
+ local row=e.perception.rows[i]
+ local lim=math.max(STAGGER.gapMin,(a.speed or 0)*STAGGER.gapTime)
+ for j=1,row.count do local r=row.neighbors[j]; if r.alongside or r.gap<lim then return false end end
+ return true
+end
+M.farFromAllTest=farFromAll; M.staggerStrideTest=staggerStride
+-- Beta 1.63 (course du pilote à Suzuka : 70 incidents au même virage malgré le point difficile) : zone dangereuse.
+-- Près d'un point difficile armé (ou d'une zone « prudence » gardée par circuit), vitesse d'une IA plafonnée à
+-- (1 - part) fois son allure apprise à cet endroit (src/incidents.lua, dangerCut) ; jamais le joueur, ni dans les
+-- stands, ni allure inconnue, ni section Accidents coupée. Après le directeur : seulement un plafond plus bas.
+local function dangerCap(e,i,s,now)
+ local t=e.incidents; local zone=s.zone and s.zone.caution==true
+ s.dangerLowered=false
+ -- Relecture 1.63 (S6) : jamais en hotlap ni pendant un tour lancé de qualifications.
+ local q=e.quali
+ if e.profile=='H' or e.profile=='Q' and q and q.push and q.push[i] then s.dangerCapped=false; return end
+ local kept=e.danger and e.danger.n or 0
+ if not e.run.section_accidents or (t.hotspotN==0 and not zone and kept==0) then s.dangerCapped=false; return end
+ local frame=e.frame; local a=frame.cars[i]
+ local cut,fallback=0,0
+ if not a.player and not a.pit and a.valid and a.splineValid and frame.length>0 then
+  cut=Incidents.dangerCut(t,a.spline,frame.length,now,zone)
+  -- Correctif 1.63 : zones gardées par circuit (src/dangerfile.lua), dès le premier tour ; allure de la flotte gardée
+  -- en repli tant que l'allure de la voiture est inconnue (départ, premier tour).
+  if kept>0 then
+   local DK=Incidents.DK
+   -- Affinage 1.64 s1 (Monza S21, pilote : « toutes les voitures, à chaque tour, restent 2 à 3 s à 76 km/h en sortie
+   -- de la première chicane ») : zone gardée à 943 m (vitesse de la flotte 72,9 km/h, allure jamais apprise sous
+   -- plafond) : plafond seulement jusqu'à K.dangerKeptAfter m après la zone, et la vitesse de repli (vitesse au point
+   -- le plus lent) jamais au-delà de la zone : une voiture qui en ressort réaccélère librement.
+   local k,kmh,at=Dangerfile.cut(e.danger,a.spline,frame.length,DK.dangerBefore,K.dangerKeptAfter,DK.dangerPct)
+   if k>cut then cut=k; fallback=at>=0 and kmh or 0 end
+  end
+ end
+ local pace=cut>0 and Delta.pace(e.delta,e.states,i,Delta.bin(a.spline,e.delta.bins),e.run.multiClass==true) or 0
+ if pace<=0 and cut>0 and fallback>0 then pace=fallback/3.6 end
+ if pace<=0 then s.dangerCapped=false; return end
+ local cmd=e.commands[i]
+ local cap=pace*3.6*(1-cut)
+ -- Relecture 1.63 (S6) : plafond d'avant gardé, rendu au plafond de trafic de la journée circuit à l'image suivante.
+ if cap<cmd.speedLimit then s.dangerSaved=cmd.speedLimit; s.dangerLowered=true; cmd.speedLimit=cap end
+ -- Compteur : une fois par passage dans la zone.
+ if not s.dangerCapped then s.dangerCapped=true; e.stats.dangerCap=(e.stats.dangerCap or 0)+1 end
+end
+M.dangerCapTest=dangerCap
 local function drive(e,first,last,dt,now)
+ if e.staggerFrame~=e.frames then e.staggerFrame=e.frames; e.staggerStride=staggerStride(e,e.frame,now); e.staggerSkipped=0 end
+ local stride=e.staggerStride
  for i=first,last do
   carAt=i
   local s=e.states[i]
-  if s.excluded or now<s.errorUntil then e.commands[i].active=false
+  if s.excluded or now<s.errorUntil then e.commands[i].active=false; s.lagDt=0
   else
-   Director.step(e,i,dt,now)
+   local cmd=e.commands[i]
+   if stride>1 and (e.frames+i)%stride~=0 and farFromAll(e,i,s,now) then
+    s.lagDt=(s.lagDt or 0)+dt; e.staggerSkipped=e.staggerSkipped+1; e.stats.stagger=(e.stats.stagger or 0)+1
+    -- Champs de virage posés par le directeur et lus par d'autres modules (erreurs de pilotage, DRS) : tenus à jour.
+    local a=e.frame.cars[i]; a.corner=Director.cornerness(a.yawRate,a.speed,e.run.cornerYawRef); a.cornerYaw=U.clamp(1-math.abs(a.yawRate or 0)/e.run.cornerYawRef,0,1)
+    if (s.dirThrottle or 1)<1 then cmd.throttleLimit=math.min(cmd.throttleLimit or 1,s.dirThrottle) end
+   else
+    local t0=cmd.throttleLimit or 1
+    Director.step(e,i,dt+(s.lagDt or 0),now)
+    s.lagDt=0
+    local t1=cmd.throttleLimit or 1
+    s.dirThrottle=t1<t0 and t1 or 1
+   end
+   dangerCap(e,i,s,now)
    s.errorCount=0
-   if e.commands[i].active then e.activeCount=e.activeCount+1 end
+   if cmd.active then e.activeCount=e.activeCount+1 end
   end
  end
 end
@@ -449,6 +536,30 @@ function M.floodInit(e,user,system,writable)
  f.user=type(user)=='string' and user or ''; f.system=system; f.writable=writable==true; f.at=0
  f.loaded,f.minLength=Flood.state(f.user,system)
  U.log(e.log,0,'INFO',string.format('AI flood de CSP au lancement: %s (circuits d au moins %.1f km)%s',f.loaded and 'actif' or 'inactif',f.minLength/1000,f.writable and '' or ', reglage non modifiable par l app'),-1)
+end
+-- Beta 1.64, lot 1 (duel au virage, src/priority.lua) : une ligne par modèle et par lancement. Essieux connus : mesures ;
+-- longueur inconnue (4,4 m par défaut) ou essieux toujours inconnus K.duelGeomWait s après la première lecture : règle du
+-- nez pour ce modèle. Table des modèles déjà annoncés créée une fois par lancement.
+local function geometry(e,a,state,now)
+ local model=a.id or ''
+ if model=='' then return end
+ local seen=e.geomSeen; if not seen then seen={}; e.geomSeen=seen end
+ if seen[model] then return end
+ if a.axleKnown then
+  seen[model]=true
+  U.log(e.log,now,'INFO',string.format('geometrie: %s, longueur %.2f m, essieu avant %+.2f m, empattement %.2f m, retroviseur %+.2f m (%s)',model,a.length,a.axleFront,a.axleFront-a.axleRear,a.mirror,a.mirrorEstimated and 'estime sur l empattement' or 'devant les yeux du pilote'),-1)
+  return
+ end
+ if a.lengthKnown==false then
+  seen[model]=true
+  U.log(e.log,now,'INFO',string.format('geometrie: %s, longueur inconnue (%.1f m par defaut), duel au virage a la regle du nez',model,K.length),-1)
+  return
+ end
+ if state.geomSince==nil or state.geomModel~=model then state.geomSince=now; state.geomModel=model end
+ if now-state.geomSince>=K.duelGeomWait then
+  seen[model]=true
+  U.log(e.log,now,'INFO',string.format('geometrie: %s, essieux inconnus, duel au virage a la regle du nez',model),-1)
+ end
 end
 -- Journée circuit : réglage écrit selon la répartition choisie et le nombre d'IA (Flood.decide). CSP le lit au
 -- lancement : la session en cours garde l'état chargé (e.flood.loaded) ; chaque écriture est annoncée sur l'overlay
@@ -585,11 +696,13 @@ local function raceInfo(e,frame)
  end
  r.lapsLeft=left; r.known=left>=0
 end
+-- Affinage 1.64 k1 : raisons de dépannage qui valent abandon en course (jamais le rouge ni le délai maximal).
+local retireReasons={cassee=true,bloquee=true,['en piste']=true,neutralisation=true}
 function M.step(e,frame,dt)
  e.frame=frame
  e.rebaseDelta=0
  if not U.finite(dt) or dt<=0 or dt>K.dtMax then
-  e.guard='dt'; for i=1,K.maxCars do local s=e.states[i]; s.velocity=0; s.filtered=s.offset; e.commands[i].active=false end
+  e.guard='dt'; for i=1,K.maxCars do local s=e.states[i]; s.velocity=0; s.filtered=s.offset; e.commands[i].active=false; e.commands[i].signal=0 end
   return false
  end
  if not frame.paused and not frame.replay then e.time=e.time+dt end
@@ -602,7 +715,9 @@ function M.step(e,frame,dt)
   if drsNow>=0 then U.log(e.log,now,'INFO',drsNow==1 and 'DRS joueur: disponible (AC)' or 'DRS joueur: indisponible (AC)',frame.player) end
   e.playerDrs=drsNow
  end
- if e.session~=frame.session or e.sessionType~=frame.type then
+ -- Beta 1.63 (Random776, Overtake : « course finie » au retour d'un replay) : jamais de changement de session lu pendant
+ -- un replay (valeurs du moment rejoué) ; la session réelle est relue au retour.
+ if (e.session~=frame.session or e.sessionType~=frame.type) and not frame.replay then
   -- Beta 1.61 (tranche B) : mémoire du circuit fusionnée avant l'oubli de l'allure apprise (réglage trackMemory).
   Pacemap.sessionEnd(e.pacemap,e,now)
   e.session=frame.session; e.sessionType=frame.type
@@ -621,7 +736,7 @@ function M.step(e,frame,dt)
   for i=1,K.maxCars do
    local s=e.states[i]; s.topKmh=0; s.stint=0; s.stintStart=now; s.class=2; s.classified=false; s.classCandidate=0; s.classCycles=0
    s.paceCount=0; s.paceMean=0; s.paceRatio=0; s.paceRatioCount=0; s.freePace=0; s.longRatio=1; s.longRatioTime=0; s.lastContact=now
-   s.excluded=false; s.disqualified=false; s.errorUntil=0; s.errorCount=0; s.pitBefore=false; s.pitExitUntil=0; s.pitCautionUntil=0; s.pitGuardUntil=0; s.obstacleSlow=0
+   s.excluded=false; s.disqualified=false; s.retired=false; s.retirePending=nil; s.retiredId=nil; s.errorUntil=0; s.errorCount=0; s.pitBefore=false; s.pitExitUntil=0; s.pitCautionUntil=0; s.pitGuardUntil=0; s.obstacleSlow=0
    -- Relecture de la Beta 1.41 : état « anormalement lente » et demande d'arrêt oubliés avec la session.
    slowReset(s); s.slowPitAsked=false; s.slowPitDone=false
    -- Relecture 1.52 : épisode « anormalement lente » du journal oublié aussi (sinon sa fin notée dans la session suivante).
@@ -741,7 +856,7 @@ function M.step(e,frame,dt)
  if e.wasStarted and not frame.started and not frame.replay then e.raceGen=(e.raceGen or 0)+1; HudInfo.restart(e.hud); U.log(e.log,now,'INFO','course relancee: recapitulatif et place de depart remis a zero',-1) end
  e.wasStarted=frame.started
  -- Maintien de ligne au départ : écart à la trajectoire lu dans l'instantané suivant, pendant le départ seulement.
- frame.laneWanted=e.profile=='C' and e.run.startLaneHold==true and (not frame.started or now-math.max(e.startedAt,e.launchAt or -math.huge)<e.run.startDelay+e.run.startRelax)
+ frame.laneWanted=e.profile=='C' and e.run.startLaneHold==true and (not frame.started or now-math.max(e.startedAt,e.launchAt or -math.huge)<e.run.startDelay+math.min(e.run.startRelax,K.startWindowMax))
  -- Beta 1.60 : jugement des collisions en service : écart latéral à la piste lu pour toutes les voitures (src/snapshot.lua).
  frame.blameWanted=Blame.active(e)
  -- Informations de l'overlay (Beta 1.25) : à chaque image, même app à l'arrêt ou session finie ; récapitulatif de
@@ -752,7 +867,7 @@ function M.step(e,frame,dt)
   U.log(e.log,now,'INFO','fin de course: '..table.concat(e.hud.recap,' | '),frame.player)
  end
  local reason=not e.g.enabled and 'disabled' or frame.online and 'online' or frame.replay and 'replay' or frame.paused and 'paused'
-  or frame.finished and 'finished' or frame.length<=0 and 'spline' or e.panic and 'panic' or not C.any(e.p) and 'nosections' or 'ready'
+  or frame.finished and not e.incidents.scFinal and 'finished' or frame.length<=0 and 'spline' or e.panic and 'panic' or not C.any(e.p) and 'nosections' or 'ready'
  e.guard=reason
  -- Beta 1.57 (CSP 0.3.0-preview212 chez un joueur) : champs de CSP absents de cette version, lus comme absents (valeurs
  -- neutres) ; une ligne à chaque nouvelle liste.
@@ -779,9 +894,9 @@ function M.step(e,frame,dt)
  else e.guardKind=nil; e.onlineWas=false end
  if reason~='ready' then
   Merge.idle(e.merge,e.commands)
-  for i=1,K.maxCars do local cmd=e.commands[i]; cmd.active=false; cmd.stopHold=false; cmd.rulePit=false; cmd.pitHold=false; cmd.penaltyPass=false; cmd.pitCompound=-1; cmd.fuelTarget=-1; cmd.fuelSet=-1; cmd.scPark=false; cmd.scSpeed=K.unlimitedSpeed; cmd.recover=false; cmd.drsBlock=false; cmd.startDelay=-1; cmd.slowCalled=false end
+  for i=1,K.maxCars do local cmd=e.commands[i]; cmd.signal=0; cmd.active=false; cmd.stopHold=false; cmd.rulePit=false; cmd.pitHold=false; cmd.penaltyPass=false; cmd.pitCompound=-1; cmd.fuelTarget=-1; cmd.fuelSet=-1; cmd.scPark=false; cmd.scSpeed=K.unlimitedSpeed; cmd.recover=false; cmd.drsBlock=false; cmd.startDelay=-1; cmd.slowCalled=false end
   -- App à l'arrêt : le panneau reprend encore les drapeaux d'AC (leur affichage d'origine est masqué dans CSP).
-  e.incidents.playerFlag=false; e.incidents.playerYellow=false
+  e.incidents.playerFlag=false; e.incidents.playerYellow=false; e.incidents.playerWarn=false; e.incidents.playerWarnSlot=0
   -- Pause : valeur des panneaux gardée (l'applicateur n'écrit rien en pause) ; sinon rendue à AC et recalculée dès la
   -- reprise (jamais un quart de seconde rendu à AC à chaque sortie de pause, Beta 1.35).
   if reason~='paused' then e.lights.value=K.flagNone; e.lights.reason=''; e.lights.at=-math.huge end; Panel.native(e.panel,frame,now,e.p,e.profile)
@@ -835,6 +950,9 @@ function M.step(e,frame,dt)
  for i=1,frame.count do
   local a=frame.cars[i]; local state=e.states[i]
   if state.obstacleIdentity~=(a.identity or a.id) then state.obstacleSlow=0; a.stopped=0; state.obstacleIdentity=a.identity or a.id; state.topKmh=0 end
+  -- Beta 1.64, lot 1 (duel au virage) : géométrie de chaque modèle, une ligne par modèle et par lancement : essieux et
+  -- rétroviseur mesurés, ou repli (longueur par défaut, essieux inconnus après K.duelGeomWait s) sur la règle du nez.
+  if a.geomRead and a.valid then geometry(e,a,state,now) end
   -- Beta 1.47 : vitesse maximale vue de chaque voiture (repli relatif du double jaune quand l'allure est inconnue).
   if a.valid and not a.pit and a.kmh<K.topKmhMax and a.kmh>(state.topKmh or 0) then state.topKmh=a.kmh end
   if a.valid and not a.pit and a.kmh<e.run.obstacleSpeedKmh then state.obstacleSlow=math.min(K.stoppedTime+K.dtMax,math.max(state.obstacleSlow,a.stopped)+dt)
@@ -852,10 +970,52 @@ function M.step(e,frame,dt)
  e.incidents.gridWhy=e.gridCaps~=true and 'capacites' or e.g.offsetSign==0 and 'sens lateral non mesure' or frame.length<=0 and 'circuit' or ''
  -- Beta 1.48 : IA disqualifiées (exclues de l'ordre figé au drapeau rouge), jonction des stands (pose de la voiture de
  -- sécurité en piste).
- e.incidents.dq=e.penalties.ai.dq; e.incidents.junction=e.merge.spline
+ -- Affinage 1.64 k1 (décision du pilote, 14 novembre) : IA abandonnées (dépannées en course, garées jusqu'à la fin) :
+ -- hors course comme une IA disqualifiée pour l'ordre figé, les stands et la grille (table commune, refaite par image).
+ local out=e.outRace or {}; e.outRace=out
+ for i=1,K.maxCars do out[i]=(e.penalties.ai.dq[i] or e.states[i].retired) and true or nil end
+ e.incidents.dq=out; e.incidents.junction=e.merge.spline
+ -- Correctif 1.63 : jonction gardée par circuit (src/dangerfile.lua) tant qu'elle n'est pas relevée dans ce lancement.
+ if e.merge.spline<0 and (e.danger.junction or -1)>=0 then e.incidents.junction=e.danger.junction
+ elseif e.merge.spline>=0 and Dangerfile.junctionSeen(e.danger,e.merge.spline,frame.length) then e.dangerSaveAsk=true end
  -- Beta 1.59 (relecture) : aucun point difficile armé au départ, à une relance ou pendant le premier tour attentif.
  e.incidents.hotspotPause=not frame.started or e.fl.on==true or e.incidents.restart==true or e.incidents.relaunch==true or e.profile=='C' and now-e.startedAt<K.hotspotStartGrace
+ -- Correctif 1.64 : dépannage possible au délai maximal du drapeau rouge (src/incidents.lua). Absent (nil : bancs du
+ -- moteur seul, hôte sans capacité) = impossible : jamais la convention « ~=false » de stopCap (sinon chaque banc
+ -- attendrait K.redClearWait s au délai maximal).
+ e.incidents.teleportCap=e.teleportCap==true
+ -- Beta 1.64 (lot 5) : course réellement multi-classe (réglage coché et au moins deux classes reconnues) : aucun
+ -- dédoublement derrière la voiture de sécurité (src/incidents.lua). Aucune table.
+ -- Relecture 164e (A5) : classes de toutes les voitures classées, joueur compris, voiture de sécurité exclue : deux
+ -- classes différentes (plus faible et plus forte), ou une classe au-delà de la première reconnue d'après l'allure (le
+ -- classement automatique la donne seulement derrière une classe plus rapide) ; avant, l'indice le plus haut des IA
+ -- seules (toutes les IA en classe 2 par motif : multi-classe ; joueur seul dans sa classe : non). 2 : multi-classe.
+ local lo,hi,auto=math.huge,0,false
+ if e.run.multiClass then for i=1,frame.count do local a=frame.cars[i]; local s=e.states[i]; if a.valid and not a.safetyCar and s.classified then local c=s.class or 1; if c<lo then lo=c end; if c>hi then hi=c end; if c>1 and not s.manualClass then auto=true end end end end
+ e.incidents.classes=(hi>lo or auto) and 2 or 1
  Incidents.update(e.incidents,frame,e.run,e.profile,now,dt,ready,e.runtimeG.seed)
+ -- Correctif 1.63 : zones dangereuses gardées par circuit (src/dangerfile.lua) : points armés ou relevés repris,
+ -- allure de la flotte à cet endroit gardée en repli ; enregistrement demandé à l'hôte (AdvancedIA.lua).
+ local dev=e.incidents.dangerEvents
+ if dev and #dev>0 and frame.length>0 then
+  for k=1,#dev do
+   local ev=dev[k]
+   local fleet=e.delta.fleet and e.delta.fleet[1]
+   local kmh=(fleet and fleet[Delta.bin(ev.spline,e.delta.bins)] or 0)*3.6
+   Dangerfile.armed(e.danger,ev.spline,frame.length,ev.level,kmh>0 and kmh or nil,e.dangerDate or '')
+   dev[k]=nil
+  end
+  e.dangerSaveAsk=true
+ end
+ -- Relecture : zone gardée née au premier tour (allure de la flotte encore inconnue, repli 0) : allure de la flotte
+ -- relevée dès qu'elle est connue à cet endroit, une fois, puis enregistrée (le repli sert au premier tour suivant).
+ if e.danger.n>0 and frame.length>0 and e.delta.fleet and e.delta.fleet[1] then
+  local fleet=e.delta.fleet[1]
+  for k=1,e.danger.n do
+   local z=e.danger.zones[k]
+   if (z.kmh or 0)<=0 then local v=(fleet[Delta.bin(z.spline,e.delta.bins)] or 0)*3.6; if v>0 then z.kmh=v; e.dangerSaveAsk=true end end
+  end
+ end
  -- Beta 1.47 : relance lancée (drapeau vert derrière la voiture de sécurité, fin du tour de relance) : premier tour
  -- attentif de nouveau.
  if (e.incidents.restartSerial or 0)~=e.fl.restartSerial then e.fl.restartSerial=e.incidents.restartSerial or 0; FirstLap.arm(e,frame,now,'relance') end
@@ -976,6 +1136,7 @@ function M.step(e,frame,dt)
   end
  end
  Incidents.player(e.incidents,frame,e.run,now)
+ Incidents.warn(e.incidents,frame,e.run,e.states)
  -- Temps delta du joueur (neutralisation, drapeau rouge, double drapeau jaune) ; file derrière la voiture de sécurité.
  local queued=false
  if player then local row=e.perception.rows[frame.player]; queued=row.front>0 and row.neighbors[row.front].gap<K.scQueueGap end
@@ -1104,6 +1265,7 @@ function M.step(e,frame,dt)
   local ai=e.penalties.ai
   for _,i in ipairs(sanctioned) do
    local other=frame.cars[ai.passed[i]]
+   Sanctions.mark(e.sanctions,i,'flag')
    if ai.dq[i] then
     e.states[i].disqualified=true
     U.log(e.log,now,'WARN',string.format('IA disqualifiee: %s, %d depassements sous drapeau jaune (dernier : %s)',frame.cars[i].name,ai.count[i],other.name),i)
@@ -1119,7 +1281,7 @@ function M.step(e,frame,dt)
   for k=1,#passes do
    local i=passes[k]; local a=frame.cars[i]; local sc=frame.cars[e.incidents.safety]
    if sc and a.valid and a.control and not a.player and Penalties.scPassed(e.penalties,i,e.incidents.safety,a,e.run,e.profile,now) then
-    local ai=e.penalties.ai
+    local ai=e.penalties.ai; Sanctions.mark(e.sanctions,i,'flag')
     if ai.dq[i] then
      e.states[i].disqualified=true
      U.log(e.log,now,'WARN',string.format('IA disqualifiee: %s, %d depassements sous drapeau jaune (dernier : %s)',a.name,ai.count[i],sc.name),i)
@@ -1181,7 +1343,13 @@ function M.step(e,frame,dt)
  local red=e.incidents.red
  -- Course devenue mouillée : la règle des deux composés secs (F1) ne s'applique plus.
  if e.weather.wet and e.profile=='C' and frame.started then e.pits.wetRace=true end
- Pits.update(e.pits,frame,e.commands,e.run,e.profile,now,e.runtimeG.seed,e.announce,red,e.penalties.ai.dq,e.incidents.pitsClosed)
+ -- Beta 1.63 (règle réelle de la F1, demande du pilote) : neutralisation en course (VSC, FCY, voiture de sécurité, tour de
+ -- relance), jamais le tour de formation : un arrêt y compte comme arrêt obligatoire même avant l'ouverture de la fenêtre.
+ e.pits.neutralCount=e.incidents.neutral==true and not e.incidents.red and not e.incidents.formation and not e.incidents.formationAborted and frame.started==true
+ -- Relecture 164d : message de la course sprint retenu pendant les annonces du départ (tour de formation, grille, feux),
+ -- une neutralisation, et K.sprintQuiet s après tout autre message (jamais il n'écrase le départ à l'écran ni au pont).
+ local sprintBusy=e.incidents.formation==true or e.incidents.formationAborted==true or e.incidents.standing~='none' or e.incidents.neutral==true or e.incidents.red==true or now-(e.incidents.messageAt or -math.huge)<K.sprintQuiet
+ Pits.update(e.pits,frame,e.commands,e.run,e.profile,now,e.runtimeG.seed,e.announce,red,e.outRace,e.incidents.pitsClosed,sprintBusy)
  -- Beta 1.41 : sortie des stands, IA retenue au bout de la voie tant qu'une voiture en piste arrive à la jonction.
  Merge.update(e.merge,frame,e.commands,now,dt,e.log,red,e.profile,e.stopCap~=false,e.quali.active and e.quali.push or nil)
  -- Beta 1.42 : stratégie individuelle des IA (arrêts, carburant, pneus, pannes, tour de sortie).
@@ -1218,7 +1386,6 @@ function M.step(e,frame,dt)
  if due and sePlanMode~='quiet' and not f1Remind and remindHere and p0.remindLap~=lap then p0.remindLap=lap; p0.remindAt=now end
  if not due then p0.remindLap=nil end
  e.incidents.playerPitShowRemind=due and (now-e.pits.openedAt<K.pitRemindTime or p0.remindLap==lap and now-(p0.remindAt or -math.huge)<K.pitHintShow)
- e.incidents.sePlanMode=sePlanMode
  -- Beta 1.60 (tranche D) : conseil de stratégie de SpotterEnginer (affichage et journal seulement).
  M.seStrategy(e,frame,player,now)
  -- Relecture 1.52 : fenêtre fermée pendant que le composé du joueur est attendu (F1, arrivé dans la fenêtre) : pénalité
@@ -1329,6 +1496,16 @@ function M.step(e,frame,dt)
    if wedged and not a.pit then cmd.recover=true end
    cmd.recoverReason=red and 'drapeau rouge' or neutralStuck and 'neutralisation' or broken and 'cassee' or trackStuck and 'en piste' or 'bloquee'
    cmd.recoverStill=(red or neutralStuck or trackStuck) and still or wedged and not stuck and not broken and c.stuckFor or stalled
+   -- Correctif 1.64 (décision du pilote, 13 novembre) : délai maximal du drapeau rouge, piste non dégagée (t.redClear,
+   -- src/incidents.lua) : toute IA encore en incident en piste (au pas, arrêtée depuis peu) est dépannée jusqu'à son stand ;
+   -- une IA déjà dépannée par la règle du rouge garde sa raison (un seul déplacement par série, applicateur).
+   if red and e.incidents.redClear==true and c.incident and c.onTrack and not a.pit and not cmd.recover then cmd.recover=true; cmd.recoverReason='delai maximal'; cmd.recoverStill=now-c.since end
+   -- Affinage 1.64 k1 (décision du pilote, 14 novembre) : en course, une IA dépannée hors drapeau rouge (cassée, bloquée,
+   -- immobile en piste, sous neutralisation) abandonne comme une voiture enlevée par la grue : garée à son stand jusqu'à
+   -- la fin (marquée à son arrivée aux stands, plus bas). Rouge et délai maximal : toutes rentrent et repartent.
+   local st=e.states[i]
+   if K.recoverRetire and e.profile=='C' and cmd.recover and not red and retireReasons[cmd.recoverReason] then st.retirePending=cmd.recoverReason
+   elseif st.retirePending and not cmd.recover and not a.pit then st.retirePending=nil end
    -- Beta 1.41 : IA anormalement lente en tête de file depuis K.slowPitTime s et endommagée (suspension, carrosserie) :
    -- hors course, dépannée à son stand (puis réparée, plus bas) ; en course, arrêt demandé (réparée selon les règles),
    -- jamais stands fermés ni sous drapeau rouge.
@@ -1337,7 +1514,11 @@ function M.step(e,frame,dt)
    -- Relecture : en course sans l'onglet Règles (aucune réparation réglementaire), un seul appel par session ; passée
    -- aux stands après l'appel, elle n'est plus appelée.
    if a.pit and s.slowPitAsked then s.slowPitAsked=false; s.slowPitDone=not e.run.section_rules end
-   if damaged and (s.abnormalFor or 0)>=K.slowPitTime and not a.pit and e.run.section_accidents then
+   -- Affinage 1.63 (Sepang, 13 novembre : carrosserie 140, suspension 0.12, 40 km/h, arrêt demandé au bout de 109 s
+   -- seulement) : IA lente à contourner (obstacle) déjà endommagée aux seuils abaissés : arrêt demandé dès
+   -- K.slowPitTime2 s.
+   local hurt=s.abnormal==true and ((a.damageSuspension or 0)>=K.slowPitSuspension2 or (a.damageBody or 0)>=K.slowPitBody2)
+   if (damaged and (s.abnormalFor or 0)>=K.slowPitTime or hurt and (s.abnormalFor or 0)>=K.slowPitTime2) and not a.pit and e.run.section_accidents then
     local call=false
     if e.profile=='C' then
      -- Relecture 1.52 : appel marqué (cmd.slowCalled), compté par pits.lua et strategy.lua dans la limite d'appels.
@@ -1363,7 +1544,20 @@ function M.step(e,frame,dt)
  end
  -- Départ arrêté (Beta 1.34) : formation, feux, départ, après les commandes des stands (retenues à l'emplacement
  -- gardées) ; un faux départ du joueur est une infraction comme une autre (sanction à l'image suivante).
- local launched=Grid.step(e.grid,e.incidents,frame,now,e.commands,e.g.offsetSign,e.runtimeG.seed,e.log,e.states,e.penalties.ai.dq)
+ local launched=Grid.step(e.grid,e.incidents,frame,now,e.commands,e.g.offsetSign,e.runtimeG.seed,e.log,e.states,e.outRace)
+ if e.incidents.startAbortPending then Formation.rearm(e.formation,e,frame,now) end -- Beta 1.64 : départ avorté (même image)
+ -- Affinage 1.64 (Monza S16 : deux IA accidentées ramenées aux stands par AC entre deux essais de redémarrage, puis
+ -- abandonnées à leur emplacement) : IA en incident, pas encore jugée incapable de rouler, hors stands : protégée du
+ -- renvoi d'AC (même appel que la grille) au plus K.rejoinNoRetireMax s d'immobilité ; une ligne par incident.
+ if K.rejoinNoRetire then
+  for i=1,frame.count do
+   local c=e.incidents.cars[i]; local a=frame.cars[i]
+   if c and c.incident and not c.cannot and a.valid and a.control and not a.player and not a.pit and not a.finished and not a.safetyCar and (c.still or 0)<K.rejoinNoRetireMax then
+    e.commands[i].noRetire=true
+    if not c.noRetireNoted and (c.still or 0)>0 then c.noRetireNoted=true; U.log(e.log,now,'INFO','IA accidentee: protegee du renvoi aux stands pendant ses essais de redemarrage, '..a.name,i) end
+   end
+  end
+ end
  if launched then
   -- Beta 1.35 : protections et prudence de départ de la course aussi à l'extinction d'un départ arrêté.
   e.launchAt=now
@@ -1435,7 +1629,15 @@ function M.step(e,frame,dt)
  local ai=e.penalties.ai
  for i=1,frame.count do
   local cmd=e.commands[i]
+  local st=e.states[i]; local car=frame.cars[i]
+  if st.retired and st.retiredId~=(car.identity or car.id) then st.retired=false; st.retiredId=nil end
+  if st.retirePending and not st.retired and car.valid and (car.pit or car.inPitBox) then
+   st.retired=true; st.retiredId=car.identity or car.id
+   U.log(e.log,now,'INFO',string.format('IA abandonnee: %s depannee a son stand (%s), hors course',car.name,st.retirePending),i)
+   st.retirePending=nil
+  end
   if ai.dq[i] then cmd.scPark=true; cmd.parkReason='dq'; e.states[i].disqualified=true
+  elseif st.retired then cmd.scPark=true; cmd.parkReason='retired'
   -- Pied levé progressif : jamais de freinage brusque devant la voiture tout juste doublée.
   elseif now<(ai.slowUntil[i] or 0) then cmd.yellowLimit=math.min(cmd.yellowLimit,math.max(ai.slowKmh[i],ai.slowFrom[i]-K.aiPenaltyDecel*3.6*(now-ai.slowAt[i]))) end
   -- Place à rendre (dépassement pendant la transition) : levée de pied franche (décélération d'approche) sous l'allure
@@ -1463,12 +1665,16 @@ function M.step(e,frame,dt)
   end
  end
  -- Beta 1.49 : annonce de l'arrêt F1 écartée dans une image déjà prise : publiée ici, à l'image suivante libre.
+ -- Relecture 164d : message de la course sprint de cette image écarté par un plus important : redemandé.
+ Pits.confirmSprint(e.pits,e.incidents)
  Incidents.flushHeld(e.incidents,now)
  -- Beta 1.60 : fin de l'image. Positions et verdicts des collisions, puis régulateur sans coup de frein, en dernier :
  -- il borne les ralentissements que l'app vient d'écrire devant une voiture collée.
  Blame.sample(e.blame,e,frame,now,dt)
  Blame.settle(e.blame,e,frame,now)
  Rear.govern(e.rear,e,frame,now,dt)
+ -- Beta 1.64 : clignotants des IA (src/signals.lua), une fois les décalages de l'image connus.
+ require('src/signals').decide(e,frame)
  return true
 end
 return M

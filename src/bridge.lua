@@ -86,6 +86,8 @@ local function cars(out,e,frame,now)
    c.stops=int(pc.stops); c.boxed=bool(pc.boxed); c.stintFor=finite(pc.lastStop) and pc.lastStop>0 and math.max(0,now-pc.lastStop) or -1
    c.mistakeId=int(cmd.mistakeId); c.mistakeKind=code(Layout.mistakes,cmd.mistakeKind)
    c.overtake=bool((states[i] or EMPTY).overtakeArmed)
+   c.retired=bool((states[i] or EMPTY).retired)
+   c.lastReason=int(sc.lastReason)
   end
  end
 end
@@ -133,7 +135,7 @@ function M.publish(b,out,e,frame)
  out.pitsClosed=bool(t.pitsClosed); out.slipperyLeft=left(t.slipperyUntil,now)
  out.zone=bool(t.playerZone); out.zoneInside=bool(t.playerInside); out.zoneDouble=bool(t.playerZoneDouble)
  out.zoneCar=index(t.playerZoneSlot); out.zoneDistance=num(t.playerToZone); out.incidentDistance=num(t.playerDistance)
- out.noPass=bool(t.playerNoPass); out.yellow=bool(t.playerYellow); out.zoneCount=int(t.zoneCount)
+ out.noPass=bool(t.playerNoPass); out.yellow=bool(t.playerYellow or t.playerWarn); out.zoneCount=int(t.zoneCount)
  text(b,out,'drsReason',t.drsReason); out.drsLapsLeft=int(t.drsLapsLeft,-1); out.pitDue=int(t.playerPitDue); out.pitRemind=bool(t.playerPitRemind)
  -- Dernière annonce (texte prêt, celui de l'overlay)
  out.messageId=int(t.messageId); text(b,out,'messageKind',t.messageKind); out.messageValue=num(t.messageValue); out.messageExtra=num(t.messageExtra)
@@ -150,6 +152,7 @@ function M.publish(b,out,e,frame)
  text(b,out,'penaltyKind',pen.kind); out.disqualified=bool(pen.disqualified); out.penaltyPassed=index(pen.passed)
  out.giveBack=index(pen.giveBack); out.giveBackLeft=left(pen.giveBackUntil,now)
  out.redPending=bool(pen.redPending); out.stopPending=bool(pen.stopPending); out.jumpPending=bool(pen.jumpPending)
+ out.trackWarnings=int(p.sanTrackWarnings,3); out.serveLaps=int(p.sanServeLaps,3)
  out.penaltyLimit=int(p.penaltyDisqualify); out.nativePenalty=int(player.penaltyType); out.nativePenaltyParam=int(player.penaltyParam)
  -- DRS, appel de phares
  out.drsBeep=int((e.drs or EMPTY).beepId); out.playerDrs=int(e.playerDrs,-1)
@@ -163,6 +166,9 @@ function M.publish(b,out,e,frame)
  out.pitDone=int(pits.done); out.pitTotal=int(pits.total); out.pitWaived=bool(pits.waived)
  out.mandatoryStops=int(p.mandatoryStops); out.maxStintMin=num(p.maxStintMin); out.minPitTime=num(p.minPitTime)
  local own=slot>0 and (pits.cars or EMPTY)[slot] or EMPTY
+ -- Beta 1.63 (contrat avec SpotterEnginer 1.3.9) : fenêtre pas encore ouverte : pitDue dit si l'arrêt obligatoire du joueur
+ -- est encore dû (1) ou déjà compté, par exemple sous neutralisation (0). Ailleurs, valeur inchangée.
+ if pits.state=='pending' then out.pitDue=(not pits.waived and int(p.mandatoryStops)>0 and int(own.windowStops)<int(p.mandatoryStops)) and 1 or 0 end
  out.playerStops=int(own.stops); out.playerStintFor=finite(own.lastStop) and own.lastStop>0 and math.max(0,now-own.lastStop) or -1
  -- Course
  local race=e.race or EMPTY

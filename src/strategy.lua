@@ -509,7 +509,12 @@ function M.update(t,e,frame,now,_dt)
      -- Relecture 1.42 : arrêt non critique retenu tant que la fenêtre obligatoire n'est pas ouverte (il n'y compterait pas,
      -- d'où deux arrêts rapprochés).
      local pc=e.pits.cars[i]
-     local hold=p.mandatoryStops>0 and e.pits.state=='pending' and pc.windowStops<p.mandatoryStops and not c.critical and not c.hardTyres
+     -- Beta 1.63 : sous neutralisation en course avec changement de composé obligatoire (F1), l'arrêt y compterait
+     -- (pits.lua) : plus retenu, l'arrêt « peu coûteux » redevient possible.
+     -- Relecture 164e (A4) : fenêtre « en attente » d'une course au temps indécise, ouverture déjà atteinte : l'arrêt y
+     -- compterait (pits.lua) : jamais retenu.
+     local hold=p.mandatoryStops>0 and e.pits.state=='pending' and (e.pits.position or -1)<(e.pits.open or 0) and pc.windowStops<p.mandatoryStops and not c.critical and not c.hardTyres
+      and not (p.pitCompoundChange and e.pits.neutralCount==true)
      -- Arrêt en cours de service ou contrôle d'après l'arrêt pas encore fait (pneus posés ? carburant ajouté ?) : pas de
      -- nouvelle demande, carburant critique compris (relecture 1.42 après correctifs : jugé après le contrôle).
      if c.serving or c.checkAfter then

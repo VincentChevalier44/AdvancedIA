@@ -11,7 +11,12 @@ local P=require('src/perception')
 local Classes=require('src/classes')
 local Nuance=require('src/nuance')
 local K=C.K
+-- Beta 1.63 (rapport public : drapeau blanc « dernier tour » montré dès l'extinction des feux et jamais effacé) :
+-- whiteTimeLeft : course au temps, blanc natif d'AC retenu seulement sous ce temps restant (s) ; whiteShow : durée
+-- maximale d'affichage du blanc (s), même quand les informations restent « tant qu'elles durent ».
+local WK={whiteTimeLeft=180,whiteShow=8}
 local M={}
+M.WK=WK
 function M.new() return {kind='none',key='',title='',detail='',raw='',noPass=false,passed=false,drsBlocked=false,drsUsed=false,short='',passOk='',passBad='',infractions=-1,infractionMax=-1,notice='',noticeUntil=-math.huge,at=-math.huge,
  changedAt=-math.huge,double=false,explain='',finish=false,lapCode='',info=nil,drsText='',drsLaps=-1,drsLapsText='',redPit=false,blueGap=nil,giveBackDue=false,warnPending=false,warnUntil=-math.huge,updateUntil=-math.huge,updateVersion='',rel={index=0,long=0,lat=0,gap=0,sa=0,ttc=math.huge,same=false,alongside=false}} end
 -- Drapeau bleu du joueur, en course : une voiture plus rapide qui lui prend au moins un tour arrive derrière. Renvoie
@@ -59,7 +64,20 @@ local function native(panel,frame,now)
  if f==K.flagFinished then return panel.info and panel.info.finished and 'finish' or 'checkered',0 end
  if f==K.flagCaution then return 'native',0 end
  if f==K.flagFasterCar then return 'nativeBlue',0 end
- if f==K.flagOneLapLeft then return 'white',0 end
+ if f==K.flagOneLapLeft then
+  -- Beta 1.63 : blanc natif cru seulement s'il est cohérent (course commencée ; course aux tours : le leader a entamé
+  -- le dernier tour ; course au temps : peu de temps restant). Une ligne au journal par séance et par verdict (retenu, ignoré).
+  local laps=(frame.sessionLaps or 0)>0 and not frame.timedRace and frame.sessionLaps or 0
+  local left=frame.left or 0
+  -- Format inconnu (ni tours ni course au temps déclarés) : retenu comme avant, la durée d'affichage reste bornée.
+  local ok=frame.started==true and (laps>0 and (frame.leaderLaps or 0)+1>=laps or frame.timedRace==true and left<=WK.whiteTimeLeft or laps==0 and frame.timedRace~=true)
+  local wkey=tostring(frame.session)..(ok and '+' or '-')
+  if panel.whiteSession~=wkey then
+   panel.whiteSession=wkey
+   panel.whiteMsg=string.format('drapeau natif dernier tour: %s (tours %d, tour du leader %d, temps restant %.0f s)',ok and 'retenu' or 'ignore',laps,frame.leaderLaps or 0,left)
+  end
+  if ok then return 'white',0 end
+ end
  if f==K.flagStart and now-panel.startSeen<K.greenShow then return 'start',0 end
  return nil,0
 end
@@ -67,6 +85,7 @@ end
 local shownKinds={scCall='sc',penaltyDrive='penalty',penaltyTeleport='penalty',penaltySlow='penalty',nativeBlue='blue',start='green',finish='checkered',giveBack='warning',
  rollingIn='rolling',rollingGreen='rolling',standingLap='standing',standingPit='standing',
  formationLap='standing',formationRoll='rolling',formationCall='rolling',formationOff='rolling'}
+shownKinds.scUnlap='sc'; shownKinds.scFinish='sc' -- Beta 1.64, lot 5 : dédoublement du joueur, arrivée neutralisée
 -- Drapeau retenu : genre affiché, horodatage du changement, textes refaits seulement quand le genre ou la valeur change.
 -- profile : essais et qualifications parlent de séance, pas de course (drapeau rouge, reprise).
 -- Beta 1.49 : textes de l'arrêt obligatoire en F1 (composés nommés), refaits seulement quand ils changent.
@@ -146,7 +165,7 @@ local function show(panel,kind,value,double,gap,now,profile,extra)
    panel.title=L.flagTitles.finish; panel.raw=info.recap[1] or ''; panel.detail=panel.raw; panel.short=panel.raw; panel.explain=''
   elseif kind~='none' then
    -- Départ (Beta 1.38) : vert, titre « DÉPART » de la maquette.
-   panel.title=kind=='yellow' and double and L.flagTitles.yellow2 or kind=='start' and L.flagTitles.start or L.flagTitles[panel.kind]
+   panel.title=kind=='yellow' and double and L.flagTitles.yellow2 or kind=='start' and L.flagTitles.start or kind=='countdown' and tostring(value) or L.flagTitles[panel.kind]
    local detail
    if kind=='drs' then detail=L.flagDetails.drs
    elseif kind=='yellow' then detail=string.format(double and L.flagDetails.yellow2 or L.flagDetails.yellow,value)
@@ -199,6 +218,7 @@ local infoKinds={green=true,drs=true,white=true,checkered=true,slippery=true,lap
 function M.visible(panel,g,now)
  if panel.kind=='none' then return false end
  local hold=g and g.panelInfoTime or 0
+ if panel.kind=='white' and (hold<=0 or hold>WK.whiteShow) then hold=WK.whiteShow end
  return not (infoKinds[panel.kind] and not panel.finish and hold>0 and now-panel.changedAt>=hold)
 end
 -- Ligne « Dépassement interdit » avec le compteur d'infractions du joueur (textes refaits seulement s'il change).
@@ -244,10 +264,28 @@ local function restartInfo(panel,t,frame,kind)
  if short then panel.short=short; panel.restartShort=true end
  if kind=='red' then panel.explain=string.format(t.safety>0 and R.explainSc or R.explain,r); panel.restartShort=true end
 end
+-- Beta 1.63 (demande du pilote) : décompte de la fin d'une VSC ou d'une FCY. Heure du drapeau vert prévue par la même
+-- horloge que la levée (incidents.lua : VSC « ending » jusqu'à t.endingUntil ; FCY hors relance et hors tour de
+-- formation jusqu'à t.neutralUntil), sinon nil.
+local COUNT={lead=3,go=1}
+M.COUNT=COUNT
+local function greenAt(t)
+ if not t.neutral or t.relaunch or t.formation or t.formationAborted then return nil end
+ if t.neutralMode=='vsc' then return t.ending and t.endingUntil or nil end
+ if t.neutralMode=='fcy' then return t.neutralUntil end
+ return nil
+end
+M.greenAt=greenAt
 -- lights : état des panneaux lumineux (véhicule lent devant, dégâts du joueur), facultatif.
 function M.update(panel,t,frame,p,profile,now,lights,e)
  if not p.flagPanel or panel.ownOnly then return M.native(panel,frame,now,p,profile) end
- if now<panel.at then return end
+ -- Décompte : panneau refait à chaque image pendant les dernières secondes et le « GO », pour que le « GO » tombe à
+ -- l'image du drapeau vert.
+ -- Horloge recalée en arrière (journée de 24 h) : « GO » oublié plutôt que tenu trop longtemps.
+ if panel.goUntil and panel.goUntil-now>COUNT.lead+COUNT.go+1 then panel.goUntil=nil end
+ local target=profile=='C' and greenAt(t) or nil
+ local counting=target~=nil and target-now<=COUNT.lead+K.panelPeriod or now<(panel.goUntil or -math.huge)
+ if now<panel.at and not counting then return end
  panel.at=now+K.panelPeriod
  local kind,value,double='none',0,false
  local a=frame.player>0 and frame.cars[frame.player] or nil
@@ -259,6 +297,8 @@ function M.update(panel,t,frame,p,profile,now,lights,e)
  local drs=present and reason=='' and a.drsAvailable and not a.drsActive and not panel.drsUsed or false
  local gap=nil
  local nk,nv=native(panel,frame,now)
+ if panel.whiteMsg and e and e.note then e.note('INFO',panel.whiteMsg,-1) end
+ panel.whiteMsg=nil
  local extra=0
  -- Beta 1.61 (classNuance) : drapeau bleu nuancé jugé à chaque image (clé annexe tenue à jour même sous un autre drapeau).
  local nGap,nExtra=nil,0
@@ -269,17 +309,31 @@ function M.update(panel,t,frame,p,profile,now,lights,e)
  -- Tour de relance d'un drapeau rouge (Beta 1.34) : départ lancé (RS) ou arrêté (SS) annoncé, voiture de sécurité qui
  -- rentre ce tour, dépassement à la ligne ou dès le vert.
  -- Beta 1.60 (tranche E) : tour de formation du départ de la course, puis départ arrêté ou lancé ; abandonné sur incident.
- elseif t.neutral and t.formation then kind=t.formationKind=='formation' and 'formationLap' or t.rollCall and 'formationCall' or 'formationRoll'; value=math.floor((t.formationKmh or 0)+0.5)
+ elseif t.neutral and t.formation then kind=t.formationKind=='formation' and 'formationLap' or t.rollCall and 'formationCall' or 'formationRoll'; value=math.floor((t.formationShowKmh or t.formationKmh or 0)+0.5)
  elseif t.neutral and t.formationAborted then kind='formationOff'
  elseif t.neutral and t.relaunch and profile=='C' then
   if p.redRestart=='standing' and t.gridReady then kind='standingLap'
   else kind=t.safetyPhase~='in' and 'rolling' or p.restartOvertake=='scIn' and 'rollingGreen' or 'rollingIn' end
+  -- Beta 1.64 (lot 2) : 3e départ avorté après un drapeau rouge : départ lancé à la fin du tour de relance.
+  if kind=='standingLap' and t.startAbortRoll then kind='rolling' end
+  -- Correctif 1.64 (décision du pilote) : reprise forcée au délai maximal, obstacle encore en piste : départ lancé annoncé.
+  if kind=='standingLap' and t.redObstacle==true and t.onTrack>0 then kind='rolling' end
  elseif t.neutral then
   if t.neutralMode=='sc' then
    local merging=t.safetyPhase=='call' or t.safetyPhase=='exit' or t.safetyPhase=='place' or t.safetyPhase=='out' and t.safety>0 and frame.cars[t.safety].pit
    kind=t.safetyPhase=='in' and 'scIn' or merging and 'scCall' or 'sc'
+   -- Beta 1.64 (lot 5) : arrivée neutralisée (damier et récapitulatif une fois arrivé), joueur autorisé à se dédoubler.
+   if t.scFinal then kind=panel.info and panel.info.finished and 'finish' or 'scFinish' elseif frame.player>0 and t.cars and t.cars[frame.player] and t.cars[frame.player].scFree then kind='scUnlap' end
   elseif t.neutralMode=='vsc' then kind=t.ending and 'vscEnd' or 'vsc'; value=p.vscDeltaPct
   else kind='fcy'; value=p.fcyDeltaPct end
+  -- Beta 1.63 : décompte 3, 2, 1 puis « GO » au drapeau vert (VSC et FCY de course seulement).
+  if target and profile=='C' then
+   local left=target-now
+   if left<=0 then kind='resumeGo'; value=0; panel.goUntil=target+COUNT.go
+   elseif left<=COUNT.lead then kind='countdown'; value=math.ceil(left); panel.goUntil=target+COUNT.go end
+  elseif t.neutralMode~='vsc' and t.neutralMode~='fcy' or not t.ending and t.neutralMode=='vsc' then panel.goUntil=nil end
+ -- Beta 1.63 : « GO » une seconde après la levée d'une VSC ou d'une FCY annoncée par le décompte.
+ elseif now<(panel.goUntil or -math.huge) and profile=='C' then kind='resumeGo'
  -- Départ arrêté (Beta 1.34) : place et distance du joueur, feux, extinction, faux départ.
  elseif t.standing=='grid' then
   if t.gridPit then kind='standingPit' else kind='standing'; value=t.gridSlot or 0; extra=t.gridGap or 0 end
@@ -292,6 +346,8 @@ function M.update(panel,t,frame,p,profile,now,lights,e)
   if t.playerInside then kind=double and 'zone' or 'zone1' else kind='yellow'; value=math.floor((t.playerToZone or 0)/10+0.5)*10 end
  -- Drapeau jaune natif d'AC (voiture lente ou arrêtée qu'il signale sans incident de l'app) : affiché aussi, jamais
  -- le drapeau que l'app impose elle-même au joueur.
+ -- Affinage 1.63 : jaune d'avertissement (voiture lente au bord) : prudence, dépassement permis, aucune limite.
+ elseif t.playerWarn then kind='slowWarn'; value=math.floor((t.playerWarnDistance or 0)/10+0.5)*10
  elseif nk=='native' then kind='native'
  -- Reprise derrière la voiture de sécurité : vert, dépassement interdit jusqu'à la ligne.
  elseif t.playerRestart then kind='restart'
@@ -340,7 +396,7 @@ function M.update(panel,t,frame,p,profile,now,lights,e)
  panel.slotPlaced=kind=='standing' and t.gridPlaced==true; panel.slotPassed=kind=='standing' and t.gridPassed==true
  -- Drapeau et zone DRS en même temps : le drapeau reste affiché, avec une ligne « DRS interdit sous drapeau ».
  local calm=kind=='none' or kind=='green' or kind=='blue' or kind=='pit' or kind=='slippery' or kind=='nativeBlue' or kind=='white' or kind=='start' or kind=='checkered' or kind=='finish' or kind=='lap'
-  or kind=='slow' or kind=='giveBack' or kind=='warning' or kind=='meatball' or kind=='update' or kind=='go'
+  or kind=='slow' or kind=='slowWarn' or kind=='giveBack' or kind=='warning' or kind=='meatball' or kind=='update' or kind=='go'
  -- Règles de course : pluie et premiers tours affichés avec tout drapeau ; sinon « DRS interdit sous drapeau ».
  panel.drsBlocked=kind~='none' and kind~='drs' and (reason~='' and present and (reason~='flag' or not calm) or reason=='' and drs and not calm)
  if reason=='wet' then panel.drsText=L.drsWet
@@ -351,5 +407,7 @@ function M.update(panel,t,frame,p,profile,now,lights,e)
  -- Régimes où doubler est interdit : ligne dédiée, verte, rouge si le joueur a doublé.
  -- Drapeaux d'AC propres au joueur (noir, pénalité) : pas de ligne de dépassement de l'app.
  panel.noPass=not calm and kind~='drs' and kind~='native' and panel.kind~='black' and panel.kind~='penalty' and (kind~='yellow' or t.playerNoPass==true)
+ -- Beta 1.64 (lot 5) : joueur autorisé à se dédoubler, ou arrivé : pas de ligne « dépassement interdit ».
+ if kind=='scUnlap' or kind=='finish' and t.scFinal then panel.noPass=false end
 end
 return M

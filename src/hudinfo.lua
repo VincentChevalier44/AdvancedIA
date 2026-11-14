@@ -8,6 +8,11 @@ local L=require('src/lang')
 local Sanctions=require('src/sanctions')
 local K=C.K
 local M={}
+-- Beta 1.63 (Random776, Overtake : récapitulatif « course finie » après un replay vu en pleine course) : pendant un
+-- replay, rien n'est relevé (tour, arrivée, dépassements, sanctions) ; au retour, RK.settle s de stabilisation : tour
+-- resynchronisé sans annonce, aucune arrivée retenue.
+local RK={settle=2}
+M.RK=RK
 function M.new()
  return {session=-1,lap=-1,lapUntil=-math.huge,lapTitle='',lapDetail='',lapCode='',lapSerial=0,best=0,
   msgTitle='',msgDetail='',msgText='',msgIllegal=false,msgUntil=-math.huge,msgAt=-math.huge,msgCount=0,seen={},
@@ -17,7 +22,7 @@ function M.new()
 end
 -- Relecture 1.52 : échéances décalées avec l'horloge de l'app (Engine.rebase), sinon figées près de 24 h.
 function M.rebase(h,amount)
- for _,key in ipairs({'lapUntil','msgUntil','msgAt','aiUntil','aiAt','at','stripAt'}) do if U.finite(h[key]) then h[key]=h[key]-amount end end
+ for _,key in ipairs({'lapUntil','msgUntil','msgAt','aiUntil','aiAt','at','stripAt','settleUntil'}) do if U.finite(h[key]) then h[key]=h[key]-amount end end
 end
 -- Temps au tour « 2:01,456 » (séparateur décimal de la langue) ; 0 ou moins : aucun.
 function M.lapTime(seconds)
@@ -132,9 +137,12 @@ local function strip(h,frame,e,a)
  end
 end
 function M.update(h,frame,e,now)
+ if frame.replay then h.replay=true; return end
+ if h.replay then h.replay=false; h.settleUntil=now+RK.settle end
+ local settling=h.settleUntil~=nil and now<h.settleUntil
  if frame.session~=h.session then reset(h,frame.session) end
  -- Beta 1.42 : arrivées et classement corrigé des sanctions des IA, même course finie (moteur arrêté).
- if e.sanctions then Sanctions.watch(e.sanctions,frame,e,now) end
+ if e.sanctions and not settling then Sanctions.watch(e.sanctions,frame,e,now) end
  -- Beta 1.43 (maquette) : annonce de sanction d'une IA, en panneau dédié de l'overlay pendant K.hudMessageTime s ;
  -- seulement si l'overlay reprend les messages d'AC (sinon AC l'affiche lui-même, comme avant).
  local s=e.sanctions
@@ -155,7 +163,7 @@ function M.update(h,frame,e,now)
  h.cars=cars
  -- Passage de la ligne : tour suivant, dernier tour (et nouveau meilleur tour) pendant quelques secondes.
  local race=e.profile=='C'
- if h.lap>=0 and a.lap>h.lap and not a.finished and frame.started then
+ if h.lap>=0 and a.lap>h.lap and not a.finished and frame.started and not settling then
   local laps=race and frame.sessionLaps>0 and not frame.timedRace and frame.sessionLaps or 0
   local shown=a.lap+1
   h.lapTitle=laps>0 and string.format(L.hudLapTitle,math.min(shown,laps),laps) or string.format(L.hudLapOpen,shown)
@@ -172,8 +180,8 @@ function M.update(h,frame,e,now)
  -- Récapitulatif de course : place au premier feu vert de la session (une relance après drapeau rouge ne la change pas).
  if race then
   -- Beta 1.59 : jamais sur une image encore marquée finie (course précédente lue au moment de la relance).
-  if not h.started and frame.started and not frame.finished and not a.finished and a.position>0 then h.started=true; h.grid=a.position end
-  if h.started and not h.finished then
+  if not h.started and not settling and frame.started and not frame.finished and not a.finished and a.position>0 then h.started=true; h.grid=a.position end
+  if h.started and not h.finished and not settling then
    if now>=h.at then h.at=now+K.recapPeriod; if frame.length>0 then passes(h,frame) end end
    if a.finished or frame.finished then
     h.finished=true; h.dnf=not a.finished; h.dq=e.penalties.disqualified==true; h.final=a.position

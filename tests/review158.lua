@@ -91,7 +91,7 @@ tests.PIT_COMPOUND_STABLE_158=function()
 end
 tests.PIT_REQUEST_SERVICE_CAP_158=function()
  local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); local p=e.profiles.C; p.mandatoryStops=1; p.maxStintMin=0; p.minPitTime=0; p.pitWindowOpenPct=10; p.pitWindowClosePct=90
- E.changed(e); f.sessionLaps=10; f.leaderLaps=9
+ E.changed(e); f.sessionLaps=11; f.leaderLaps=8 -- Affinage 1.63 (course courte) : tour 9 sur 11 (Beta 1.64 : 11 tours, plus de 100 km), la fenetre est fermee au dernier
  local lines={}; local t=Pits.new(); t.note=function(level,text) lines[#lines+1]=level..' '..text end
  Pits.update(t,f,e.commands,p,'C',100,1,nil,false)
  local c=t.cars[2]; assert(c.wanted,'stop requested in the window')
@@ -118,7 +118,7 @@ tests.PIT_APP_TOW_NOT_THE_STOP_158=function()
  -- service (AC ne la ramène pas à son emplacement), redemandé en piste, puis compté au vrai arrêt.
  local e,f=F.scene('C',3); local run={}; for k,v in pairs(e.run) do run[k]=v end
  run.mandatoryStops=1; run.pitWindowOpenPct=10; run.pitWindowClosePct=95; run.pitTyres=true; run.maxStintMin=0; run.minPitTime=0
- f.sessionLaps=10; f.leaderLaps=9; f.timedRace=false
+ f.sessionLaps=11; f.leaderLaps=8 -- Affinage 1.63 (course courte) : tour 9 sur 11 (Beta 1.64 : 11 tours, plus de 100 km), la fenetre est fermee au dernier; f.timedRace=false
  local t=Pits.new(); local cmds={}; for i=1,f.count do cmds[i]={} end
  local now=100
  local function step(red) now=now+0.5; Pits.update(t,f,cmds,run,'C',now,1,nil,red or false,nil,false) end
@@ -140,7 +140,7 @@ tests.PIT_ONE_SERVICE_PER_LANE_158=function()
  -- Ramenée à son emplacement sans être sortie de la voie : ni arrêt compté, ni nouveau service, une ligne.
  local e,f=F.scene('C',3); local run={}; for k,v in pairs(e.run) do run[k]=v end
  run.mandatoryStops=1; run.pitWindowOpenPct=10; run.pitWindowClosePct=95; run.pitTyres=true; run.pitRepair=true; run.pitCompoundChange=true; run.maxStintMin=0; run.minPitTime=0
- f.sessionLaps=10; f.leaderLaps=9; f.timedRace=false
+ f.sessionLaps=11; f.leaderLaps=8 -- Affinage 1.63 (course courte) : tour 9 sur 11 (Beta 1.64 : 11 tours, plus de 100 km), la fenetre est fermee au dernier; f.timedRace=false
  local a=f.cars[2]; a.tyresKnown=true; a.compoundIndex=0; a.dryCompounds={[0]=true,[1]=true,[2]=true}
  local lines={}; local t=Pits.new(); t.note=function(level,text) lines[#lines+1]=level..' '..text end
  local cmds={}; for i=1,f.count do cmds[i]={} end
@@ -160,7 +160,7 @@ tests.PIT_USED_PASSED_158=function()
  -- Roulée en SS, arrivée à l'emplacement déjà en S (changé par AC) : M, jamais un retour au SS de départ.
  local e,f=F.scene('C',3); local run={}; for k,v in pairs(e.run) do run[k]=v end
  run.mandatoryStops=1; run.pitWindowOpenPct=10; run.pitWindowClosePct=95; run.pitTyres=true; run.pitCompoundChange=true; run.maxStintMin=0; run.minPitTime=0
- f.sessionLaps=10; f.leaderLaps=9; f.timedRace=false
+ f.sessionLaps=11; f.leaderLaps=8 -- Affinage 1.63 (course courte) : tour 9 sur 11 (Beta 1.64 : 11 tours, plus de 100 km), la fenetre est fermee au dernier; f.timedRace=false
  local a=f.cars[2]; a.tyresKnown=true; a.compoundIndex=0; a.dryCompounds={[0]=true,[1]=true,[2]=true}
  local t=Pits.new(); local cmds={}; for i=1,f.count do cmds[i]={} end
  Pits.update(t,f,cmds,run,'C',100,1,nil,false,nil,false)

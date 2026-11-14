@@ -75,11 +75,13 @@ local Director=require('src/director')
 local Caps=require('src/caps')
 local Calibration=require('src/calibration')
 local Zones=require('src/zones')
+local Dangerfile=require('src/dangerfile')
 local UI=require('src/ui')
 local U=require('src/util')
 local Config=require('src/config')
 local Lang=require('src/lang')
 local Pits=require('src/pits')
+local Cooldown=require('src/cooldown')
 local Penalties=require('src/penalties')
 local Strategy=require('src/strategy')
 local Sanctions=require('src/sanctions')
@@ -88,6 +90,7 @@ local Locale=require('src/locale')
 local Lights=require('src/lights')
 local Cspgui=require('src/cspgui')
 local Bridge=require('src/bridge')
+local SessionKey=require('src/sessionkey')
 local K=Config.K
 -- Cache des traces du compilateur JIT agrandi (machine virtuelle de l'app) : avec les 1 000 traces et 512 Ko de code
 -- machine par défaut, le moteur vide et recompile tout son code toutes les une à deux minutes (pics d'image). Sans
@@ -115,6 +118,7 @@ local calibration=Calibration.new()
 local initialized=false
 local released=false
 local loadedTrack=''
+local dangerTrack=nil -- Correctif 1.63 : circuit dont les zones dangereuses gardées sont chargées
 -- Finition 1.61 (relecture) : fichier par circuit refusé à la lecture : mis de côté (jamais écrasé), une ligne.
 local function refusedAside(folder,key,what)
  local name=Applier.trackFileSetAside(folder,key)
@@ -262,6 +266,15 @@ local function writeReport(lines)
  else U.log(engine.log,engine.time,'WARN',string.format('rapport de course: ecriture impossible (%s)',info),-1) end
 end
 local function cancelProbe() if host.allowed then Caps.cancelProbe(host.caps,frame) end end
+-- Beta 1.63 : tour de décélération après le drapeau à damier (src/cooldown.lua) : course en cours ou finie seulement ;
+-- partout ailleurs, rien n'est demandé (et ce qui l'était est rendu).
+local cooling=Cooldown.new()
+local function coolNote(level,text,index) U.log(engine.log,engine.time,level,text,index) end
+local function coolStep(dt,allowed)
+ local race=allowed and engine.profile=='C' and globals.enabled==true
+ Cooldown.step(cooling,frame,engine.states,engine.delta and engine.delta.bins,race,dt,coolNote,engine.runtimeG)
+ Applier.cooldown(host,frame,cooling,engine.runtimeG,engine.time)
+end
 local function syncRestored()
  for i=1,frame.count do
   local state=host.cars[i]
@@ -305,6 +318,9 @@ local companion='SpotterEnginer'
 -- Beta 1.52 : sa mise à jour, signalée à l'accueil (clé publiée par lui, fenêtre de réglages ID=main de son manifeste).
 local companionKey,companionWindow=companion..'.update','IMGUI_LUA_'..companion..'_main'
 local companionPresent,companionAt=false,-math.huge
+-- Beta 1.63 (accord avec SetupLab) : le pont est aussi ouvert pour SetupLab, lecteur de la clé « AdvancedIA.session ».
+local setupLabPresent=false
+local sessionKey=SessionKey.new()
 -- Beta 1.59 : plan d'arrêt du joueur publié par SpotterEnginer (lecture seule), relu toutes les K.sePlanPeriod s.
 local sePlanAt=-math.huge
 local strategyPublished=''
@@ -312,7 +328,7 @@ local sidePublished={} -- Beta 1.61 : dernier texte écrit de chaque clé annexe
 host.openCompanion=function() return Applier.openCompanion(companionWindow) end
 local function release()
  if released then return end
- if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil end
+ if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil; if sessionKey.logged then pcall(Applier.storeText,SessionKey.key,SessionKey.closedText) end end
  -- Aucune image ne suivra : restitution complète, y compris en pause ou en replay.
  -- Beta 1.52 : instantané protégé (released est déjà posé : une erreur ici empêchait toute la restitution).
  released=true; pcall(Snapshot.read,frame,K.dtMax,engine.time); pcall(saveRace,true); Applier.access(host); stop(true); Applier.unregister(host)
@@ -479,6 +495,8 @@ local function update(dt)
  -- Beta 1.41 : retenue à la sortie des stands seulement si l'arrêt natif répond.
  engine.stopCap=host.caps.stop.available==true
  engine.pitCap=host.caps.pit.available==true
+ -- Correctif 1.64 : dépannage possible (déplacement de CSP en service) pour le délai maximal du drapeau rouge.
+ engine.teleportCap=host.caps.teleport.available==true
  -- Beta 1.56 : pénalité native du joueur écrite (limites de piste, option coupure des gaz), capacité disponible.
  engine.penaltyWritten=host.penaltyWritten or 0; engine.penaltyCap=host.caps.penalty.available==true
  local ready=Engine.step(engine,frame,dt)
@@ -542,7 +560,10 @@ local function update(dt)
   globals.offsetSign=0; globals.sideSign=0; calibration.attempted=false; calibration.phase='waiting'
   engine.recalibrateRequested=false; Engine.reset(engine,engine.time,false); dirty()
  end
- if not ready then stop(false,engine.guard=='finished'); Applier.save(host,globals,profiles,engine.time,frame.replay); return end
+ if not ready then
+  stop(false,engine.guard=='finished'); coolStep(dt,engine.guard=='finished')
+  Applier.save(host,globals,profiles,engine.time,frame.replay); return
+ end
  if loadedTrack~=frame.track then
   loadedTrack=frame.track; engine.zones={}; engine.zoneStart=-1; local data=Snapshot.zones(frame.track)
   lightsCheck()
@@ -566,6 +587,35 @@ local function update(dt)
      if not decoded.lengthOK then U.log(engine.log,engine.time,'WARN',string.format('zones: longueur du circuit changee, zones apprises ecartees (%s)',key),-1) end
     else U.log(engine.log,engine.time,'WARN',string.format('zones: fichier refuse (%s)',reason),-1); refusedAside(K.zoneFolder,key,'zones') end
    elseif why=='big' then U.log(engine.log,engine.time,'WARN','zones: fichier refuse (taille)',-1); refusedAside(K.zoneFolder,key,'zones') end
+  end
+ end
+ -- Correctif 1.63 (décision du pilote) : zones dangereuses gardées par circuit, toujours (même « Mémoire des circuits »
+ -- coupée) : fichier lu au chargement du circuit, vieilli d'un lancement, réécrit ; puis à chaque zone armée ou relevée.
+ if dangerTrack~=frame.track then
+  dangerTrack=frame.track
+  local key=frame.trackKey or ''
+  local list,junction=nil,-1
+  if key~='' and frame.length>0 then
+   local text,why=Applier.trackFileRead(Dangerfile.DF.folder,key,Dangerfile.DF.maxBytes)
+   if text then
+    local decoded,reason=Dangerfile.decode(text,frame.track,frame.layout,frame.length)
+    if decoded then list=decoded; junction=reason
+    else U.log(engine.log,engine.time,'WARN',string.format('zones dangereuses: fichier refuse (%s)',tostring(reason)),-1); refusedAside(Dangerfile.DF.folder,key,'zones dangereuses') end
+   elseif why=='big' then U.log(engine.log,engine.time,'WARN','zones dangereuses: fichier refuse (taille)',-1); refusedAside(Dangerfile.DF.folder,key,'zones dangereuses') end
+  end
+  local n=Dangerfile.loaded(engine.danger,list,key,junction)
+  -- Rien de gardé (premier lancement sur ce circuit) : aucune ligne (le journal limite les lignes par seconde au démarrage).
+  if n>0 or junction>=0 then U.log(engine.log,engine.time,'INFO',string.format('zones dangereuses connues: %d',n),-1) end
+  if engine.danger.dirty then engine.dangerSaveAsk=true end
+ end
+ engine.dangerDate=engine.dangerDate or Applier.clockText():sub(1,10)
+ if engine.dangerSaveAsk then
+  engine.dangerSaveAsk=nil
+  local key=frame.trackKey or ''
+  if key~='' and frame.length>0 then
+   local text=Dangerfile.encode(engine.danger,{track=frame.track,layout=frame.layout,length=frame.length})
+   if #text<=Dangerfile.DF.maxBytes and Applier.trackFileWrite(Dangerfile.DF.folder,key,text) then engine.danger.dirty=false
+   else U.log(engine.log,engine.time,'WARN','zones dangereuses: enregistrement impossible',-1) end
   end
  end
  -- Beta 1.61 (tranche A) : enregistrement des zones demandé par le pilote (SAVE, « Forget this track ») ou par
@@ -637,7 +687,10 @@ local function update(dt)
  local rg=engine.runtimeG
  if rg.offsetSign~=globals.offsetSign or rg.sideSign~=globals.sideSign then Config.effectiveGlobals(globals,engine.p,rg) end
  host.calibrationIndex=calibration.index
+ -- Beta 1.63 : IA accidentée qui peut encore rouler : redémarrage servi, pas de dépannage pendant ses essais.
+ Applier.rejoin(host,frame,engine.incidents,engine.commands)
  Applier.apply(host,frame,engine.commands,engine.runtimeG,engine.time)
+ coolStep(dt,true)
  -- Drapeau du joueur : panneaux lumineux du circuit (section du profil en cours, circuit équipé) ; sinon jaune natif du
  -- HUD sur demande.
  local lightsOn=Config.on(engine.run,'lights') and host.trackLights==true
@@ -699,8 +752,10 @@ HUMANAI={engine=engine,host=host,release=release,updater=updater,port=port,panel
 -- lui : rien n'est ouvert ni calculé, une ligne au journal. Lecture seule du moteur ; une erreur coupe le pont seul (une
 -- ligne au journal), jamais le moteur ni l'interface.
 companionPresent=Applier.companionInstalled(companion)
+setupLabPresent=Applier.companionInstalled('SetupLab')
+-- Beta 1.63 (accord avec SuperHUD) : pont ouvert aussi pour SuperHUD, lecteur en lecture seule de la structure v1.
+local superHudPresent=Applier.companionInstalled('SuperHUD')
 if companionPresent then
- local why
  -- Beta 1.60 : version de SpotterEnginer lue une fois (son manifest.ini) : plus ancienne que K.seStartMin*, le tour de
  -- formation et le départ lancé lui sont inconnus (avertissement à l'accueil quand « Départ de la course » n'est pas
  -- le départ arrêté). Illisible : aucun avertissement, une ligne au journal.
@@ -710,14 +765,29 @@ if companionPresent then
   host.companionOldStart=Applier.versionBelow(version,{K.seStartMinMajor,K.seStartMinMinor,K.seStartMinPatch})
   U.log(engine.log,0,'INFO',string.format('pont des apps compagnes: %s version %s%s',companion,host.companionVersionText,host.companionOldStart and ' (tour de formation et depart lance inconnus avant la '..string.format('%d.%d.%d',K.seStartMinMajor,K.seStartMinMinor,K.seStartMinPatch)..')' or ''),-1)
  else U.log(engine.log,0,'INFO','pont des apps compagnes: version de '..companion..' illisible',-1) end
+end
+if companionPresent or setupLabPresent or superHudPresent then
+ local why
  bridge=Bridge.new(Config.release)
  bridgePort,why=Applier.bridgeOpen(Bridge.layout)
  U.log(engine.log,0,'INFO',bridgePort and string.format('pont des apps compagnes: ouvert (version %d)',Bridge.layout.version) or 'pont des apps compagnes: indisponible ('..tostring(why)..')',-1)
+ if setupLabPresent then U.log(engine.log,0,'INFO','pont des apps compagnes: SetupLab present, cle '..SessionKey.key..' publiee',-1) end
+ if superHudPresent then U.log(engine.log,0,'INFO','pont des apps compagnes: SuperHUD present',-1) end
 else
  U.log(engine.log,0,'INFO','pont des apps compagnes: '..companion..' absent, pont inactif',-1)
 end
 -- Une seule fonction pour l'appel protégé : rien n'est créé à chaque image.
-local function bridgeWork() Bridge.beat(bridge,bridgePort.hello); Bridge.publish(bridge,bridgePort.data,engine,frame) end
+local function bridgeWork()
+ Bridge.beat(bridge,bridgePort.hello); Bridge.publish(bridge,bridgePort.data,engine,frame)
+ -- Beta 1.63 : clé annexe pour SetupLab (src/sessionkey.lua), écrite seulement quand son texte change, au plus 2 fois/s.
+ if setupLabPresent then
+  local text=SessionKey.step(sessionKey,engine,frame,engine.time or 0)
+  if text then
+   Applier.storeText(SessionKey.key,text)
+   if not sessionKey.logged then sessionKey.logged=true; U.log(engine.log,engine.time or 0,'INFO','cle de session pour SetupLab: premiere ecriture',-1) end
+  end
+ end
+end
 local function bridgeStep()
  if released or not bridgePort then return end
  local ok,err=pcall(bridgeWork)
@@ -812,8 +882,14 @@ end
 function script.HUMANAI__MAIN()
  script.HUMANAI__MENU()
  if host.menuVisible then
+  panel.ingame=false; panel.ingameFull=false
   -- Une seule fois : fenêtre ramenée à la taille compacte (Beta 1.14), puis la taille du pilote est respectée.
   if not globals.windowCompacted and Applier.compactWindow(host,UI.compactSize()) then globals.windowCompacted=true; dirty() end
+  timedUI(UI.main)
+ -- Affinage 1.64 i1 (décision du pilote) : fenêtre ouverte en jeu par le joueur (barre des apps d'AC) : vue compacte,
+ -- vue complète à la demande ; rien n'est dessiné ni calculé tant qu'elle est fermée.
+ elseif Applier.windowOpenInGame(host) then
+  panel.ingame=true
   timedUI(UI.main)
  end
 end

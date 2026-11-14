@@ -117,6 +117,10 @@ function M.decide(l,inc,frame,p,profile,now)
  -- Beta 1.35 : pénalité d'AC du joueur, drapeau d'AC rendu (jamais couvert par les panneaux).
  if l.playerPenalty then return K.flagNone,'penalite' end
  if inc.playerYellow then return K.flagCaution,'drapeau jaune' end
+ -- Affinage 1.64 s1 : joueur aux stands, voiture suivie par la caméra à l'approche d'une zone jaune ou dedans.
+ if inc.focusYellow then return K.flagCaution,'drapeau jaune, voiture suivie' end
+ -- Affinage 1.63 : jaune d'avertissement (voiture lente au bord, src/incidents.lua M.warn) : panneaux jaunes, aucune règle.
+ if inc.playerWarn then return K.flagCaution,'voiture lente au bord' end
  -- Départ arrêté (Beta 1.34) : jaune pendant la formation et les feux ; vert à l'extinction, avant toute autre
  -- information (Beta 1.35).
  if inc.standing=='grid' or inc.standing=='lights' then return K.flagCaution,'depart arrete' end

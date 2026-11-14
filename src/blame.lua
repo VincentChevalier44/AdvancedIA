@@ -19,7 +19,7 @@ local M={}
 -- Historique des positions latérales : K.blameCutTime s au pas de K.blameSample s, plus un échantillon.
 local SAMPLES=8
 local CASES=24
-local function case() return {open=false,i=0,j=0,key=0,at=0,dueAt=0,fault=0,situation='',diff=0,lostI=false,lostJ=false,placeI=0,placeJ=0,waiting=false,outAll=true,idI='',idJ=''} end
+local function case() return {firstLap=false,open=false,i=0,j=0,key=0,at=0,dueAt=0,fault=0,situation='',diff=0,lostI=false,lostJ=false,placeI=0,placeJ=0,waiting=false,outAll=true,idI='',idJ=''} end
 function M.new()
  local t={session=-1,raceGen=nil,sampleAt=-huge,head=0,filled=0,lat={},mid={},off={},rejoinAt={},hitAt={},hitBy={},cases={},open=0,pairUntil={},
   rel={index=0,long=0,lat=0,gap=0,sa=0,ttc=huge,same=false,alongside=false}}
@@ -128,11 +128,16 @@ local function judge(t,e,frame,i,j,now)
   return rear,'ligne droite choc par l arriere'
  end
  if corner then
-  -- Côte à côte en virage : le nez derrière de plus de K.cornerNoseMargin m cède (formule de la priorité au virage).
-  local nose=Priority.nose(a,b,rel.long)
-  if nose>K.cornerNoseMargin then return i,'virage nez derriere' end
-  if nose<-K.cornerNoseMargin then return j,'virage nez derriere' end
-  return 0,'nez a egalite'
+  -- Beta 1.64, lot 1 (référentiel des comportements pilotes, 08-13 ; décision du pilote du 13 novembre) : côte à côte en
+  -- virage, jugé sur le duel enregistré par la priorité au virage à l'entrée (avant la corde, src/priority.lua), jamais
+  -- sur la photo du choc. Sans droit à l'espace face à une voiture qui l'avait : en tort ; incertain des deux côtés,
+  -- ou aucun duel enregistré (voiture arrivée à côté après l'entrée, contact hors de la fenêtre) : incident de course.
+  local ri,rj,mode=Priority.recorded(e,frame,i,j,now)
+  if not ri then return 0,'virage sans duel enregistre' end
+  local axes=mode=='axes'
+  if ri=='non' and rj=='oui' then return i,axes and 'virage sans droit a l espace' or 'virage nez derriere' end
+  if rj=='non' and ri=='oui' then return j,axes and 'virage sans droit a l espace' or 'virage nez derriere' end
+  return 0,axes and 'droit a l espace incertain' or 'nez a egalite'
  end
  -- Côte à côte en ligne droite : la voiture qui s'est déplacée vers l'autre (au moins K.blameMoveMin m, et
  -- K.blameMoveRatio fois plus que l'autre) ; une voiture tenue sur sa ligne pour un attaquant engagé et qui a bougé
@@ -170,6 +175,9 @@ function M.contact(t,e,frame,i,j,now)
  slot.open=true; slot.i=i; slot.j=j; slot.key=key; slot.at=now; slot.dueAt=now+K.blameOutcome; slot.fault=fault; slot.situation=situation
  slot.diff=abs(a.kmh-b.kmh); slot.lostI=false; slot.lostJ=false; slot.placeI=a.position or 0; slot.placeJ=b.position or 0; slot.waiting=false; slot.outAll=true
  slot.idI=a.identity or a.id or ''; slot.idJ=b.identity or b.id or ''
+ -- Correctif 1.63 (grilles de 60) : contact pendant le premier tour attentif d'une des deux voitures (verdict allégé).
+ local si,sj=e.states[i],e.states[j]
+ slot.firstLap=e.profile=='C' and (si~=nil and (si.flW or 0)>0 or sj~=nil and (sj.flW or 0)>0)
  t.open=t.open+1
 end
 function M.sample(t,e,frame,now)
@@ -226,6 +234,11 @@ function M.settle(t,e,frame,now)
    -- Voiture remplacée, téléportée aux stands ou disparue depuis le contact : dossier abandonné sans verdict.
    if c.i>frame.count or c.j>frame.count or not a.valid or not b.valid or (a.identity or a.id or '')~=c.idI or (b.identity or b.id or '')~=c.idJ then close(t,c)
    elseif c.diff<K.blameMinKmh and not c.lostI and not c.lostJ then incident(t,e,frame,c,'contact leger',now)
+   -- Correctif 1.63 (grilles de 60, rapport public : trop de sanctions de contact) : sans perte de contrôle, une touchette
+   -- (moins de K.blameNudgeKmh km/h d'écart) ou un contact au premier tour attentif (moins de K.blameStartKmh km/h) n'est la
+   -- faute de personne ; accordéon du peloton dense. Un contact qui fait sortir l'autre reste jugé.
+   elseif not c.lostI and not c.lostJ and (c.diff<K.blameNudgeKmh or c.firstLap and c.diff<=K.blameStartKmh) then
+    e.stats.blameLenient=(e.stats.blameLenient or 0)+1; incident(t,e,frame,c,c.firstLap and 'premier tour' or 'touchette',now)
    elseif c.fault==0 then incident(t,e,frame,c,c.situation,now)
    else
     local fault=c.fault; local victim=fault==c.i and c.j or c.i

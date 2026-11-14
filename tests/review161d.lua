@@ -396,9 +396,9 @@ tests.START_BENCH_POOR_STARTERS_161D=function()
   for _,sc in ipairs({{'monza','f1',1},{'monza','f1',3},{'short','gt3',3}}) do
    local scene=sc[1]..'/'..sc[2]..' seed '..sc[3]
    -- Beta 1.62 : « Realistic race » active les départs réalistes : réglage coupé à la main pour la référence.
-   local off=run(sc[1],sc[2],{mode='app',seed=sc[3],tune=function(e) e.profiles.C.startRealism=false; E.changed(e) end})
+   local off=run(sc[1],sc[2],{mode='app',seed=sc[3],tune=function(e) local L=e.log; e.log=require('src/util').newLog(4000,L.rate,L.dedup); e.profiles.C.startRealism=false; E.changed(e) end})
    K.anticPoorShare=1
-   local on=run(sc[1],sc[2],{mode='app',seed=sc[3],tune=function(e) e.profiles.C.startRealism=true; E.changed(e) end})
+   local on=run(sc[1],sc[2],{mode='app',seed=sc[3],tune=function(e) local L=e.log; e.log=require('src/util').newLog(4000,L.rate,L.dedup); e.profiles.C.startRealism=true; E.changed(e) end})
    K.anticPoorShare=share
    local function n(r,text) local c=0; for k=1,r.log.limit do local row=r.log[k]; if row and row.message and row.message:find(text,1,true) then c=c+1 end end return c end
    assert(n(off,'depart: reactions')==0 and n(on,'depart: reactions')==1,scene..': one draw with the switch on')
@@ -414,7 +414,9 @@ end
 tests.START_BENCH_ROLLING_REALISM_161D=function()
  local run=require('tests/startbench147')
  for _,sc in ipairs({{'short','gt3'},{'monza','f1'}}) do
-  local r=run(sc[1],sc[2],{mode='app',seed=1,laps=2,formation=true,seconds=900,tune=function(e) e.profiles.C.raceStart='rolling'; e.profiles.C.startRealism=true; E.changed(e) end})
+  -- Premier tour 1.63 : journal du banc agrandi (les lignes de dépassement, plus nombreuses, chassaient celles du départ
+  -- du tampon de 200 lignes).
+  local r=run(sc[1],sc[2],{mode='app',seed=1,laps=2,formation=true,seconds=900,tune=function(e) local L=e.log; e.log=require('src/util').newLog(4000,L.rate,L.dedup); e.profiles.C.raceStart='rolling'; e.profiles.C.startRealism=true; E.changed(e) end})
   local scene=sc[1]..'/'..sc[2]
   local function n(text) local c=0; for k=1,r.log.limit do local row=r.log[k]; if row and row.message and row.message:find(text,1,true) then c=c+1 end end return c end
   assert(n('tour de formation: depart par rangees')==1 and n('lance le depart a')==1 and n('abandonne')==0,scene..': realistic formation lap, the pole car starts the race')

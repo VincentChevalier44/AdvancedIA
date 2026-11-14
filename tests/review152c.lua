@@ -159,13 +159,15 @@ tests.REVIEW152C_CAPS_FAILURE_COUNT=function()
  Caps.call(b.caps,'caution',1,1); assert(b.caps.failureCount==before+1,'success: unchanged')
  assert(a~=nil)
 end
--- Mineur 19 : fenêtre ouverte hors des menus refermée au plus toutes les K.windowCheckPeriod s.
+-- Mineur 19 : plus d'appel de ac.isWindowOpen à chaque image. Affinage 1.64 i1 (décision du pilote : fenêtre ouvrable en
+-- jeu) : plus de fermeture périodique hors des menus ; la fenêtre n'est lue qu'à l'entrée dans un menu.
 tests.REVIEW152C_WINDOW_CHECK_PERIOD=function()
  local a=bench(); local checks=0; local open=ac.isWindowOpen; ac.isWindowOpen=function(id) checks=checks+1; return open(id) end
- A.menu(a,false,0); local first=checks; assert(first==1,'checked on the change')
- for k=1,30 do A.menu(a,false,k/60) end; assert(checks==first,'not every frame')
- A.menu(a,false,K.windowCheckPeriod+0.01); assert(checks==first+1,'checked again after the period')
- A.menu(a,false); assert(checks==first+1,'draw callback (no time): no check')
+ A.menu(a,false,0); for k=1,30 do A.menu(a,false,k/60) end
+ A.menu(a,false,K.windowCheckPeriod+0.01); A.menu(a,false); assert(checks==0,'never read outside menus')
+ A.menu(a,true,1); assert(checks==1,'read once when the menu opens')
+ for k=1,30 do A.menu(a,true,1+k/60) end; assert(checks==1,'not every frame')
+ ac.isWindowOpen=open
 end
 -- Mineur 8 : lecture légère : joueur relu, autres voitures invalides.
 tests.REVIEW152C_LIGHT_READ_PLAYER=function()

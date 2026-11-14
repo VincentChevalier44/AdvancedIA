@@ -160,7 +160,10 @@ tests.BLAME_SIDE_CORNER_NOSE_160B=function()
  assert(K.cornerNoseMargin==2.2)
  local function run(ahead)
   local e,f=scene('C',ON); F.tick(e,f,1.5)
-  F.place(f,2,0,100,-1); F.place(f,3,ahead,92,1); f.cars[2].brake=0.5; f.cars[3].brake=0.5
+  F.place(f,2,0,100,-1); F.place(f,3,ahead,92,1); F.tick(e,f,0.3); f.cars[2].brake=0.5; f.cars[3].brake=0.5
+  -- Beta 1.64, lot 1 : le contact est jugé sur le duel enregistré à l'entrée du virage (côte à côte au freinage avant le
+  -- choc) ; géométrie inconnue dans la scène : règle du nez, verdicts inchangés.
+  F.tick(e,f,0.3)
   hit(e,f,2,3)
   return e
  end

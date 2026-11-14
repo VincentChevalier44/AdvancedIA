@@ -30,7 +30,7 @@ return function(laps,hook)
  rp.strategyTyreWearPct=75
  -- Affinage 1.62 : scène de la 1.42 gardée telle quelle, sans recherche de l'aspiration (src/director.lua, slipSeek ;
  -- tests/review162s.lua) : le virage coupé avec gain et sa pénalité de temps en dépendent. Rendue à la fin.
- local seekKeep=K.seekLat; K.seekLat=math.huge
+ local seekKeep=K.seekLat; K.seekLat=math.huge; local alignKeep,diveKeep=K.wakeAlignLat,K.diveGapRace; K.wakeAlignLat=math.huge; K.diveGapRace=nil -- 1.63 w2 : recalage d'aspiration et attaque au freinage en course coupés (scène de couverture déterministe)
  E.changed(e)
  f.length=L; f.sessionLaps=laps; f.timedRace=false; f.sessionMinutes=0; f.leaderLaps=0; f.sectorCount=3; f.pitsSpeedLimit=80
  f.started=true; f.finished=false; f.time=0
@@ -200,6 +200,6 @@ return function(laps,hook)
  local st={}; for k,v in pairs(e.stats) do st[#st+1]=k..'='..v end; table.sort(st)
  local summary=string.format('race142 %d IA %d tours %d images, erreurs %d, coupure mini %.2f (%d images), niveau reduit %d images\n  journal %s\n  stats %s\n  empreintes %s',
   count-1,laps,frame,e.errors,maxThrottleCut,cutFrames,levelScaled,table.concat(counts,','),table.concat(st,','),table.concat(prints,' '))
- K.seekLat=seekKeep
+ K.seekLat=seekKeep; K.wakeAlignLat=alignKeep; K.diveGapRace=diveKeep
  return summary,lines,countOf
 end

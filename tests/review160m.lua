@@ -18,8 +18,9 @@ tests.FORMATION_LAUNCH_GRACE_160M=function()
  end
  local t=scene(0,true)
  assert(not t.passedUnder and t.giveBack==0 and t.count==0,'launch at AC s green light: no place to give back')
+ -- Correctif 1.63 (règlement du tour de formation) : aucune pénalité ni place à rendre pendant tout le tour de formation.
  local late=scene(-K.formationGrace-1,true)
- assert(late.passedUnder and late.giveBack==3,'after the grace: the formation lap forbids overtaking')
+ assert(not late.passedUnder and late.giveBack==0,'after the grace: still no penalty during the formation lap')
  local fcy=scene(0,false)
  assert(fcy.passedUnder and fcy.giveBack==3,'ordinary neutralisation: no grace')
  -- La grâce finie, la place déjà prise n'est pas réclamée ; un nouveau dépassement l'est.

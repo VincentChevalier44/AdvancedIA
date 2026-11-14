@@ -17,6 +17,7 @@ local L=require('src/lang')
 local Delta=require('src/delta')
 local Incidents=require('src/incidents')
 local Penalties=require('src/penalties')
+local Layout=require('src/bridge_layout')
 local K=C.K
 local abs,max,min,floor=math.abs,math.max,math.min,math.floor
 local M={}
@@ -46,7 +47,9 @@ local function car()
   -- Beta 1.62 (décision 5 du pilote) : drapeaux bleus ignorés de suite (remis à zéro quand elle cède), drapeaux de
   -- l'épisode en cours déjà comptés.
   blueN=0,blueEpN=0,blueBy=0,blueDone=false,
-  rWarn=0,rCut=0,rDrive=0,rStopgo=0,rServed=0,rOwed=0,rGiven=0,rUnserved=0,rBlack='',rName='',rModel=''}
+  rWarn=0,rCut=0,rDrive=0,rStopgo=0,rServed=0,rOwed=0,rGiven=0,rUnserved=0,rBlack='',rName='',rModel='',
+  -- Beta 1.64 (pont v2) : code de la dernière sanction émise (Layout.reasons), 0 au début de la séance.
+  lastReason=0}
 end
 local function clearCar(c,identity)
  local watch,hits=c.watch,c.lineHits
@@ -148,12 +151,18 @@ local function notice(t,e,kind,text,now,force,what,driver,x,y)
  end
 end
 local function name(a) return a.name~='' and a.name or a.id or '?' end
+-- Beta 1.64 (pont v2) : raison de la dernière sanction émise pour l'IA i (jamais un simple avertissement de limites).
+function M.mark(t,i,reason)
+ local c=t.cars[i]; if not c then return end
+ local k=Layout.code(Layout.reasons,reason)
+ c.lastReason=(k>1 and k) or Layout.reasonOther
+end
 -- Drapeau noir : IA ramenée à son stand et garée jusqu'à la fin de la session (chemin de la disqualification existant :
 -- e.penalties.ai.dq, lu par le moteur, les arrêts et la grille).
 local function blackFlag(t,e,frame,i,reason,now)
  local c=t.cars[i]; local a=frame.cars[i]
  if c.dq then return end
- c.dq=true; c.pending=''; c.cutLeft=0; c.cutLimit=1; c.owedTo=0; c.rBlack=reason
+ c.dq=true; c.pending=''; c.cutLeft=0; c.cutLimit=1; c.owedTo=0; c.rBlack=reason; M.mark(t,i,reason)
  -- Garée par le moteur dès l'image suivante (cmd.scPark, parkReason 'dq'), comme une IA disqualifiée sous drapeau.
  e.penalties.ai.dq[i]=true; e.states[i].disqualified=true
  U.log(e.log,now,'WARN',string.format('sanction IA: %s drapeau noir (%s)',name(a),journalReasons[reason] or reason),i)
@@ -169,7 +178,7 @@ local function escalate(t,e,frame,i,now)
 end
 local function addTime(t,e,frame,i,seconds,reason,now,why)
  local c=t.cars[i]; local a=frame.cars[i]
- c.time=c.time+seconds; t.classDirty=true
+ c.time=c.time+seconds; t.classDirty=true; M.mark(t,i,reason)
  -- Relecture : les limites de piste ne comptent pas vers le drapeau noir (penaltyDisqualify).
  local counted=reason~='trackLimits' and reason~='blueFlags'
  if counted then c.count=c.count+1 end
@@ -210,6 +219,7 @@ local function issue(t,e,frame,i,kind,reason,now)
   if p.sanUnservedTime then addTime(t,e,frame,i,unservedSeconds(e,kind),reason,now,', trop tard pour la purger'); return end
  end
  if e.pitCap==false then addTime(t,e,frame,i,unservedSeconds(e,kind),reason,now,', arret aux stands impossible (CSP)'); return end
+ M.mark(t,i,reason)
  c.pending=kind; c.pendingReason=reason; c.pendingLaps=0; c.could=false; c.count=c.count+1; c.issueLap=a.lap or 0; c.askedLaps=0; c.askedLap=false; t.dirty=true
  if kind=='stopgo' then c.rStopgo=c.rStopgo+1 else c.rDrive=c.rDrive+1 end
  if kind=='stopgo' then U.log(e.log,now,'WARN',string.format('sanction IA: %s stop-and-go %.0f s (%s), a purger en %d tours',name(a),p.sanStopGoSeconds,journalReasons[reason] or reason,p.sanServeLaps),i)
@@ -342,12 +352,18 @@ local manoeuvres={YIELD_IN=true,YIELD_HOLD=true,YIELD_OUT=true,OVT_IN=true,OVT_H
 local function appManoeuvre(e,i)
  return manoeuvres[e.states[i].state]==true or abs(e.commands[i].offset or 0)>K.sanAppOffset
 end
+-- Correctif 1.63 : voiture tout près (même file ou à côté), jugée sur la perception de l'image.
+local function crowded(e,i)
+ local row=e.perception.rows[i]
+ for k=1,row.count do local r=row.neighbors[k]; if abs(r.long)<=K.sanCrowdGap and abs(r.lat)<=K.sanCrowdLat then return true end end
+ return false
+end
 local function trackLimits(t,e,frame,i,a,c,now,dt,race,ready)
  local p=e.run; local inc=e.incidents
  local out=(a.wheelsOut or 0)>=3 and a.splineValid and not a.pit
  if out then
   if c.outFor==0 then
-   c.outFrom=a.spline; c.outAt=now; c.outMin=a.kmh; c.outIncident=false; c.outCounted=false; c.outBin=lineBin(t,a.spline); c.outApp=false
+   c.outFrom=a.spline; c.outAt=now; c.outMin=a.kmh; c.outIncident=false; c.outCounted=false; c.outBin=lineBin(t,a.spline); c.outApp=false; c.outCrowd=false
    if race and ready and p.sanGiveBack and c.owedTo==0 then watchStart(e,i,c); c.watchUntil=math.huge end
   end
   c.outFor=c.outFor+dt; c.outMin=min(c.outMin,a.kmh)
@@ -356,23 +372,28 @@ local function trackLimits(t,e,frame,i,a,c,now,dt,race,ready)
   local contactAt=e.lastContactAt and e.lastContactAt[i]
   if contactAt and now>=contactAt and now-contactAt<=K.sanContactGrace then c.outIncident=true end
   if e.states[i].yellow or appManoeuvre(e,i) then c.outApp=true end
+  -- Correctif 1.63 (grilles de 60, rapport public : limites de piste à n'en plus finir) : sortie au premier tour
+  -- attentif, ou avec une voiture tout près (moins de K.sanCrowdGap m devant ou derrière et K.sanCrowdLat m de côté :
+  -- poussée dehors, place laissée en peloton) : excusée comme une manœuvre.
+  if not c.outApp and not c.outCrowd and ((e.states[i].flW or 0)>0 or crowded(e,i)) then c.outCrowd=true; e.stats.tlCrowd=(e.stats.tlCrowd or 0)+1 end
   if not c.outCounted and c.outFor>=K.sanOutDwell then
    c.outCounted=true
    local clean=not c.outIncident and c.outMin>=K.sanOutKmh and not c.outApp
    if clean and p.sanTrackLimits and ready then
     lineSeen(t,e,frame,i,c.outBin,now)
     -- Essais et qualifications : tour invalidé aussitôt (comme le bandeau d'AC pour le joueur).
-    if not race and not lineIgnored(t,c.outBin,now) then invalidate(t,e,frame,i,a,c,now) end
+    -- Correctif 1.63 : une sortie excusée par le peloton nourrit encore la règle des zones ignorées, jamais une sanction.
+    if not race and not c.outCrowd and not lineIgnored(t,c.outBin,now) then invalidate(t,e,frame,i,a,c,now) end
    end
   end
  elseif c.outFor>0 then
   -- Retour en piste : gain de temps jugé (course), sinon une sortie des limites comptée.
-  local judged=c.outCounted and not c.outIncident and not c.outApp and c.outMin>=K.sanOutKmh and not lineIgnored(t,c.outBin,now)
+  local judged=c.outCounted and not c.outIncident and not c.outApp and not c.outCrowd and c.outMin>=K.sanOutKmh and not lineIgnored(t,c.outBin,now)
   c.rejoinAt=now
   if race and ready and judged and not inc.red and not inc.neutral then
    local gain=p.sanCutPenalty and cutGain(e,frame,i,c,a,now) or nil
    if gain and gain>=K.sanCutGain and c.cutLeft<=0 then
-    c.cutLeft=p.sanCutSeconds; c.cutSeconds=p.sanCutSeconds; c.cutWait=0; c.rCut=c.rCut+1
+    c.cutLeft=p.sanCutSeconds; c.cutSeconds=p.sanCutSeconds; c.cutWait=0; c.rCut=c.rCut+1; M.mark(t,i,'cut')
     U.log(e.log,now,'WARN',string.format('sanction IA: %s coupure des gaz %.0f s (virage coupe, gain %.2f s)',name(a),p.sanCutSeconds,gain),i)
     local text=string.format(L.sanctionTexts.throttle,name(a),p.sanCutSeconds)
     event(t,text,'warn'); notice(t,e,'aiSanction',text,now,false,'throttle',name(a),p.sanCutSeconds)
@@ -599,7 +620,7 @@ local function giveBack(t,e,frame,i,a,c,cmd,now)
     if (progress(a)-progress(b))*frame.length>(a.length+b.length)*0.5 then
      c.watch[j]=nil
      if c.owedTo==0 and (e.penalties.ai.giveBack[i] or 0)==0 then
-      c.owedTo=j; c.owedUntil=now+p.sanGiveBackSeconds; c.owedFrom=-1
+      c.owedTo=j; c.owedUntil=now+p.sanGiveBackSeconds; c.owedFrom=-1; M.mark(t,i,'giveBack')
       U.log(e.log,now,'INFO',string.format('place a rendre IA: %s doit rendre la place a %s (%.0f s)',name(a),name(b),p.sanGiveBackSeconds),i); c.rOwed=c.rOwed+1
       local text=string.format(L.sanctionTexts.giveBack,name(a),name(b))
       event(t,text,'warn'); notice(t,e,'aiSanction',text,now,false,'giveBack',name(a),name(b))
@@ -713,6 +734,8 @@ end
 function M.contact(t,e,frame,i,serious,out,now)
  local c=t.cars[i]; local a=frame.cars[i]; local p=e.run
  if not a or not a.valid or c.dq or a.finished or a.safetyCar or t.off then return end
+ -- Correctif 1.63 : aucune sanction de contact pendant le tour de formation.
+ if e.incidents.formation then return end
  local race=e.profile=='C'
  if a.player then
   if not race or not p.sanPlayerContact then return end
@@ -790,11 +813,14 @@ function M.update(t,e,frame,now,dt)
  local since=now-e.startedAt
  -- Course : rien de jugé dans les premières secondes (premier virage) ; arrêt de pénalité une fois la course lancée,
  -- stands ouverts, sans drapeau rouge ni neutralisation, hors départ arrêté.
- local ready=not race or frame.started and since>=K.sanGraceStart
+ -- Correctif 1.63 (règlement du tour de formation) : rien de jugé pendant le tour de formation.
+ local ready=(not race or frame.started and since>=K.sanGraceStart) and not inc.formation
  local servable=race and frame.started and since>=K.sanServeAfterStart and not inc.red and not inc.neutral and not inc.pitsClosed and (inc.standing=='none' or inc.standing=='go')
  -- Faux départs d'un départ arrêté de l'app (relevés par la grille).
  local jumps=e.grid.aiJump
- if jumps then
+ -- Relecture 1.64 (lot 2) : grille de l'app (fin du tour de formation, relance) : faux départ d'une IA pris à l'extinction
+ -- seulement (un départ avorté l'efface, comme celui du joueur) ; grille posée à la main : comme avant.
+ if jumps and not (e.grid.phase=='lights' and (e.grid.from or '')~='') then
   for i=1,K.maxCars do
    if jumps[i]==true then jumps[i]='taken'; if race and p.sanJumpStart and i<=frame.count and not frame.cars[i].player then
      issue(t,e,frame,i,p.sanProcedureKind,'jumpStart',now)

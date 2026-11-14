@@ -15,7 +15,7 @@ local function count(e,text) local n=0; for k=1,e.log.limit do local r=e.log[k];
 local function race(f1)
  local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); C.applyRules('F1',e.profiles)
  if f1==false then e.profiles.C.pitCompoundChange=false end
- E.changed(e); f.sessionLaps=10; f.leaderLaps=5
+ E.changed(e); f.sessionLaps=11; f.leaderLaps=5
  local a=f.cars[1]; a.compoundIndex=0; a.tyresKnown=true
  a.tyreNames={[0]='SS',[1]='S',[2]='M'}; a.dryList={0,1,2}; a.dryCompounds={[0]=true,[1]=true,[2]=true}
  F.tick(e,f,0.5)
