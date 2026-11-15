@@ -49,7 +49,7 @@ local function never(...)
  return not covered(s) and count(e,'defense anticipee:')==0 and (e.stats.defenceCover or 0)==0
 end
 tests.K_164DC=function()
- assert(K.coverEnabled==true and K.coverGap==20 and K.coverSaMin==5 and K.coverLatMax==1.2 and K.coverAheadMin==120 and K.coverAheadMax==400)
+ assert(K.coverEnabled==true and K.coverGap==20 and K.coverSaMin==0 and K.coverLatMax==1.2 and K.coverAheadMin==120 and K.coverAheadMax==600)
  assert(K.coverTimeMax==6 and K.coverChance==0.35 and K.coverAssert==0.3 and K.coverSeed==7 and K.coverLogGap==20)
 end
 -- LOCK : couverture de l'intérieur, dans les deux sens de virage, contre un suiveur aligné 15 m derrière ; aucune à
@@ -76,11 +76,16 @@ tests.LOCK_DEFENSE_EARLY_COVER_164=function()
    -- Au freinage : jamais.
    assert(never(turn,15,20,0,250,{brake=0.6}),'braking: no cover')
    -- Hors de la bande : trop loin ou trop près du freinage.
-   assert(never(turn,15,20,0,600),'600 m before braking: too early')
+   assert(never(turn,15,20,0,800),'800 m before braking: too early')
+   -- Affinage 2.0.1 a (Monza S21-S23 : une seule défense anticipée par course) : 550 m avant le freinage, couverture.
+   assert(covered((run(turn,15,20,0,550))),'550 m before braking: cover')
    assert(never(turn,15,20,0,60),'60 m before braking: too late')
    -- Suiveur trop loin, pas plus rapide.
    assert(never(turn,30,20,0,250),'30 m behind: no cover')
-   assert(never(turn,15,0,0,250),'same speed: no cover')
+   -- Affinage 2.0.1 a : suiveur aligné à la même vitesse (AC garde sa distance, S23 : écart mini médian 9 m) : couverture ;
+   -- suiveur qui recule (-5 km/h) : rien.
+   assert(covered((run(turn,9,0,0,250))),'same speed in the tow: cover')
+   assert(never(turn,15,-5,0,250),'dropping back: no cover')
    -- Voiture qui se dédouble : jamais.
    assert(never(turn,15,20,0,250,{lap3=5}),'lapping car: no cover')
    -- Premier tour : jamais.

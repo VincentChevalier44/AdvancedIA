@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 2.0.0. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 2.0.1. See [CHANGELOG.md](CHANGELOG.md).
 - **Interactive guide:** chapter-by-chapter videos and the full manual: https://vincentchevalier44.github.io/AdvancedIA/
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
@@ -1237,7 +1237,7 @@ AdvancedIA can share its live state with a companion app, today **SpotterEnginer
   `lastReason` (reason of the AI's last real sanction: 0 none, 2–13 the codes of `L.reasons` in
   `src/bridge_layout.lua`, 99 other; a simple track-limit warning never writes it). New global fields at the end:
   `trackWarnings` and `serveLaps` (the thresholds in effect). Companion apps need their bridge-v2 update
-  (SpotterEnginer Beta 2.0.0 or later).
+  (SpotterEnginer 1.3.9 or later).
 - **Announcements** (`messageId`, `messageKind`, `messageValue`, `messageExtra`, `messageTitle`, `messageText`): one per event, in the app's language. Silent kinds (never a message at the top of the screen; re-sent on the next frame if another announcement takes their frame): `pitCompound`, `pitPlanSame`, `pitNotCounted`, `pitValidated` (F1 compound change), `pitPlanOk` (strategy fixed after a « same compound » warning; value = fitted compound index, extra = planned one); `scOut` (Safety Car on track, sent in the same frame as `safetyPhase` becoming `out`; value = AC index (0-based) of the first car behind it, -1 if none, extra = gap in m), `scLeading` (queue formed behind it; value = AC index of the first car, extra = gap in m), `restartPlace` (race, at the red flag and when you leave the pit lane on the relaunch lap; value = your frozen place (1-based), extra = AC index of the car to follow, -1 in P1), `restartRetake` (a car classed behind you is ahead; value = its AC index, extra = your place). Shown kind `fastCar` (Practice and Qualifying: a flying AI is coming while you are on an out-lap or cool-down lap; value = its AC index, extra = gap in s). The text names the driver. The internal Safety Car phase `exit` (released, in the pit lane) is published as `call`, as `place` is.
 - **Beta 1.60, layout unchanged.**
   - `wrong` is true for a car travelling nose first against the track direction; a reversing car is not wrong way.
@@ -2126,7 +2126,7 @@ src/                    the HumanAI engine and its interface
   tips.lua, tips_en.lua   French and English tooltips
   locale.lua, journal.lua, util.lua
   journal_en.lua          English rendering of the session log lines for the DIAGNOSTICS window (the file stays French)
-fonts/                  Barlow, Barlow Condensed and JetBrains Mono, with their OFL licences
+fonts2/                 Barlow, Barlow Condensed and JetBrains Mono, with their OFL licences
 sounds/                 delta-beep.wav, drs-available-beep.wav
 tracks/                 optional per-track zone files (<trackId>.lua); none shipped
 tests/                  offline test bench (Python + LuaJIT through lupa); never loaded by the game

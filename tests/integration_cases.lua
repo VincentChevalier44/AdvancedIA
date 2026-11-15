@@ -2233,9 +2233,9 @@ return function(source)
   -- Polices : fichiers absents du dossier de l'app, Segoe UI et Consolas, noté une seule fois.
   redraw(); redraw(); assert(W.fonts().body=='Segoe UI' and W.fonts().mono=='Consolas' and logged('polices de l interface absentes')==1,'system fonts, noted once')
   -- Fichiers présents : polices de l'app (dossier relatif à l'app) après un rechargement.
-  for _,file in ipairs({'barlow/Barlow-Regular.ttf','barlow/Barlow-SemiBold.ttf','barlowcondensed/BarlowCondensed-SemiBold.ttf','barlowcondensed/BarlowCondensed-Bold.ttf','barlowcondensed/BarlowCondensed-ExtraBoldItalic.ttf','jetbrainsmono/JetBrainsMono-Medium.ttf'}) do HOST.files['local/fonts/'..file]='ttf' end
+  for _,file in ipairs({'barlow/Barlow-Regular.ttf','barlow/Barlow-SemiBold.ttf','barlowcondensed/BarlowCondensed-SemiBold.ttf','barlowcondensed/BarlowCondensed-Bold.ttf','barlowcondensed/BarlowCondensed-ExtraBoldItalic.ttf','jetbrainsmono/JetBrainsMono-Medium.ttf'}) do HOST.files['local/fonts2/'..file]='ttf' end
   pause(false); HUMANAI.release(); assert(loadstring(source))(); H.tick(HOST,0.5); pause(true); e=HUMANAI.engine; g=e.g; redraw()
-  assert(W.fonts().body=='Barlow:fonts/barlow;Weight=Regular' and W.fonts().display:find('UltraBold;Style=Italic',1,true) and logged('polices de l interface absentes')==0,'app fonts loaded')
+  assert(W.fonts().body=='Barlow:fonts2/barlow;Weight=Regular' and W.fonts().display:find('UltraBold;Style=Italic',1,true) and logged('polices de l interface absentes')==0,'app fonts loaded')
   assert(HOST.dwriteDepth==0,'fonts balanced')
   -- Segment : un clic sur une case la choisit (souris dessus), sans passer par la suivante.
   section('overlay'); redraw(); assert(g.overlayBackground=='solid')

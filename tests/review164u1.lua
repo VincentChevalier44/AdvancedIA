@@ -114,7 +114,8 @@ tests.LOCK_ATTACK_EXIT_FOLLOWER_164=function()
 end
 
 tests.K_164U1=function()
- assert(K.lastPullEnabled==true and K.lastPullLat==2.0 and K.lastPullTTC==0.8 and K.lastPullLogPeriod==15 and K.lastPullGap==1.0 and K.exitRearGap==12 and K.exitHoldMax==4,'constants')
+ -- Affinage 2.0.1 a (choix du pilote du 14 novembre, « si la course est moins bonne, on revient à 3 m ») : coupée.
+ assert(K.lastPullEnabled==false and K.lastPullLat==2.0 and K.lastPullTTC==0.8 and K.lastPullLogPeriod==15 and K.lastPullGap==1.0 and K.exitRearGap==12 and K.exitHoldMax==4,'constants')
  assert(K.wakePullGap==3 and K.wakeAlignLat==0.3,'lift guard at 3 m, tow alignment 0.3 m (driver decision 2026-11-14)')
 end
 

@@ -1,3 +1,5 @@
+# Beta 2.0.1 : ne jamais écrire le résultat par-dessus un dossier de polices déjà livré (fonts/, fonts2/) : la mise à jour
+# en jeu ne peut pas remplacer une police chargée. Nouveau contenu = nouveau dossier, contrôlé par tests/assets_check.py.
 import sys,os,glob,shutil
 sys.path.insert(0, sys.argv[1])
 from fontTools import subset

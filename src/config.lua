@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 2.0.0',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 2.0.1',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -1883,4 +1883,34 @@ for key,value in pairs({mistakePassEnabled=true,mistakePassSa=8,mistakeWheels=2,
 -- Affinage 1.64 s1 (Monza S21) : zone dangereuse gardée par circuit : plafond au plus dangerKeptAfter m après la zone
 -- (avant : K.hotspotMeters, 100 m) ; la sortie du virage n'est plus retenue à la vitesse du point le plus lent.
 for key,value in pairs({dangerKeptAfter=30}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Affinage 2.0.1 a (Monza S21-S23 après la 2.0.0 : vrais dépassements en course 7, 1 et 5 contre 16 en S20 ; « deboitement »
+-- au dernier moment 2 à 3 par course, jamais à 1 m : l'IA d'AC ne s'approche pas à moins de 4 m (écart mini p10 = 4 m sur
+-- 97 à 151 attaques par course)). Choix du pilote du 14 novembre (« 1 m avec garde-fous ; si la course est moins bonne, on
+-- revient à 3 m ») : retour au déboîtement de S12 (lastPullEnabled=false : à K.wakePullGap m, arrêt du rapprochement à
+-- K.wakeStallGapRace m ou moins, fronde ; attaque vivante et alignement gardés). Défense anticipée (une seule par course) :
+-- suiveur aligné dans l'aspiration sans rapprochement mesuré (AC garde sa distance) aussi menaçant (coverSaMin 5 -> 0 km/h),
+-- fenêtre jusqu'à coverAheadMax 600 m avant le freinage (400 m avant).
+M.K.lastPullEnabled=false; M.K.coverSaMin=0; M.K.coverAheadMax=600
+-- Affinage 2.0.1 (week-end de Monza, joueur en tête qui ralentit et s'écarte : aucune IA ne le doublait en course) :
+-- en course, premier tour compris, joueur nettement plus lent que l'allure libre de l'IA (playerSlowRatio) et écarté
+-- d'au moins inviteLat m ou plus lent de raceSlowPlayerSa km/h : doublé à la première occasion sûre (jamais au freinage).
+M.K.raceSlowPlayer=true; M.K.raceSlowPlayerSa=20
+-- Affinage 2.0.1 (décision du pilote : jaune progressif) : voiture plus rapide derrière à moins de yellowRearWatch m
+-- et yellowRearSa km/h : descente de la limite à yellowRearDecel m/s² ; suiveur : enveloppe de freinage à
+-- yellowFollowDecel m/s² derrière une voiture plus lente de yellowFollowSa km/h, jusqu'à yellowFollowWatch m.
+M.K.yellowRamp=true; M.K.yellowRearWatch=80; M.K.yellowRearSa=15; M.K.yellowRearDecel=2.5
+M.K.yellowFollowWatch=250; M.K.yellowFollowSa=15; M.K.yellowFollowDecel=6; M.K.yellowRampLogPeriod=10
+-- Affinage 2.0.1 (week-end de Monza, essais et qualifications, pilote au volant) :
+-- yieldExitNoDecel : hors course, limite de la cession remise à la sortie d'un virage avec un suiveur à moins de
+-- yieldExitGap m : jamais sous la vitesse du moment (elle borne seulement l'accélération) ; référence du suiveur jamais
+-- prise en virage. slowLapRelax : IA pas lancée (sortie, refroidissement, rentrée) avec une voiture lancée (ou plus
+-- rapide de slowLapFastKmh km/h) à moins de slowLapBehind s derrière : baisse de niveau rendue dans les virages et
+-- pendant slowLapExitTime s après (rendue en slowLapRelaxIn s, reprise en slowLapRelaxOut s), gardée en ligne droite.
+-- pqExitPass : essais et qualifications, voiture lancée qui rattrape une voiture pas lancée : dépassement en sortie de
+-- virage (règle de la course). yieldClosingTTC : hors course, cession ordinaire seulement si le suiveur arrive (contact
+-- prévu à yieldClosingTTC s au plus) ; suiveur qui ne se rapproche plus : oublié après followerStallTimeOff s, virages
+-- compris (yieldStallCorners).
+for key,value in pairs({yieldExitNoDecel=true,yieldExitGap=40,slowLapRelax=true,slowLapBehind=5,slowLapFastKmh=20,slowLapExitTime=2.5,
+ slowLapRelaxIn=0.5,slowLapRelaxOut=2,pqExitPass=true,yieldClosingTTC=4,yieldStallCorners=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
+M.optionalTimerFields[#M.optionalTimerFields+1]='yieldCornerAt'
 return M

@@ -55,6 +55,10 @@ local function rank(path)
  if path=='manifest.ini' then return 4 elseif path=='AdvancedIA.lua' then return 3 elseif path:sub(1,4)=='src/' then return 1 end
  return 2
 end
+-- Beta 2.0.1 : fichier d'appoint (ni code Lua ni manifeste : police, son, image, texte) ; l'app en cours peut le garder
+-- ouvert (polices chargées par DirectWrite) : s'il ne peut pas être remplacé, l'ancien reste en place et la copie continue.
+local function asset(path) return path~='manifest.ini' and path:sub(-4)~='.lua' end
+M.asset=asset
 local function ordered(list)
  table.sort(list,function(a,b) local x,y=rank(a),rank(b); if x~=y then return x<y end; return a<b end)
  return list
@@ -238,19 +242,20 @@ function M.new(onRelease)
   local all=listOf(root)
   if not all or not complete(root) then return false,'source incomplete' end
   ordered(all)
-  local started,copied=clock(),0
+  local started,copied,skipped=clock(),0,{}
   watch(true)
   for _,rel in ipairs(all) do
    local src,dst=root..'/'..rel,app..'/'..rel
    if load(src)~=load(dst) then
     -- Surveillance réaffirmée à chaque fichier : CSP la rétablit seule au bout de quelques secondes.
     watch(true)
-    if not swap(src,dst) then watch(false); return false,rel end
-    copied=copied+1
+    if swap(src,dst) then copied=copied+1
+    elseif asset(rel) and exists(dst) then skipped[#skipped+1]=rel
+    else watch(false); return false,rel end
    end
   end
   watch(false)
-  return true,nil,{compared=#all,copied=copied,ms=(clock()-started)*1000}
+  return true,nil,{compared=#all,copied=copied,skipped=skipped,ms=(clock()-started)*1000}
  end
  -- Installation réussie : current/ devient backup/ par renommage des dossiers (backup -> backup.old, current -> backup,
  -- backup.old effacé) ; rejouée sans dégât (current déjà promu : rien à faire) ; à défaut de renommage, copie vérifiée.

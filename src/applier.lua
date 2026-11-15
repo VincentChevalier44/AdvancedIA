@@ -1087,15 +1087,20 @@ local function scriptFolder()
  local ok,dir=pcall(ac.getFolder,ac.FolderID.ScriptOrigin)
  return ok and type(dir)=='string' and dir~='' and dir or nil
 end
+-- Beta 2.0.1 : polices dans fonts2/ (dossier jamais livré avant). L'app en cours garde ses polices ouvertes (DirectWrite) :
+-- la mise à jour en jeu ne peut pas remplacer un fichier de police déjà chargé (1.62 -> 2.0.0 refusée pour cette
+-- raison). Un fichier chargé en continu ne change donc jamais à un chemin déjà livré (tests/assets_check.py) ; de
+-- nouvelles polices vont dans un nouveau dossier, l'ancien fonts/ reste tel quel chez les joueurs.
+M.fontFolder='fonts2'
 function M.fontDir(a)
  local dir=scriptFolder()
  local ok,present=pcall(function()
   if not dir or not io or type(io.fileExists)~='function' then return false end
-  for _,file in ipairs(fontFiles) do if not io.fileExists(dir..'/fonts/'..file) then return false end end
+  for _,file in ipairs(fontFiles) do if not io.fileExists(dir..'/'..M.fontFolder..'/'..file) then return false end end
   return true
  end)
- if ok and present==true then return 'fonts' end
- if a then note(a,'WARN','polices de l interface absentes (fonts/) : Segoe UI',-1) end
+ if ok and present==true then return M.fontFolder end
+ if a then note(a,'WARN','polices de l interface absentes (fonts2/) : Segoe UI',-1) end
  return nil
 end
 function M.appFile(name)

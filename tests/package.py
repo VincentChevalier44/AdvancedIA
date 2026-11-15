@@ -109,7 +109,7 @@ def fonts():
 def main():
     check_docs()
     files = [APP / name for name in ['AdvancedIA.lua', 'manifest.ini', 'icon.png', *NOTES]]
-    for folder, patterns in [('src', ['*.lua']), ('tracks', ['*.md', '*.lua']), ('sounds', ['*.wav']), ('fonts', ['*/*.ttf', '*/OFL.txt'])]:
+    for folder, patterns in [('src', ['*.lua']), ('tracks', ['*.md', '*.lua']), ('sounds', ['*.wav']), ('fonts2', ['*/*.ttf', '*/OFL.txt'])]:
         for pattern in patterns:
             files.extend((APP / folder).glob(pattern))
     files = sorted({p for p in files if p.is_file()})
@@ -143,7 +143,7 @@ def main():
         # Beta 1.33 : jamais la sauvegarde locale de la mise à jour ; toujours le module de mise à jour (une version
         # sans lui ne pourrait plus se mettre à jour, l'app la refuse).
         assert not any(name.startswith('apps/lua/AdvancedIA/backup/') for name in names)
-        for name in ('manifest.ini', 'AdvancedIA.lua', 'src/update.lua', 'src/remote.lua', *('fonts/' + f for f in fonts())):
+        for name in ('manifest.ini', 'AdvancedIA.lua', 'src/update.lua', 'src/remote.lua', *('fonts2/' + f for f in fonts())):
             assert 'apps/lua/AdvancedIA/' + name in names, name
         assert 'docs/' not in archive.read('apps/lua/AdvancedIA/README.md').decode('utf-8').split('\n', 1)[0]
     digest = hashlib.sha256(output.read_bytes()).hexdigest()

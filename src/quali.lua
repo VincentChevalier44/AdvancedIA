@@ -50,6 +50,7 @@ function M.rebase(t,amount)
   if U.finite(c.jEnd) then c.jEnd=c.jEnd-amount end
   if U.finite(c.jCoolAt) then c.jCoolAt=c.jCoolAt-amount end
   if U.finite(c.jCoolEnd) then c.jCoolEnd=c.jCoolEnd-amount end
+  if c.cornerAt and U.finite(c.cornerAt) then c.cornerAt=c.cornerAt-amount end
   for k=1,c.catchN do c.catchT[k]=c.catchT[k]-amount end
  end
 end
@@ -62,6 +63,35 @@ function M.reference(e,s,a,multi)
  if not f or not a.splineValid then return 0 end
  local v=f[Delta.bin(a.spline,e.delta.bins)] or 0
  return v*U.clamp(s.longRatio or 1,K.qualiCoolPaceMin,1)
+end
+-- Affinage 2.0.1 (week-end de Monza : Mazur en tour de rentrée à 81 km/h au lieu de 148 à la sortie d'Ascari, le
+-- pilote lancé 8 m derrière) : une voiture lancée (ou plus rapide de K.slowLapFastKmh km/h) à moins de K.slowLapBehind s
+-- derrière a (même tour de piste, à sa vitesse) ; vrai/faux.
+function M.fastBehind(t,frame,a,i)
+ if not a.splineValid then return false end
+ local len=frame.length or 0
+ if len<=0 then return false end
+ for j=1,frame.count do
+  if j~=i then
+   local b=frame.cars[j]
+   if b.valid and b.splineValid and not b.pit and b.speed>1 then
+    local d=(a.spline-b.spline)%1*len
+    if d>0 and d<len*0.5 and d/b.speed<=K.slowLapBehind and (t.push[j] or b.kmh>=a.kmh+K.slowLapFastKmh) then return true end
+   end
+  end
+ end
+ return false
+end
+-- Part de la baisse de niveau rendue (0 à 1) : virage ou sortie de virage avec une voiture rapide derrière.
+function M.relax(t,e,frame,a,c,i,now,dt)
+ if not K.slowLapRelax then c.relax=0; return 0 end
+ if a.corner<K.passCornerC then c.cornerAt=now end
+ local want=(now-(c.cornerAt or -math.huge)<=K.slowLapExitTime) and M.fastBehind(t,frame,a,i)
+ local r=c.relax or 0
+ if want then r=min(1,r+dt/K.slowLapRelaxIn) else r=max(0,r-dt/K.slowLapRelaxOut) end
+ if want and (c.relax or 0)==0 then e.stats.slowLapRelax=(e.stats.slowLapRelax or 0)+1 end
+ c.relax=r
+ return r
 end
 -- Nombre de tours lancés de suite avant le refroidissement d'une IA (tiré une fois par IA et par graine).
 function M.target(seed,i) return K.qualiPushMin+math.floor(U.unit(seed,i,K.qualiCoolSalt)*(K.qualiPushMax-K.qualiPushMin+1)) end
@@ -162,6 +192,10 @@ function M.update(t,e,frame,now,dt)
   local drop=0
   if t.active and c.planned and c.cool then drop=K.qualiCoolLevel*min(1,(now-c.coolAt)/K.qualiCoolRamp)
   elseif now-c.coolEnd<K.qualiCoolRelease then drop=K.qualiCoolLevel*(1-(now-c.coolEnd)/K.qualiCoolRelease) end
+  -- Affinage 2.0.1 : voiture rapide derrière, virage ou sortie de virage : baisse rendue (rythme normal), gardée en
+  -- ligne droite.
+  local relax=(a.control and not a.player and not a.pit) and M.relax(t,e,frame,a,c,i,now,dt) or 0
+  drop=drop*(1-relax)
   if drop>0 and a.control and not a.player then cmd.levelScale=(cmd.levelScale or 1)*(1-drop) end
   -- Beta 1.60 (lot 3, demande du pilote : tours de chauffe impossibles à distinguer des tours lancés) : tour de sortie
   -- des essais et qualifications (de la sortie des stands à la ligne), IA pilotée, onglet Général : niveau abaissé de
@@ -180,6 +214,7 @@ function M.update(t,e,frame,now,dt)
   if outNow and c.noDrop then outDrop=0
   elseif outNow then outDrop=K.qualiOutLevel*min(1,(now-max(c.exitAt,c.outFrom or -math.huge))/K.qualiOutRamp)
   elseif now-c.outEnd<K.qualiCoolRelease then outDrop=K.qualiOutLevel*(1-(now-c.outEnd)/K.qualiCoolRelease) end
+  outDrop=outDrop*(1-relax)
   if outDrop>0 and a.control and not a.player and p.section_general then
    cmd.levelScale=(cmd.levelScale or 1)*(1-outDrop)
    if outNow and not c.outLogged then

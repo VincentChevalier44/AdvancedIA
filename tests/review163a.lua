@@ -12,7 +12,7 @@ local function logged(e,text) local n=0; for k=1,e.log.limit do local r=e.log[k]
 tests.K_163A=function()
  assert(K.rejoinStill==3 and K.rejoinWedged==8 and K.rejoinTries==3 and K.rejoinGap==6 and K.rejoinMaxTime==40)
  assert(K.coolPace==0.70 and K.coolDecel==3 and K.coolMinKmh==50 and K.coolRoomRange==150 and K.coolOffset==0.5 and K.coolOffsetRate==0.3)
- assert(C.release=='Beta 2.0.0')
+ assert(C.release=='Beta 2.0.1')
 end
 
 -- Tour de décélération : IA arrivée, en course : plafond à 70 % de son allure apprise, atteint sans freinage brusque ;

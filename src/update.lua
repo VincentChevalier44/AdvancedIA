@@ -389,6 +389,8 @@ local function place(u,port,kind,to,now)
   event(u,'ERROR','mise a jour: copie de '..tostring(failed)..' impossible, puis remise en place impossible ('..tostring(failed2 or 'repere')..') : relancez le jeu')
   return
  end
+ -- Beta 2.0.1 : fichiers d'appoint gardés (ouverts par le jeu, voir p.place) : une ligne, la copie du code est faite.
+ if stats and type(stats.skipped)=='table' and #stats.skipped>0 then event(u,'WARN','mise a jour: '..#stats.skipped..' fichier(s) d appoint garde(s), ouvert(s) par le jeu : '..table.concat(stats.skipped,', ',1,math.min(#stats.skipped,4))) end
  local promoted,why=port.promote(kind)
  if not promoted then event(u,'WARN','mise a jour: version precedente non gardee ('..tostring(why)..'), retour arriere indisponible') end
  if not port.clearMarker() then event(u,'WARN','mise a jour: repere non efface ('..tostring(port.markerFile())..'), termine au lancement suivant') end

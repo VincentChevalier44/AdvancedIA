@@ -917,7 +917,19 @@ MUTATIONS = [
     ('135 bandeau sans activation', 'src/ui.lua', "  if key=='disabled' then e.g.enabled=true; v.dirty()", "  if key=='disabled' then v.dirty()", 'INT:Beta 1.35 : interface Racing 26'),
     ('135 motif jamais effacé', 'src/ui.lua', "and row.pattern~='' then row.pattern=''; edited=true end", "and row.pattern~='' then edited=true end", 'INT:Beta 1.35 : interface Racing 26'),
     ('135 barre latérale sans défilement', 'src/ui.lua', " local offset=W.scroll(v.scrolls,'nav',PAD,listTop,navW,height,v.contentHeights.nav or 0)\n", ' local offset=0\n', 'INT:Beta 1.35 : interface Racing 26'),
-    ('135 polices de l app jamais chargées', 'src/applier.lua', " if ok and present==true then return 'fonts' end\n", " if false then return 'fonts' end\n", 'INT:Beta 1.35 : interface Racing 26'),
+    ('201c fichier d appoint verrouille arrete tout', 'src/remote.lua', "    elseif asset(rel) and exists(dst) then skipped[#skipped+1]=rel\n", "", 'LOCK_UPDATE_ASSET_KEPT_201'),
+    ('201c code Lua garde comme un appoint', 'src/remote.lua', "local function asset(path) return path~='manifest.ini' and path:sub(-4)~='.lua' end", "local function asset(path) return path~='manifest.ini' end", 'LOCK_UPDATE_ASSET_KEPT_201'),
+    ('201c appoint garde sans ligne', 'src/update.lua', " if stats and type(stats.skipped)=='table' and #stats.skipped>0 then", " if false then", 'LOCK_UPDATE_ASSET_KEPT_201'),
+    ('201c polices cherchees dans l ancien dossier', 'src/applier.lua', "M.fontFolder='fonts2'", "M.fontFolder='fonts'", 'INT:Beta 1.35 : interface Racing 26'),
+    ('201e limite remise en sortie de virage sans garde', 'src/director.lua', "if K.yieldExitNoDecel and profile~='C' and now-(s.yieldCornerAt or -math.huge)<=K.slowLapExitTime", "if false and profile~='C' and now-(s.yieldCornerAt or -math.huge)<=K.slowLapExitTime", 'LOCK_YIELD_CAP_NO_DECEL_201'),
+    ('201e virage de la cession jamais note', 'src/director.lua', "  if a.corner<p.cornerMin then s.yieldCornerAt=now end\n", "", 'LOCK_YIELD_CAP_NO_DECEL_201'),
+    ('201e tour lent jamais rendu', 'src/quali.lua', " local want=(now-(c.cornerAt or -math.huge)<=K.slowLapExitTime) and M.fastBehind(t,frame,a,i)", " local want=false", 'LOCK_SLOW_LAP_CORNERS_201'),
+    ('201e voiture plus rapide ignoree', 'src/quali.lua', "(t.push[j] or b.kmh>=a.kmh+K.slowLapFastKmh)", "(t.push[j])", 'LOCK_SLOW_LAP_CORNERS_201'),
+    ('201e baisse du refroidissement gardee en virage', 'src/quali.lua', "  drop=drop*(1-relax)", "  drop=drop", 'LOCK_SLOW_LAP_CORNERS_201'),
+    ('201e sortie de virage en course seulement', 'src/director.lua', "(profile=='C' or pqExit)", "(profile=='C')", 'LOCK_PQ_EXIT_PASS_201'),
+    ('201e cession sans rapprochement', 'src/director.lua', "and not (back.ttc<=K.yieldClosingTTC) then", "and false then", 'LOCK_YIELD_CLOSING_201'),
+    ('201e suiveur arrete jamais compte en virage', 'src/director.lua', "elseif a.corner>=p.cornerMin or K.yieldStallCorners and profile~='C' then", "elseif a.corner>=p.cornerMin then", 'LOCK_YIELD_CLOSING_201'),
+    ('135 polices de l app jamais chargées', 'src/applier.lua', " if ok and present==true then return M.fontFolder end\n", " if false then return M.fontFolder end\n", 'INT:Beta 1.35 : interface Racing 26'),
     ('135 vues de course sélectionnables en journée circuit', 'src/ui.lua', " if solo then v.rulesView='all' end\n", '', 'INT:Beta 1.35 : interface Racing 26'),
     ('135 pastilles RS et SS absentes', 'src/ui.lua', "vscEnd='VSC',rolling='RS',standing='SS'}", "vscEnd='VSC'}", 'INT:Beta 1.35 : panneaux de relance'),
     ('135 place à rejoindre absente', 'src/ui.lua', ' elseif place and l.delta then local label,value=placeText(v,panel.slotText,panel.slotDistance,panel.slotPlaced,panel.slotPassed); placeBox(colors,l.delta,label,value)\n elseif', ' elseif false then\n elseif', 'INT:Beta 1.35 : panneaux de relance'),
@@ -978,7 +990,7 @@ MUTATIONS = [
     ('maj: dossier backup de l ancien module copié', 'src/remote.lua', '  local names=listOf(from)\n', '  local names=list(app)\n', 'UPDATE_REMOTE_END_TO_END'),
     ('maj: fichiers identiques recopiés', 'src/remote.lua', '   if load(src)~=load(dst) then\n', '   if true then\n', 'UPDATE_REMOTE_END_TO_END'),
     ('maj: manifeste copié en premier', 'src/remote.lua', " if path=='manifest.ini' then return 4 elseif", " if path=='manifest.ini' then return 0 elseif", 'UPDATE_REMOTE_END_TO_END'),
-    ('maj: surveillance des fichiers non suspendue', 'src/remote.lua', '    watch(true)\n    if not swap(src,dst)', '    if not swap(src,dst)', 'UPDATE_REMOTE_FAILURES'),
+    ('maj: surveillance des fichiers non suspendue', 'src/remote.lua', '    watch(true)\n    if swap(src,dst)', '    if swap(src,dst)', 'UPDATE_REMOTE_FAILURES'),
     ('maj: moteur lancé avant le redémarrage de reprise', 'AdvancedIA.lua', 'if recovered and recovered.restart then\n local asked=false', 'if false then\n local asked=false', 'INT:Beta 1.35 : copie interrompue reprise au chargement'),
     ('maj: horloge de la mise à jour figée en pause', 'AdvancedIA.lua', ' updateCounter=counter; updateNow=updateNow+math.min(step,1); host.updateNow=updateNow\n', ' updateCounter=counter; host.updateNow=updateNow\n', 'INT:Beta 1.33 : erreurs de mise à jour sans rien changer'),
     ('maj: dossier courant listé', 'src/remote.lua', "  if name=='.' or name=='..' or name=='' then return end\n  local path=rel=='' and name or rel..'/'..name\n", "  local path=rel=='' and name or rel..'/'..name\n", 'UPDATE_REMOTE_END_TO_END'),
@@ -1491,7 +1503,7 @@ MUTATIONS = [
     ('1.44 paire ignorée contre le joueur', 'src/director.lua', "or why=='abort_timeout') and (profile=='C' or s.target~=frame.player) and not (profile=='C'", "or why=='abort_timeout') and not (profile=='C'", 'PLAYER_NEVER_IGNORED_144'),
     ('1.44 zone morte du joueur au pas', 'src/director.lua', " local slowAhead=front and (e.states[front.index].abnormal==true or slowPlayer or profile~='C' and queueSlow(e,frame,front))\n", " local slowAhead=front and (e.states[front.index].abnormal==true or profile~='C' and queueSlow(e,frame,front))\n", 'PLAYER_CRAWL_144'),
     ('1.44 courtoisie gardée devant le joueur lent', 'src/director.lua', 'front.sa<K.courtesyPassSa and not slowPlayer then trigger=false end', 'front.sa<K.courtesyPassSa then trigger=false end', 'PLAYER_PASSED_THEN_SLOWS_144'),
-    ('1.44 joueur lent jugé à son allure apprise', 'src/director.lua', 'playerSlow(e,s,frame.cars[front.index],a,p)', 'playerSlow(e,e.states[front.index],frame.cars[front.index],a,p)', 'PLAYER_CRAWL_144'),
+    ('1.44 joueur lent jugé à son allure apprise', 'src/director.lua', "profile~='C' and front.index==frame.player and H.playerSlow(e,s,frame.cars[front.index],a,p)", "profile~='C' and front.index==frame.player and H.playerSlow(e,e.states[front.index],frame.cars[front.index],a,p)", 'PLAYER_CRAWL_144'),
     ('1.44 invitation en ligne droite seulement hors course', 'src/director.lua', " if straightRules(profile) then return abs(a.yawRate)", " if true then return abs(a.yawRate)", 'PLAYER_INVITE_GENTLE_CURVE_144'),
     ('1.44 courbure non retranchée', 'src/director.lua', ' return abs(rel.lat)-k*rel.long*rel.long*0.5>=K.inviteLat\n', ' return abs(rel.lat)>=K.inviteLat\n', 'PLAYER_INVITE_GENTLE_CURVE_144'),
     ('1.44 invitation en courbe serrée', 'src/director.lua', ' if abs(a.yawRate)*a.speed>K.inviteLatAccel or abs(b.yawRate)*b.speed>K.inviteLatAccel then return false end\n', '', 'PLAYER_INVITE_GENTLE_CURVE_144'),
@@ -2087,10 +2099,10 @@ MUTATIONS = [
     ('159t journée circuit toujours Nordschleife', 'src/config.lua', " if profile=='J' and track~=nil and (mark=='Nordschleife' or mark=='Circuit' or not builtinProfiles[mark]) then return M.trackDayPreset(track,length) end\n", '', 'TRACKDAY_PRESET_CHOICE_159T'),
     ('159t Nurburgring court pris pour la Nordschleife', 'src/config.lua', ')>M.K.nordschleifeMinLength or false', ')>=0 or false', 'TRACKDAY_PRESET_CHOICE_159T'),
     ('159t préréglage Journée circuit côtés imposés', 'src/config.lua', " Circuit={aiTurnSignals=true,multiClass=true,yieldSide='line',laneBiasEnabled=false,overtakeSide='auto',flashRange=150,flashMinAdvantage=15,outLapEnabled=true", " Circuit={aiTurnSignals=true,multiClass=true,laneBiasEnabled=false,overtakeSide='auto',flashRange=150,flashMinAdvantage=15,outLapEnabled=true", 'TRACKDAY_PRESET_CHOICE_159T'),
-    ('159t joueur rangé : freinage d AC retient le dépassement', 'src/director.lua', "     local slowFree=(slowAhead or playerAside) and profile~='C'", "     local slowFree=slowAhead and profile~='C'", 'PLAYER_ASIDE_PASS_159T'),
+    ('159t joueur rangé : freinage d AC retient le dépassement', 'src/director.lua', "     local slowFree=(slowAhead or playerAside) and (profile~='C' or raceSlowPlayer)", "     local slowFree=slowAhead and (profile~='C' or raceSlowPlayer)", 'PLAYER_ASIDE_PASS_159T'),
     ("159t file : chaîne d'une seule voiture", 'src/director.lua', '  index=ahead.index\n', '  return false\n', 'SLOW_QUEUE_FOUR_159T'),
     ('159t limite pour une IA déjà lente', 'src/director.lua', '  if s.abnormal==true or ref>0 and a.speed<ref*K.slowRatio then close=false end\n', '', 'SLOW_QUEUE_FOUR_159T'),
-    ('159t limite en spirale sur le suiveur', 'src/director.lua', 's.yieldFollowRef=max(s.yieldFollowRef or 0,followKmh); followKmh=s.yieldFollowRef end\n', 'end\n', 'YIELD_CAP_NO_SPIRAL_159T'),
+    ('159t limite en spirale sur le suiveur', 'src/director.lua', 'and refOk then s.yieldFollowRef=max(s.yieldFollowRef or 0,followKmh); followKmh=s.yieldFollowRef\n', 'and refOk then followKmh=followKmh\n', 'YIELD_CAP_NO_SPIRAL_159T'),
     ('159t dépassement figé par le freinage d AC', 'src/director.lua', "and not (s.passBrakeFree and passStates[s.state] and profile~='C' and a.corner>=p.cornerMin and ownBrake<K.passBrakeMax) then desired=s.offset end\n", 'then desired=s.offset end\n', 'PLAYER_ASIDE_PASS_159T'),
     ('159t priorité au virage ignorée', 'src/director.lua', '    if lapped or gives then\n', '    if lapped and false then\n', 'CORNER_PRIORITY_159T'),
     ('159t priorité au virage au nez à égalité', 'src/priority.lua', "if M.nose(a,b,long)>K.cornerNoseMargin then return true,'nez' end", "if M.nose(a,b,long)>-K.cornerNoseMargin then return true,'nez' end", 'CORNER_PRIORITY_159T'),
@@ -3176,7 +3188,7 @@ MUTATIONS = [
     ('164x1 fronde sans borne', 'src/director.lua', 'if go and K.slingMaxGap and target.gap>K.slingMaxGap then go=false end', '', 'SLING_MAX_GAP_LASTPULL_164F1'),
     # Décision du pilote 2026-11-14 : retour au déboîtement de S12 ; la borne de la fronde vaut aussi sur ce chemin.
     ('164f1 fronde sans borne (chemin S12)', 'src/director.lua', ' if go and tow and K.slingMaxGap and e.profile==', ' if false and tow and K.slingMaxGap and e.profile==', 'SLING_MAX_GAP_S12_164F1'),
-    ('164f1 dernier moment rallume', 'src/config.lua', 'lastPullEnabled=true,lastPullLat', 'lastPullEnabled=false,lastPullLat', 'K_164U1'),  # décision du pilote 2026-11-14 : 1 m avec garde-fous (réglage rallumé) ; la mutation l'éteint
+    # 2.0.1 : '164f1 dernier moment rallume' retirée (équivalente : le bloc 2.0.1 a remet ensuite lastPullEnabled=false ; couverte par '201a dernier moment rallume').  # décision du pilote 2026-11-14 : 1 m avec garde-fous (réglage rallumé) ; la mutation l'éteint
     ('164c piste non dégagée ignorée', 'src/incidents.lua', 'or elapsed>=t.redMax and not hold then', 'or elapsed>=t.redMax then', 'LOCK_RED_CLEAR_TRACK_164'),
     ('164c attente sans borne', 'src/incidents.lua', ' and elapsed<t.redMax+K.redClearWait', '', 'LOCK_RED_CLEAR_FALLBACK_164'),
     ('164c capacité absente attendue', 'src/incidents.lua', 'local hold=late and t.teleportCap==true and', 'local hold=late and', 'LOCK_RED_CLEAR_FALLBACK_164'),
@@ -3321,9 +3333,20 @@ MUTATIONS = [
     ('164s1 zone gardee : 100 m apres', 'src/engine.lua', 'DK.dangerBefore,K.dangerKeptAfter,DK.dangerPct)', 'DK.dangerBefore,K.hotspotMeters,DK.dangerPct)', 'LOCK_DANGER_KEPT_EXIT_164'),
     ('164s1 zone gardee : repli apres la zone', 'src/engine.lua', 'fallback=at>=0 and kmh or 0 end', 'fallback=kmh end', 'LOCK_DANGER_KEPT_EXIT_164'),
     ('164s1 panneaux sans la voiture suivie', 'src/lights.lua', "if inc.focusYellow then return", "if false then return", 'LOCK_FOCUS_PANELS_164'),
+    ('201a dernier moment rallume', 'src/config.lua', 'M.K.lastPullEnabled=false; M.K.coverSaMin=0', 'M.K.lastPullEnabled=true; M.K.coverSaMin=0', 'LOCK_PULLOUT_REACHABLE_201'),
+    ('201a defense anticipee : suiveur plus rapide exige', 'src/config.lua', 'M.K.coverSaMin=0; M.K.coverAheadMax=600', 'M.K.coverSaMin=5; M.K.coverAheadMax=600', 'LOCK_DEFENSE_EARLY_COVER_164'),
+    ('201a defense anticipee : fenetre 400 m', 'src/config.lua', 'M.K.coverAheadMax=600', 'M.K.coverAheadMax=400', 'LOCK_DEFENSE_EARLY_COVER_164'),
+    ('201b joueur lent coupe', 'src/config.lua', 'M.K.raceSlowPlayer=true', 'M.K.raceSlowPlayer=false', 'LOCK_PASS_SLOW_PLAYER_201'),
+    # 2.0.1 b : le déclencheur garde ses règles (rapprochement, invitation) : la règle n'ajoute que l'attaque derrière le joueur lent malgré
+    # le freinage d'AC (slowFree, ownBrake, déboîtement immédiat) ; le garde du point de freinage est celui de la 1.59 (slowFree).
+    ('201b joueur lent : freinage d AC retient', 'src/director.lua', 'and not s.alongside and (ownBrake<K.passBrakeMax and not braking or followBrake) then', 'and not s.alongside and ownBrake<K.passBrakeMax and not braking then', 'LOCK_PASS_SLOW_PLAYER_201'),
+    ('201d jaune progressif coupe', 'src/config.lua', 'M.K.yellowRamp=true', 'M.K.yellowRamp=false', 'LOCK_YELLOW_RAMP_201'),
+    ('201d devant : descente ordinaire malgre le suiveur', 'src/director.lua', '   rampDecel=min(rampDecel,K.yellowRearDecel)', '   rampDecel=rampDecel', 'LOCK_YELLOW_RAMP_201'),
+    ('201d suiveur : enveloppe retardee par la descente', 'src/director.lua', ' if followCap<K.unlimitedSpeed then cmd.yellowLimit=min(cmd.yellowLimit,followCap) end', ' if followCap<K.unlimitedSpeed then cmd.yellowLimit=min(cmd.yellowLimit,max(followCap,U.approach(cmd.yellowLimit,followCap,p.yellowDecel*3.6*dt))) end', 'LOCK_YELLOW_RAMP_201'),
+    ('201d suiveur : vitesse de devant ignoree', 'src/director.lua', '    local vf=frame.cars[j].kmh/3.6', '    local vf=a.kmh/3.6', 'LOCK_YELLOW_RAMP_201'),
     ('164s1 voiture suivie meme joueur en piste', 'src/incidents.lua', 'fs<=frame.count and a.pit and p.yellowEnabled', 'fs<=frame.count and p.yellowEnabled', 'LOCK_FOCUS_PANELS_164'),
     # Affinage 1.64 o1 (dépassement en sortie de virage)
-    ('164o1 sortie de virage absente', 'src/director.lua', "if s.state=='OVT_ARM' and K.exitPassEnabled and profile=='C'", "if false and s.state=='OVT_ARM' and K.exitPassEnabled and profile=='C'", 'LOCK_CORNER_EXIT_PASS_164'),
+    ('164o1 sortie de virage absente', 'src/director.lua', "if s.state=='OVT_ARM' and K.exitPassEnabled and (profile=='C' or pqExit)", "if false and s.state=='OVT_ARM' and K.exitPassEnabled and (profile=='C' or pqExit)", 'LOCK_CORNER_EXIT_PASS_164'),
     ('164o1 virage jamais vu', 'src/director.lua', 'if a.corner<K.passCornerC then s.exitCornerAt=now end', '', 'LOCK_CORNER_EXIT_PASS_164'),
     # '164o1 cote de la cible' retirée (mutation équivalente, vérifiée à la main sur une copie mutée) : le côté de la cible
     # est toujours refusé par sideFree/P.corridor (la cible l'occupe), la boucle passe alors à l'autre côté ; le côté
@@ -3342,7 +3365,7 @@ MUTATIONS = [
     ('164o1 bleu tenue jamais relachee', 'src/director.lua', 'r.long<=K.blueCornerClear then', 'r.long<=1e9 then', 'LOCK_BLUE_CORNER_HOLD_164'),
     ('164o1 bleu treve oubliee', 'src/director.lua', 's.passIgnore=j; s.passIgnoreUntil=max(s.passIgnoreUntil or 0,now+K.blueNoAttack)', 's.passIgnore=s.passIgnore', 'LOCK_BLUE_CORNER_HOLD_164'),
     ('164o1 alignement lache', 'src/config.lua', 'wakeAlignLat=0.3,', 'wakeAlignLat=0.7,', 'LOCK_WAKE_ALIGN_TIGHT_164'),
-    ('164o1 dernier moment coupe', 'src/config.lua', 'lastPullEnabled=true,', 'lastPullEnabled=false,', 'K_164U1'),  # LOCK_TOW_SLING_163 suit le réglage ; la constante est vérifiée par K_164U1
+    # 2.0.1 a : '164o1 dernier moment coupe' retirée (équivalente : le bloc 2.0.1 a remet lastPullEnabled=false ; voir '201a dernier moment rallume').
     ('164n1 prudence non relevee', 'src/director.lua', 'caution=max(caution,(s.baseCaution or caution)*K.duelConcedeCaution)', 'caution=caution', 'DUEL_CONCEDE_CAUTION_164N1'),
     ('164n1 attente ordinaire', 'src/director.lua', '(concede and K.duelConcedeHold or K.cornerGiveHold)', 'K.cornerGiveHold', 'LOCK_DUEL_CONCEDE_164'),
 ]

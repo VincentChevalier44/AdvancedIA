@@ -2,6 +2,41 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 2.0.1 — November 2026
+
+A fix-up release, built on your feedback on 2.0.0. Thanks a lot for the reports and logs!
+
+### In-game update fixed
+- **The Update button works again.** Sorry about this one: going from 1.62 to 2.0.0 in game failed with « Cannot write to
+  the app folder: current version kept ». Beta 2.0.0 had changed the font files, and the game keeps them open while it
+  runs, so they could not be replaced. Your previous version was safely kept, nothing was broken.
+- The fonts now live in a new `fonts2/` folder, so the update from 1.62 or from 2.0.0 never has to replace a font the game
+  is using. The old `fonts/` folder can stay where it is; it is simply no longer used.
+- From now on, the updater keeps a font, sound or image it cannot replace (one warning line in the log) and carries on,
+  instead of cancelling the whole update. The Lua files still update all together or not at all.
+- If you are stuck on 1.62: press Update in game, or drop the zip on Content Manager with the game closed.
+
+### Racing
+- **A clearly slow car ahead gets passed**, including your own car when you slow down or move aside, also on the first
+  lap: the AI behind pulls out to the side you leave free at the first safe chance, never at a braking point and never
+  squeezing you.
+- **Progressive slowing under yellow flags:** the car in front eases off gently when a faster car is close behind, and the
+  car behind starts braking earlier, so there are no more rear-end chains when a double yellow comes out.
+- The pull-out in the tow goes back to the earlier point (a few metres behind, or at the slingshot point): the AI rarely get
+  closer than that, so the last-moment pull-out never happened.
+- The anticipated defence (covering the inside before the braking zone) also covers a car that sits in the tow at the same
+  speed, a bit further from the braking point.
+
+### Practice, qualifying and track days
+- An AI moving aside for you no longer slows down at a corner exit in front of you: it only accelerates less.
+- AI on an out lap or cool-down lap drive at normal pace through the corners when a fast car comes up behind, and keep their
+  slow pace on the straights only, off the racing line.
+- A car on a flying lap can pass a car that is not on one at the corner exit.
+- An AI only moves aside when the car behind is really closing in, and stops as soon as it no longer is.
+
+### Verification
+1466 unit checks, 187 integration cases, 3211 mutations detected, endurance run with 0 errors, package accepted by the in-game updater from 2.0.0, 1.63, 1.62, 1.59.1 and 1.58, and the real in-game update from 1.62 and from 2.0.0 checked with the fonts held open as in the game.
+
 ## Beta 2.0.0 — November 2026
 
 A big one. Everything below was built and tuned over many long test races since Beta 1.62, with your reports from
@@ -67,7 +102,7 @@ guide shows how it all works: https://vincentchevalier44.github.io/AdvancedIA/
 #### Companion apps: bridge v2
 - The read-only bridge for companion apps moves to version 2: it now tells which AI retired, the reason for each
   AI's last sanction, and the track-limit and penalty-serving thresholds. Companion apps need their bridge-v2 update
-  (SpotterEnginer Beta 2.0.0 or later). AdvancedIA never depends on them.
+  (SpotterEnginer 1.3.9 or later). AdvancedIA never depends on them.
 
 ### Details: the 2.0.0 work after the first test builds
 

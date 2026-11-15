@@ -685,4 +685,29 @@ tests.UPDATE_REPORT_RUNNING_147=function()
  u,p=ready({installed='Beta 1.33'}); Up.install(u,p,true); Up.tick(u,p,true,200)
  assert(find(p.calls,'report update Beta 1.33 -> Beta 1.34') and find(p.calls,'mark update Beta 1.33 -> Beta 1.34'),'same versions: unchanged')
 end
+-- Beta 2.0.1 (verrou) : un fichier d'appoint (police, son, image) ouvert par l'app en cours n'arrête plus la mise à jour :
+-- l'ancien reste en place, une ligne WARN le dit, le code et le manifeste sont copiés (la 1.62 -> 2.0.0 refusait tout
+-- pour une police chargée par DirectWrite). Un fichier Lua verrouillé arrête toujours tout (UPDATE_REMOTE_FAILURES).
+tests.LOCK_UPDATE_ASSET_KEPT_201=function()
+ local font=Fake.prefix..'fonts2/barlow/Barlow-Regular.ttf'
+ onFake({entries={[font]='font new'}},function(f)
+  f.files[f.root..'/fonts2/barlow/Barlow-Regular.ttf']='font old'; f.locked[f.root..'/fonts2/barlow/Barlow-Regular.ttf']=true
+ end,function(f,p,u)
+  Up.check(u,p,0); f.flush(); Up.install(u,p,true); f.flush(); Up.tick(u,p,true,10)
+  assert(u.phase=='restarting','asset kept, update done: '..u.phase..' '..u.error..' '..u.detail)
+  assert(Up.manifestVersion(f.files[f.root..'/manifest.ini'])=='Beta 1.34' and f.files[f.root..'/AdvancedIA.lua']=='main Beta 1.34' and f.files[f.root..'/src/ui.lua']=='ui Beta 1.34','code copied')
+  assert(f.files[f.root..'/fonts2/barlow/Barlow-Regular.ttf']=='font old' and f.files[f.root..'/fonts2/barlow/Barlow-Regular.ttf.new']==nil,'old asset kept, no temp file')
+  local warned=false
+  for _,e in ipairs(Up.take(u,{})) do if e[1]=='WARN' and e[2]:find("fichier(s) d appoint garde(s), ouvert(s) par le jeu : fonts2/barlow/Barlow-Regular.ttf",1,true) then warned=true end end
+  assert(warned,'one WARN line names the kept asset')
+ end)
+ -- Même police non verrouillée : remplacée normalement, aucune ligne WARN.
+ onFake({entries={[font]='font new'}},function(f) f.files[f.root..'/fonts2/barlow/Barlow-Regular.ttf']='font old' end,function(f,p,u)
+  Up.check(u,p,0); f.flush(); Up.install(u,p,true); f.flush(); Up.tick(u,p,true,10)
+  assert(u.phase=='restarting' and f.files[f.root..'/fonts2/barlow/Barlow-Regular.ttf']=='font new','asset replaced when free')
+  for _,e in ipairs(Up.take(u,{})) do assert(not e[2]:find('d appoint',1,true),'no WARN when nothing is kept') end
+ end)
+ -- Le manifeste n'est jamais un fichier d'appoint.
+ assert(Remote.asset('fonts2/a.ttf') and Remote.asset('sounds/beep.wav') and Remote.asset('icon.png') and not Remote.asset('manifest.ini') and not Remote.asset('src/ui.lua') and not Remote.asset('tracks/spa.lua'))
+end
 return tests
