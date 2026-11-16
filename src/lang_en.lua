@@ -132,7 +132,7 @@ return {
   penaltyStop={'Penalty','Mandatory stop not made: throttle cut for %.0f s.'},
   aiDq={'Disqualification','%s: too many overtakes under flags, session over.'},
   pitOpen={'Pit window open','Mandatory stop between %.0f and %.0f%% of the race.'},pitOpenCsp={'Pit window open','Mandatory stop: window set by the session.'}},
- pitStatus='Mandatory stop: window %s (%s) · AI compliant: %d / %d',pitStates={off='inactive',pending='pending',open='open',closed='closed'},pitSourceRules='setting',pitSourceCsp='CSP',
+ mandatoryAuto='Default: mandatory stop only for races over %.0f km (the switch keeps your own choice)',mandatoryAutoOff='Default: off, %.0f km race (%.0f km or less)',mandatoryAutoOn='Default: on, %.0f km race (over %.0f km)',mandatoryManualNote='Set by you: kept whatever the race distance (a rule set goes back to the default)',pitStatus='Mandatory stop: window %s (%s) · AI compliant: %d / %d',pitStates={off='inactive',pending='pending',open='open',closed='closed'},pitSourceRules='setting',pitSourceCsp='CSP',
  pitProgressUnknown='Race progress unknown: mandatory stops suspended (maximum stint and minimum stop time still active).',
  accidentStatus='Incidents: %d | yellow zones: %d | AI stopped: %d | neutralisation: %s',redStatus='Red flag in progress: AI in the pits %d / %d.',
  deltaLabel='DELTA',deltaPill='DELTA %s',giveBack='GIVE THE POSITION BACK TO %s (%d s)',pitPill='PIT: RETURN TO THE PIT LANE',pitClosedPill='PIT LANE CLOSED',blueGap='%s s BEHIND',panelVersion='%s',drsBlocked='DRS disabled under flags',drsWet='DRS DISABLED: WET TRACK',drsLapsLeft='DRS ENABLED IN %d LAP(S)',noPassing='No overtaking',passMade='No overtaking: you passed a car!',

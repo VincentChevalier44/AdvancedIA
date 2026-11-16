@@ -10,6 +10,9 @@ function M.scene(profile,count)
  -- Beta 1.51 : scènes réglées à la main : ni préréglage de la session (g.presetBySession), ni tours lancés des essais
  -- et qualifications (qualiTraffic) ; leurs propres tests les activent.
  g.presetBySession=false; profiles.P.qualiTraffic=false; profiles.Q.qualiTraffic=false
+ -- 2.0.3 a : arrêt obligatoire tel que réglé (choix du pilote) ; le défaut selon la distance a ses propres tests
+ -- (tests/review203a.lua).
+ g.mandatoryManual=true
  local e=E.new(g,profiles); local f=S.new()
  f.count=count or 3; f.player=1; f.session=0; f.type=profile=='C' and 3 or profile=='Q' and 2 or 1
  -- Essais : session d'essais déclarée dans race.ini, hors Journée circuit.

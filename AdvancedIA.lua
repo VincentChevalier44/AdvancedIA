@@ -91,6 +91,7 @@ local Lights=require('src/lights')
 local Cspgui=require('src/cspgui')
 local Bridge=require('src/bridge')
 local SessionKey=require('src/sessionkey')
+local TyresKey=require('src/tyreskey')
 local K=Config.K
 -- Cache des traces du compilateur JIT agrandi (machine virtuelle de l'app) : avec les 1 000 traces et 512 Ko de code
 -- machine par défaut, le moteur vide et recompile tout son code toutes les une à deux minutes (pics d'image). Sans
@@ -323,6 +324,8 @@ local companionPresent,companionAt=false,-math.huge
 -- Beta 1.63 (accord avec SetupLab) : le pont est aussi ouvert pour SetupLab, lecteur de la clé « AdvancedIA.session ».
 local setupLabPresent=false
 local sessionKey=SessionKey.new()
+-- 2.0.3 : clé annexe « AdvancedIA.tyres » pour SpotterEngineer (src/tyreskey.lua), écrite tant que le pont est ouvert pour lui.
+local tyresKey=TyresKey.new()
 -- Beta 1.59 : plan d'arrêt du joueur publié par SpotterEnginer (lecture seule), relu toutes les K.sePlanPeriod s.
 local sePlanAt=-math.huge
 local strategyPublished=''
@@ -332,7 +335,7 @@ host.openCompanion=function() return Applier.openCompanion(companionWindow) end
 local function seText(key,old) local text=Applier.loadText(key); if text==nil or text=='' then text=Applier.loadText(old) end return text end
 local function release()
  if released then return end
- if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil; if sessionKey.logged then pcall(Applier.storeText,SessionKey.key,SessionKey.closedText) end end
+ if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil; if sessionKey.logged then pcall(Applier.storeText,SessionKey.key,SessionKey.closedText) end; if tyresKey.body then pcall(Applier.storeText,TyresKey.key,TyresKey.closedText(engine.time or 0)) end end
  -- Aucune image ne suivra : restitution complète, y compris en pause ou en replay.
  -- Beta 1.52 : instantané protégé (released est déjà posé : une erreur ici empêchait toute la restitution).
  released=true; pcall(Snapshot.read,frame,K.dtMax,engine.time); pcall(saveRace,true); Applier.access(host); stop(true); Applier.unregister(host)
@@ -793,6 +796,11 @@ local function bridgeWork()
    Applier.storeText(SessionKey.key,text)
    if not sessionKey.logged then sessionKey.logged=true; U.log(engine.log,engine.time or 0,'INFO','cle de session pour SetupLab: premiere ecriture',-1) end
   end
+ end
+ -- 2.0.3 : clé des gommes pour SpotterEngineer (src/tyreskey.lua), au changement et au moins toutes les 5 s.
+ if companionPresent then
+  local text=TyresKey.step(tyresKey,engine,frame,engine.time or 0)
+  if text then Applier.storeText(TyresKey.key,text) end
  end
 end
 local function bridgeStep()

@@ -6383,6 +6383,8 @@ for name,test in pairs(require('tests/review202d')) do assert(tests[name]==nil,n
 for name,test in pairs(require('tests/review202f')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 f (défense anticipée, aspiration, version compagne)
 for name,test in pairs(require('tests/review202g')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 g (défense sur le point de freinage, reprise près d'une file)
 for name,test in pairs(require('tests/review202i')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.2 i (retours des joueurs : abandon des seules IA cassées, formation arrêtée gardée)
+for name,test in pairs(require('tests/review203a')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.3 a (arrêt obligatoire par défaut selon la distance, tours du leader indisponibles)
+for name,test in pairs(require('tests/review203k')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.3 k (clé AdvancedIA.tyres pour SpotterEngineer)
 for name,test in pairs(require('tests/review202h')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 h (joueur hors piste ou lent : doublé)
 for name,test in pairs(require('tests/review164i1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 i1 (fenêtre ouverte en jeu)
 for name,test in pairs(require('tests/review164h1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 h1 (overlay par bureau)

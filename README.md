@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 2.0.2. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 2.0.3. See [CHANGELOG.md](CHANGELOG.md).
 - **Interactive guide:** chapter-by-chapter videos and the full manual: https://vincentchevalier44.github.io/AdvancedIA/
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
@@ -911,8 +911,9 @@ Safety Car escalation (**Safety Car if the incident escalates**, on by default i
 
 The settings are under **RACING RULES › Mandatory stop in the race**. They are the Race profile's settings, the only profile where they apply.
 
-**Mandatory stop in the race** (off by default; on with the F1 and GT rules) is on or off: one stop is required, and everyone, AI and player, then makes as many stops as their strategy needs (settings saved with 2 or 3 stops become one). Once the window has closed, a stop no longer counts (even under a red flag) and no AI is called for it:
-- **The window.** It opens and closes at a percentage of the race (**Window opens (% of race)** 25%, **Window closes (% of race)** 75% by default). The race is measured in leader laps, or in time for a timed race.
+**Mandatory stop in the race** (by default the race distance decides, see below; your own setting is kept) is on or off: one stop is required, and everyone, AI and player, then makes as many stops as their strategy needs (settings saved with 2 or 3 stops become one). Once the window has closed, a stop no longer counts (even under a red flag) and no AI is called for it:
+- **By default, the race distance decides** (Beta 2.0.3): as long as you don't set the switch yourself, a race of 100 km or less has no mandatory stop and a longer race has one. Once you set the switch, your choice is kept whatever the distance; picking a championship rule set goes back to the default. The status line of the Mandatory stop view says which applies.
+- **The window.** It opens and closes at a percentage of the race (**Window opens (% of race)** 25%, **Window closes (% of race)** 75% by default). The race is measured in leader laps (in the cars' own laps when the game reports none for the leader), or in time for a timed race.
   - A window that closes at 100% never closes.
   - A window declared by CSP (server, race mode) is used first.
 - **Your reminder** (Beta 1.59): when the window opens, the overlay says so for 15 s; after that, the stop reminder shows at most once per lap, for 10 s, just before the pit entry once it is known (otherwise in the last third of the lap), never permanently. With SpotterEngineer, its pit plan is followed (see [Companion apps](#companion-apps-spotterengineer-bridge)).
@@ -1255,6 +1256,11 @@ AdvancedIA can share its live state with a companion app, today **SpotterEnginee
 - Beta 1.61 side keys, written only while SpotterEngineer is installed and their switch is on, when the text changes (`stamp` is the time of the last change, not a heartbeat):
   - `AdvancedIA.traffic` (**Lapped cars and classes: nuanced behaviour**): `v=1;blue=<none|lap|class>;stage=<none|advise|order>;car=<AC index|-1>;gap=<m>;closing=<km/h>;count=<n>;stamp=<s>`.
   - `AdvancedIA.weather` (**Live weather**): `v=1;wet=<0.00-1.00>;rain=<0.00-1.00>;water=<0.00-1.00>;trend=<wetting|steady|drying>;eta=<s|-1>;next=<dry|inter|wet|none>;forecast=<none|light|rain|heavy|unknown>;forecastIn=<s|-1>;aiDry=<n>;aiRain=<n>;stamp=<sim s>`.
+- **Companion keys** (Beta 2.0.3): while SpotterEngineer is installed, the app also writes the read-only key `AdvancedIA.tyres`
+  (built at most twice a second, written when it changes and at least every 5 s): `v=1;rule=<0|1>;used=<short>,<short>|-;stamp=<s>`.
+  `rule=1` in a race where the two-dry-compounds rule applies to you (mandatory stop not waived: wet race, short race or the
+  distance default); `used` lists the dry compounds you have run in the race (short names, at most 8 characters each, `-` if none).
+  At most 160 bytes, unknown keys to ignore. The bridge does not change.
 - **SetupLab** (Beta 1.63): when the SetupLab app is installed (apps/lua/SetupLab), the bridge also opens for it and the app writes a
   read-only key `AdvancedIA.session`, at most twice a second and only when it changes; nothing is shown and nothing changes
   for the AI. Format `k=v` pairs separated by `;`, `v=1` first, unknown keys to ignore:

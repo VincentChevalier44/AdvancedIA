@@ -345,7 +345,7 @@ function M.rebase(e,amount)
 end
 function M.configure(e)
  e.p=e.profiles[e.profile]
- C.effective(e.profile,e.p,e.run); C.effectiveGlobals(e.g,e.p,e.runtimeG)
+ C.effective(e.profile,e.p,e.run); C.distanceDefault(e.profile,e.p,e.g,e.run); C.effectiveGlobals(e.g,e.p,e.runtimeG)
  for i=1,K.maxCars do
   Director.configure(e.states[i],e.runtimeG,e.profile,e.run,e.time); e.states[i].nextPerception=e.time+(i%10)*K.perceptionPeriod/10
   local car=e.frame and e.frame.cars[i]
@@ -832,7 +832,7 @@ function M.step(e,frame,dt)
    if rules~=e.rulesLogged then e.rulesLogged=rules; U.log(e.log,now,'INFO','regles de course: '..rules..' (changement)',-1) end
   end
  end
- C.effective(e.profile,e.p,e.run); C.effectiveGlobals(e.g,e.p,e.runtimeG)
+ C.effective(e.profile,e.p,e.run); C.distanceDefault(e.profile,e.p,e.g,e.run); C.effectiveGlobals(e.g,e.p,e.runtimeG)
  if e.returning then
   local settled=true
   for i=1,frame.count do if math.abs(e.states[i].offset-e.states[i].base)>K.offsetEpsilon then settled=false; break end end

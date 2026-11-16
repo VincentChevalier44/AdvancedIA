@@ -2,6 +2,26 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 2.0.3 — November 2026
+
+A small follow-up to 2.0.2, built on your reports. Thanks a lot!
+
+### Mandatory stop
+- **Set by the race distance by default.** As long as you don't set the « Mandatory stop in the race » switch yourself,
+  a race of 100 km or less has no mandatory stop and a longer race has one. As soon as you set the switch, your choice is
+  kept whatever the distance; picking a championship rule set goes back to the default. The window status line and the
+  session log say which applies.
+- **The window opens even when the leader's lap count is not available.** On some setups the game reports 0 laps for the
+  leader during the whole race, so the window stayed « pending » and no AI pitted. The app now takes the laps of the cars
+  themselves in that case (one warning line in the log).
+
+### Companion apps
+- A small read-only key now tells companion apps whether the two-dry-compounds rule applies to you and which dry compounds
+  you have used. The bridge does not change.
+
+### Verification
+1494 unit checks, 190 integration cases, 3262 of 3262 mutations detected, endurance run with 0 errors, package accepted by the in-game updater from 2.0.2, 2.0.1, 2.0.0, 1.63, 1.62, 1.59.1 and 1.58, and the real in-game update from 1.62, 2.0.1 and 2.0.2 checked with the fonts held open as in the game.
+
 ## Beta 2.0.2 — November 2026
 
 Livelier racing between the AI, built on your feedback and on many test races. Thanks a lot for the logs and videos!

@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 2.0.2',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 2.0.3',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -1963,4 +1963,23 @@ for key,value in pairs({windowScaleStep=0.1}) do assert(M.K[key]==nil,key); M.K[
 -- hors piste, tout juste repartie) peut etre doublee ; avoidRejoinEnds : une voiture repartie qui roule sans glisser n'est
 -- plus un obstacle a contourner au ralenti.
 for key,value in pairs({yellowPassIncident=true,avoidRejoinEnds=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.3 a (pilote, 16 novembre : « moins de 100 km arrêt au stand désactivé par défaut, plus de 100 km activé par
+-- défaut ») : mandatoryManual (global, faux par défaut) : vrai dès que le pilote règle lui-même l'interrupteur « Arrêt
+-- obligatoire en course » (ou la valeur de l'arrêt dans la liste des règles) ; un jeu de règles de championnat le remet
+-- à faux. Faux : en course, onglet Règles coché, la distance décide (Pits : K.sprintMaxKm km ou moins, pas d'arrêt
+-- obligatoire ; au-delà, un arrêt) ; vrai : son choix est gardé quelle que soit la distance (décision du 14 novembre).
+assert(M.globalDefaults.mandatoryManual==nil); M.globalDefaults.mandatoryManual=false
+function M.distanceDefault(profile,p,g,run)
+ run.mandatoryByDistance=profile=='C' and M.on(p,'rules') and g~=nil and g.mandatoryManual~=true
+ if run.mandatoryByDistance then run.mandatoryStops=1 end
+ return run
+end
+do
+ local applyRules=M.applyRules
+ function M.applyRules(category,profiles,g)
+  local done=applyRules(category,profiles)
+  if done and g then g.mandatoryManual=false end
+  return done
+ end
+end
 return M

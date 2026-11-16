@@ -359,7 +359,7 @@ local function settingControl(v,control,view,p,x,y,w,locked)
    W.rect(x,y+43,w,1,c.ruleSoft)
   end
   if reset then value=s.defaults[view]; changed=value~=p[s.key] end
-  if changed then p[s.key]=value; C.validate(view,p,p); touch(v,p) end
+  if changed then p[s.key]=value; if s.key=='mandatoryStops' then v.e.g.mandatoryManual=true end; C.validate(view,p,p); touch(v,p) end
   return 44
  elseif s.choices then
   local h=46
@@ -390,7 +390,7 @@ local function settingControl(v,control,view,p,x,y,w,locked)
    W.rect(x,y+h-1,w,1,c.ruleSoft)
   end
   if reset then value=s.defaults[view]; changed=value~=p[s.key] end
-  if changed then p[s.key]=value; C.validate(view,p,p); touch(v,p) end
+  if changed then p[s.key]=value; if s.key=='mandatoryStops' then v.e.g.mandatoryManual=true end; C.validate(view,p,p); touch(v,p) end
   return h
  end
  local opts=toggleOpts(v,s.key,value)
@@ -403,7 +403,7 @@ local function settingControl(v,control,view,p,x,y,w,locked)
   reset=right and not locked
  end
  if reset then value=s.defaults[view]; changed=value~=p[s.key] end
- if changed then p[s.key]=value; C.validate(view,p,p); touch(v,p) end
+ if changed then p[s.key]=value; if s.key=='mandatoryStops' then v.e.g.mandatoryManual=true end; C.validate(view,p,p); touch(v,p) end
  return h
 end
 -- Note d'un réglage masqué dans ce profil (pénalités en journée circuit, surcouche Endurance en essais et en
@@ -527,7 +527,7 @@ local function ruleBlock(v,e,x,y,w)
   if W.visible(y,40) then
    local active=category==name
    if W.row(idOf('rules_',name),x+10,y,w-20,40,active,v.tips.rules[name]) then
-    C.applyRules(name,e.profiles); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v)
+    C.applyRules(name,e.profiles,e.g); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v)
    end
    local cw=active and W.chipWidth(L.chipActive) or 0
    W.cell(W.upper(L.ruleNames[name]),x+20,y+5,w-44-cw,13,active and c.cyanText or c.text,'cond')
@@ -547,7 +547,7 @@ local function ruleBlock(v,e,x,y,w)
   local name=v.closestName
   if v.rulesResetFor~=name then v.rulesResetFor=name; v.rulesResetText=string.format(L.rulesResetTo,L.ruleNames[name]) end
   if W.button('rules_reset',v.rulesResetText,x+10,y,w-20,28,false,v.tips.ui.rulesReset,'outline') then
-   C.applyRules(name,e.profiles); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v)
+   C.applyRules(name,e.profiles,e.g); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v)
   end
  end
  y=y+38
@@ -821,10 +821,17 @@ local function statusLines(v,e,group,view,p,out)
   local t=e.incidents
   out[#out+1]=fmt(v,'accidents',L.accidentStatus,t.activeCount,t.zoneCount,t.holdCount,L.neutralNames[t.neutral and t.neutralMode or 'none'])
   if t.red then out[#out+1]=fmt(v,'red',L.redStatus,t.redInPits,t.redTotal) end
- elseif group=='rules' and v.rulesView=='stops' and view=='C' and p.mandatoryStops>0 then
+ elseif group=='rules' and v.rulesView=='stops' and view=='C' and (p.mandatoryStops>0 or e.g.mandatoryManual~=true and C.on(p,'rules')) then
   local pits=e.pits
   out[#out+1]=fmt(v,'pits',L.pitStatus,L.pitStates[pits.state],pits.csp and L.pitSourceCsp or L.pitSourceRules,pits.done,pits.total)
   if pits.progress<0 and not pits.csp then out[#out+1]=L.pitProgressUnknown end
+ end
+ -- 2.0.3 a : arrêt obligatoire par défaut selon la distance, ou choix du pilote gardé.
+ if group=='rules' and v.rulesView=='stops' and view=='C' and C.on(p,'rules') then
+  local pits=e.pits
+  if e.g.mandatoryManual==true then out[#out+1]=L.mandatoryManualNote
+  elseif pits.sprint~=nil and pits.sprintKm>=0 then out[#out+1]=string.format(pits.sprint and L.mandatoryAutoOff or L.mandatoryAutoOn,pits.sprintKm,C.K.sprintMaxKm)
+  else out[#out+1]=string.format(L.mandatoryAuto,C.K.sprintMaxKm) end
  end
  return out
 end
@@ -1627,7 +1634,7 @@ local function homeTab(v,e,host)
   if W.visible(ry,22) then
    local picked=W.segment('homerules',v.homeRuleLabels,x+12,ry,w-24,22,ruleAt,nil,v.homeRuleIds,v.homeRuleTips)
    local name=picked and C.ruleCategories[picked]
-   if name and name~=ruleNow then C.applyRules(name,e.profiles); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v) end
+   if name and name~=ruleNow then C.applyRules(name,e.profiles,e.g); v.presetMessage=string.format(L.ruleApplied,L.ruleNames[name]); mark(v) end
   end
   ry=ry+28
  end
@@ -1999,10 +2006,11 @@ local function rulesTab(v,e)
  -- Arrêt obligatoire et voiture de sécurité (Beta 1.18) : état du profil Course (ils n'agissent qu'en course), réglés
  -- ensemble pour les Essais, Qualifications et Course ; chaque jeu de règles les règle aussi. Beta 1.29 : en journée
  -- circuit et en hotlap, où rien de cela n'agit, interrupteurs éteints et sans effet, réglages de course non affichés.
- local stops=not solo and race.mandatoryStops>0
+ -- 2.0.3 a : pas réglé par le pilote, course décidée par la distance : état de cette course ; sinon la valeur réglée.
+ local stops=not solo and (e.g.mandatoryManual~=true and e.pits.sprint~=nil and e.pits.sprint==false or (e.g.mandatoryManual==true or e.pits.sprint==nil) and race.mandatoryStops>0)
  shown,toggled=ruleRow(v,'stops','mandatory_stop',L.mandatorySwitch,PAD,ny+28,lw-6,stops,v.tips.ui.rulesViewStops,v.tips.ui.mandatoryStop,solo)
  if not solo then
-  if toggled then C.weekendSwitch(e.profiles,'mandatoryStops',not stops); mark(v) elseif shown then v.rulesView='stops' end
+  if toggled then C.weekendSwitch(e.profiles,'mandatoryStops',not stops); e.g.mandatoryManual=true; mark(v) elseif shown then v.rulesView='stops' end
  end
  local safety=not solo and race.safetyCarEscalation==true
  shown,toggled=ruleRow(v,'safety','safety_switch',L.safetySwitch,PAD,ny+56,lw-6,safety,v.tips.ui.rulesViewSafety,v.tips.ui.safetySwitch,solo)
