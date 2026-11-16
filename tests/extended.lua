@@ -1232,7 +1232,9 @@ tests.OVERTAKE_FINISHES_AFTER_ALONGSIDE=function()
  local _,lost=slowPass(function(e,f,a)
   if e.states[2].passAlongside then a.kmh=85; a.speed=85/3.6 end
  end)
- assert(lost.abort_slow,'abort when the target pulls away again')
+ -- Affinage 2.0.2 (course : « cible plus rapide » après K.abortSlowTimeRace s) : la limite du côte à côte sans progrès peut
+ -- finir l'épisode avant ; les deux sont un vrai abandon.
+ assert(lost.abort_slow or lost.hold_limit,'abort when the target pulls away again')
  -- Hors course (écart en temps jugé dès K.abortTgGrow) : cible déjà derrière, jamais jugée « plus rapide ».
  local _,practice=slowPass(nil,'P')
  assert(practice.clear and not aborted(practice),'practice: slow pass completed, a target already behind never aborts it')
@@ -3588,6 +3590,30 @@ end
 -- Beta 1.8 : maintien de ligne au départ. Sur la grille, chaque IA relève son écart à la trajectoire (décalé à
 -- l'opposé du voisin) et le commande tel quel ; après le feu vert, il est tenu tant qu'une voiture roule à côté et pendant
 -- un freinage, puis rendu à la trajectoire ; dans les deux repères latéraux, avec la largeur du côté de la voiture.
+-- 2.0.2 (recalage des mutations) : après le premier freinage (fin des deux files du départ), une voiture encore à côté
+-- garde la ligne tenue (s.alongside relance l'attente) ; sans voisin, rendue K.laneRelease s après la fin du freinage.
+tests.START_LANE_HOLD_ALONGSIDE_202=function()
+ for _,sign in ipairs({1,-1}) do
+  local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C)
+  e.profiles.C.startLaneHold=true; e.profiles.C.startDelay=30; e.profiles.C.startRelax=30; E.changed(e); E.configure(e); e.g.offsetSign=sign
+  f.started=false
+  F.place(f,1,-3000,0); F.place(f,2,0,0,3); F.place(f,3,0,0,-1.5)
+  for i=2,3 do f.cars[i].leftWidth=6; f.cars[i].rightWidth=6 end
+  F.tick(e,f,2)
+  local s2=e.states[2]; assert(s2.lane~=0,'grid: lane latched')
+  f.started=true; for i=2,3 do F.place(f,i,f.cars[i].z,120,f.cars[i].x) end
+  F.tick(e,f,2,true)
+  -- Premier freinage de la voiture 2 : fin des deux files ; voisin toujours à côté.
+  f.cars[2].brake=0.6; F.tick(e,f,1,true); f.cars[2].brake=0
+  assert(s2.filesDone or not s2.filesOn,'first braking ends the two-file phase')
+  F.tick(e,f,C.K.laneRelease*4,true)
+  assert(s2.lane~=0 and s2.laneActive,'neighbour still alongside: lane kept ('..tostring(s2.lane)..', sign '..sign..')')
+  -- Voisin parti loin devant : rendue.
+  F.place(f,3,f.cars[2].z+300,120,-1.5)
+  F.tick(e,f,C.K.laneRelease*4,true)
+  assert(s2.lane==0 and not s2.laneActive,'neighbour gone: released')
+ end
+end
 tests.START_LANE_HOLD=function()
  local half=1.85*0.5
  local function grid(sign)
@@ -3633,7 +3659,9 @@ tests.START_LANE_HOLD=function()
   assert(math.abs(e.commands[2].offset)<0.02 and math.abs(e.commands[4].offset)<0.02,'back on the line ('..e.commands[2].offset..')')
  end
  -- Réglage décoché, ou onglet Départ décoché : rien n'est retenu.
- local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); e.profiles.C.startLaneHold=false; E.changed(e)
+ -- Affinage 2.0.2 d : avec « Premier tour attentif », la place de la grille est tenue jusqu'au premier freinage même
+ -- réglage décoché (tests/review202d.lua) ; les deux décochés : rien.
+ local e,f=F.scene('C',3); C.preset('Course','C',e.profiles.C); e.profiles.C.startLaneHold=false; e.profiles.C.firstLapCare=false; E.changed(e)
  f.started=false; F.place(f,1,-3000,0); F.place(f,2,0,0,3); F.place(f,3,0,0,-1.5); F.tick(e,f,2)
  assert(e.states[2].lane==0 and math.abs(e.commands[2].offset)<1e-6,'disabled: no lane hold')
  local e3,f3=F.scene('C',3); C.preset('Course','C',e3.profiles.C); e3.profiles.C.startLaneHold=true; e3.profiles.C.section_start=false; E.changed(e3)
@@ -3642,7 +3670,8 @@ tests.START_LANE_HOLD=function()
  -- Fin du départ (attente plus détente) : une ligne encore tenue est rendue.
  local e2,f2=grid(1)
  f2.started=true; for i=2,5 do F.place(f2,i,f2.cars[i].z,120,f2.cars[i].x) end
- F.tick(e2,f2,e2.run.startDelay+e2.run.startRelax+1,true)
+ -- Affinage 2.0.2 d : avec « Premier tour attentif », deux files tenues au plus K.startFilesMax s sans freinage.
+ F.tick(e2,f2,math.max(e2.run.startDelay+e2.run.startRelax,C.K.startFilesMax)+1,true)
  assert(e2.states[2].lane==0 and not e2.states[2].laneActive,'released at the end of the start window')
 end
 -- Beta 1.9 : préréglage personnel enregistré avant la Beta 1.8 (révision 4) : delta assoupli et maintien de ligne de
@@ -6349,6 +6378,12 @@ for name,test in pairs(require('tests/review201a')) do assert(tests[name]==nil,n
 for name,test in pairs(require('tests/review201b')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.1 b (joueur lent en course)
 for name,test in pairs(require('tests/review201d')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.1 d (jaune progressif)
 for name,test in pairs(require('tests/review201e')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.1 e (cessions et tours lents hors course)
+for name,test in pairs(require('tests/review202a')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 a (rythme, attaque, aspiration, voiture lente)
+for name,test in pairs(require('tests/review202d')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 d (départ en deux files)
+for name,test in pairs(require('tests/review202f')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 f (défense anticipée, aspiration, version compagne)
+for name,test in pairs(require('tests/review202g')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 g (défense sur le point de freinage, reprise près d'une file)
+for name,test in pairs(require('tests/review202i')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.2 i (retours des joueurs : abandon des seules IA cassées, formation arrêtée gardée)
+for name,test in pairs(require('tests/review202h')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 h (joueur hors piste ou lent : doublé)
 for name,test in pairs(require('tests/review164i1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 i1 (fenêtre ouverte en jeu)
 for name,test in pairs(require('tests/review164h1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 h1 (overlay par bureau)
 for name,test in pairs(require('tests/review164v1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 (Monza S12 : relance en temps, drapeau bleu proche)

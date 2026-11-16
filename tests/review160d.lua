@@ -290,25 +290,25 @@ tests.SE_STRATEGY_PARSE_160D=function()
  e.seStrategy={raw='v=1;mode=undercut;rival=2;gain=1.4;lap=6;stamp=10'}
  E.seStrategy(e,f,player,100)
  assert(e.incidents.seStrategyMode=='undercut' and e.incidents.seStrategyTarget=='Driver_3','advice shown, target named')
- assert(logged(e,'SpotterEnginer strategie: undercut (rival Driver_3, tour 6, gain 1.4 s ; notre temps perdu aux stands -1.0 s)')==1,'one line per change')
- E.seStrategy(e,f,player,101); assert(logged(e,'SpotterEnginer strategie: undercut')==1,'no repeat')
+ assert(logged(e,'SpotterEngineer strategie: undercut (rival Driver_3, tour 6, gain 1.4 s ; notre temps perdu aux stands -1.0 s)')==1,'one line per change')
+ E.seStrategy(e,f,player,101); assert(logged(e,'SpotterEngineer strategie: undercut')==1,'no repeat')
  E.seStrategy(e,f,player,100+K.seStrategyStale+1)
- assert(e.incidents.seStrategyMode=='' and logged(e,'SpotterEnginer strategie: ignoree (figee)')==1,'stale: forgotten, logged once')
+ assert(e.incidents.seStrategyMode=='' and logged(e,'SpotterEngineer strategie: ignoree (figee)')==1,'stale: forgotten, logged once')
  E.seStrategy(e,f,player,100+K.seStrategyStale+2); assert(logged(e,'ignoree (figee)')==1)
  e.seStrategy.raw='v=1;mode=undercut;rival=2;gain=1.4;lap=6;stamp=2'
  E.seStrategy(e,f,player,200); assert(e.incidents.seStrategyMode=='undercut','stamp going backwards: a reset, fresh again')
  e.seStrategy.raw='v=1;mode=none;rival=-1;gain=-1.0;lap=0;stamp=3'
  E.seStrategy(e,f,player,201); assert(e.incidents.seStrategyMode=='','mode none: nothing shown')
  e.seStrategy.raw='v=3;mode=undercut;stamp=4'
- E.seStrategy(e,f,player,202); assert(e.incidents.seStrategyMode=='' and logged(e,'SpotterEnginer strategie: ignoree (version)')==1,'other version ignored, logged')
+ E.seStrategy(e,f,player,202); assert(e.incidents.seStrategyMode=='' and logged(e,'SpotterEngineer strategie: ignoree (version)')==1,'other version ignored, logged')
  -- Notre temps perdu à côté du sien.
  known(e,f,30,0.2,100); e.seStrategy.raw='v=1;mode=cover;rival=-1;gain=0.0;lap=7;stamp=5'
  E.seStrategy(e,f,player,203)
- assert(logged(e,'SpotterEnginer strategie: cover (rival -, tour 7, gain 0.0 s ; notre temps perdu aux stands 10.0 s)')==1,'our learnt pit loss in the line')
+ assert(logged(e,'SpotterEngineer strategie: cover (rival -, tour 7, gain 0.0 s ; notre temps perdu aux stands 10.0 s)')==1,'our learnt pit loss in the line')
  assert(e.incidents.seStrategyMode=='cover' and e.incidents.seStrategyTarget=='')
  -- Hors course : rien.
  local j,fj=F.scene('P',3); j.seStrategy={raw='v=1;mode=undercut;rival=2;gain=1.0;lap=6;stamp=10'}
- E.seStrategy(j,fj,fj.cars[1],100); assert(j.incidents.seStrategyMode=='' and logged(j,'SpotterEnginer strategie')==0,'race only')
+ E.seStrategy(j,fj,fj.cars[1],100); assert(j.incidents.seStrategyMode=='' and logged(j,'SpotterEngineer strategie')==0,'race only')
 end
 -- Affichage et journal seulement : les commandes de toutes les IA sont identiques avec et sans la clé ; la raison
 -- suit le rappel d'arrêt du panneau, jamais le texte des annonces du pont.
@@ -414,18 +414,24 @@ tests.WEAR_CLAMP_160D=function()
  local a=f.cars[2]; worn(a,1); a.fuel=100; a.maxFuel=100; tyres(a,2)
  a.tyreTemp={120,120,120,120}
  F.tick(e,f,K.wearHotTime+8)
- assert(near(e.wear.target[2],1-K.wearScaleMaxLoss),'worst case bounded: '..e.wear.target[2])
- assert(near(e.commands[2].levelScale,1-K.wearScaleMaxLoss,1e-6),'applied to the level')
+ -- Affinage 2.0.2 : en course, bornes de la course (K.wearRaceMaxLoss, K.wearRaceMaxGain) et poids K.wearRaceMult.
+ assert(near(e.wear.target[2],1-K.wearRaceMaxLoss),'worst case bounded: '..e.wear.target[2])
+ assert(near(e.commands[2].levelScale,1-K.wearRaceMaxLoss,1e-6),'applied to the level')
  local b=f.cars[3]; worn(b,0); b.fuel=0; b.maxFuel=100; tyres(b,0)
  F.tick(e,f,3)
- assert(near(e.wear.target[3],1+math.min(K.wearScaleMaxGain,K.fuelPace/2+K.compoundPaceStep)),'best case bounded: '..e.wear.target[3])
- assert(e.wear.target[3]<=1+K.wearScaleMaxGain+1e-12)
+ assert(near(e.wear.target[3],1+math.min(K.wearRaceMaxGain,K.wearRaceMult*(K.fuelPace/2+K.compoundPaceStep))),'best case bounded: '..e.wear.target[3])
+ assert(e.wear.target[3]<=1+K.wearRaceMaxGain+1e-12)
  -- Surchauffe seule.
  local h,fh=race(4,20,2,{wearPace=true})
  local c=fh.cars[2]; worn(c,0); c.tyreTemp={110,110,110,110}
  F.tick(h,fh,K.wearHotTime-2); assert(h.wear.target[2]==1,'hot, but not long enough')
  F.tick(h,fh,4); assert(near(h.wear.target[2],1-K.wearHotPct),'overheated tyres: small loss')
  c.tyreTemp={90,90,90,90}; F.tick(h,fh,2); assert(h.wear.target[2]==1,'cooled: given back')
+ -- Hors course (2.0.2) : bornes ordinaires K.wearScaleMaxLoss / K.wearScaleMaxGain, sans le poids de la course.
+ local q,fq=F.scene('P',4); q.profiles.P.strategyTyreWearPct=75; q.run.strategyTyreWearPct=75; q.strategy.wearTrust='trusted'; set(q,fq,{wearPace=true})
+ local d=fq.cars[2]; worn(d,1); d.fuel=100; d.maxFuel=100; tyres(d,2); d.tyreTemp={120,120,120,120}
+ F.tick(q,fq,K.wearHotTime+8)
+ assert(near(q.wear.target[2],1-K.wearScaleMaxLoss),'outside the race, worst case bounded by the ordinary limit: '..q.wear.target[2])
 end
 tests.WEAR_UNTRUSTED_160D=function()
  local e,f=race(4,20,2,{wearPace=true})
@@ -489,11 +495,11 @@ tests.JOURNAL_EN_160D=function()
  en('strategie: Driver_2 arret sous neutralisation (gain 12 s)','strategy: Driver_2 stop under neutralisation (saving 12 s)')
  en('strategie: Driver_2 reste en piste sous neutralisation (position en piste)','strategy: Driver_2 stays out under neutralisation (track position)')
  en('strategie: Driver_2 undercut sur Driver_3 (ecart 0.5 s, gain estime 0.42 s par tour)','strategy: Driver_2 undercut on Driver_3 (gap 0.5 s, estimated gain 0.42 s per lap)')
- en('SpotterEnginer strategie: undercut (rival Driver_3, tour 6, gain 1.4 s ; notre temps perdu aux stands -1.0 s)','SpotterEnginer strategy: undercut (rival Driver_3, lap 6, gain 1.4 s; our pit-loss time -1.0 s)')
- en('SpotterEnginer strategie: ignoree (figee)','SpotterEnginer strategy: ignored (stale)')
- en('SpotterEnginer strategie: ignoree (version)','SpotterEnginer strategy: ignored (version)')
- en('SpotterEnginer strategie: ignoree (trop longue)','SpotterEnginer strategy: ignored (too long)')
- en('SpotterEnginer strategie: ignoree (illisible)','SpotterEnginer strategy: ignored (unreadable)')
+ en('SpotterEngineer strategie: undercut (rival Driver_3, tour 6, gain 1.4 s ; notre temps perdu aux stands -1.0 s)','SpotterEngineer strategy: undercut (rival Driver_3, lap 6, gain 1.4 s; our pit-loss time -1.0 s)')
+ en('SpotterEngineer strategie: ignoree (figee)','SpotterEngineer strategy: ignored (stale)')
+ en('SpotterEngineer strategie: ignoree (version)','SpotterEngineer strategy: ignored (version)')
+ en('SpotterEngineer strategie: ignoree (trop longue)','SpotterEngineer strategy: ignored (too long)')
+ en('SpotterEngineer strategie: ignoree (illisible)','SpotterEngineer strategy: ignored (unreadable)')
  en('rythme: Driver_2 -4.0 % (pneus 100 %, gomme S, carburant 50 %)','pace: Driver_2 -4.0% (tyres 100%, compound S, fuel 50%)')
  en('rythme: Driver_2 pneus au bout (100 %), rythme -4.0 %','pace: Driver_2 tyres finished (100%), pace -4.0%')
 end

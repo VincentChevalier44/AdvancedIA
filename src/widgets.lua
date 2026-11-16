@@ -12,6 +12,8 @@ local W={}
 -- active : dernier état allumé de chaque commande dessinée (surbrillance vérifiable).
 local f={ox=0,oy=0,s=1,w=900,h=700,tip=nil,tipPriority=-1,fontDepth=0,clip=nil,id='aai',active={}}
 W.minWidth=900
+-- 2.0.2 j : taille du texte choisie par le joueur (réglage global windowScale, 1 à 1,5) ; posée par ui.lua avant W.begin.
+W.userScale=1
 local function hex(h,a)
  local r,g,b=h:match('^#(%x%x)(%x%x)(%x%x)$')
  return rgbm(tonumber(r,16)/255,tonumber(g,16)/255,tonumber(b,16)/255,a or 1)
@@ -112,7 +114,9 @@ function W.begin(id)
  f.fontDepth=0; f.fontRole=nil; f.fontName=nil; f.clip=nil
  local raw=ui.getCursor(); local space=ui.availableSpace()
  f.id=id; f.ox=raw.x; f.oy=raw.y
- f.s=math.max(0.5,math.min(1,space.x/W.minWidth))
+ -- 2.0.2 j : échelle plafonnée par la taille choisie (W.userScale) ; fenêtre trop étroite : réduite comme avant.
+ local u=W.userScale; if type(u)~='number' or u~=u or u<1 then u=1 elseif u>1.5 then u=1.5 end
+ f.s=math.max(0.5,math.min(u,space.x/W.minWidth))
  if cacheScale~=f.s then cacheScale=f.s; forget() end
  f.w=math.max(W.minWidth,space.x/f.s); f.h=math.max(400,space.y/f.s)
  f.tip=nil; f.tipPriority=-1; f.clip=nil

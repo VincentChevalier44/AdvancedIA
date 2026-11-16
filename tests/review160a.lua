@@ -404,7 +404,7 @@ tests.PASS_FAILURE_AFTER_GAIN_160A=function()
   s.abortSlow=0; s.passStall=0; s.passAlongside=false; s.passProgRef=12; s.passProgTime=0; s.lastPassTarget=3; s.nextPerception=0
   s.passIgnore=3; s.passIgnoreCount=1; s.passIgnoreUntil=e.time+100
   local t=0
-  while t<K.abortSlowTime+1 do F.place(f,3,12+4.4,108); s.nextPerception=0; F.tick(e,f,1/60); t=t+1/60; if s.reason=='abort_slow' then break end end
+  while t<(profile=='C' and K.abortSlowTimeRace or K.abortSlowTime)+1 do F.place(f,3,12+4.4,108); s.nextPerception=0; F.tick(e,f,1/60); t=t+1/60; if s.reason=='abort_slow' then break end end
   assert(s.reason=='abort_slow','target faster: '..tostring(s.reason))
   return s.passIgnoreCount,e
  end

@@ -19,8 +19,14 @@ from pathlib import Path
 MUTATIONS = [
     ('contact instantané', 'src/incidents.lua', 'if c.window-a.kmh>=K.contactDrop and c.contact then', 'if c.window-a.kmh>=K.contactDrop and (a.collided or a.offtrack) then', 'INCIDENT_DEBOUNCE'),
     ('tête-à-queue sur une image', 'src/incidents.lua', 'or c.spun or c.wrong>=K.wrongWayTime)', 'or a.slip>K.slipDegrees or c.wrong>=K.wrongWayTime)', 'INCIDENT_DEBOUNCE'),
-    ('dépassement sous jaune', 'src/director.lua', 'local canPass=not s.returning and not startPhase and not s.yellow and', 'local canPass=not s.returning and not startPhase and', 'YELLOW_BLOCKS_OVERTAKE'),
-    ('voiture en travers ignorée', 'src/director.lua', 'if j~=i and c.incident and c.onTrack then', 'if false then', 'SPUN_CAR_AVOIDANCE'),
+    ('202h jaune : voiture en cause retenue', 'src/director.lua', '     local yellowHeld=s.yellow and not yellowPass\n', '     local yellowHeld=s.yellow\n', 'LOCK_PASS_PLAYER_OFFTRACK_202'),
+    ('202h jaune : toute voiture doublable', 'src/director.lua', '  and Penalties.passable(frame.cars[j],e.incidents.cars[j],p,now)\nend', '  and true\nend', 'LOCK_YELLOW_OTHER_CAR_HELD_202'),
+    ('202h jaune : neutralisation comprise', 'src/director.lua', 'return yellow==true and not inc.neutral and', 'return yellow==true and', 'LOCK_YELLOW_ZONE_ONLY_202'),
+    ('202h dépassement interrompu sous jaune', 'src/director.lua', "and not yellowPassOk(e,s,frame,s.target,p,now) then transition(e,s,'OVT_OUT','abort_yellow',now) end", "then transition(e,s,'OVT_OUT','abort_yellow',now) end", 'LOCK_PASS_PLAYER_OFFTRACK_202'),
+    ('202h reprise : évitement tenu', 'src/director.lua', '     if K.avoidRejoinEnds and not moving then moving=H.rejoining(e,frame,target.index,p) end\n', '', 'LOCK_REJOIN_NO_AVOID_202'),
+    ('202h reprise : glissade ignorée', 'src/director.lua', '  and (o.slip or 0)<=K.slipDegrees and (c.spin or 0)<K.spinTime and', '  and', 'LOCK_REJOIN_NO_AVOID_202'),
+    ('dépassement sous jaune', 'src/director.lua', 'local canPass=not s.returning and not startPhase and not yellowHeld and', 'local canPass=not s.returning and not startPhase and', 'YELLOW_BLOCKS_OVERTAKE'),
+    ('voiture en travers ignorée', 'src/director.lua', 'if j~=i and c.incident and c.onTrack and not (K.avoidRejoinEnds and H.rejoining(e,frame,j,p)) then', 'if false then', 'SPUN_CAR_AVOIDANCE'),
     ('appel IA sans retenue', 'src/director.lua', 'local held=front.gap<K.aiFlashGap and s.stuck>=p.stuckTime', 'local held=front.gap<K.aiFlashGap*2 or s.stuck>=p.stuckTime', 'M03'),
     ('gel au freinage absent', 'src/director.lua', " if braking and s.state~='AVOID' and s.state~='CALM' and not (s.passBrakeFree", ' if false and not (s.passBrakeFree', 'NO_MOVE_UNDER_BRAKING'),
     ('météo prime toujours', 'src/pits.lua', 'and (cmd.weatherRain or cmd.weatherCompound~=a.compoundIndex) then', 'then', 'MANDATORY_PIT_WINDOW'),
@@ -417,7 +423,7 @@ MUTATIONS = [
     ('ligne tenue rebornée par la rampe', 'src/director.lua', ' if not s.laneActive then desired=M.reachable(s,a,p,g,desired) end\n', ' desired=M.reachable(s,a,p,g,desired)\n', 'START_LANE_HOLD'),
     ('ligne rendue pendant l attente du départ', 'src/director.lua', "desired=s.laneActive and s.lane or 0; s.confirm=0", "desired=0; s.confirm=0", 'START_LANE_HOLD'),
     ('ligne rendue au freinage', 'src/director.lua', 'if now-s.laneSeen<K.laneRelease or a.brake>K.ruleBrake then\n', 'if now-s.laneSeen<K.laneRelease then\n', 'START_LANE_HOLD'),
-    ('ligne rendue à côté d une voiture', 'src/director.lua', ' if s.alongside then s.laneSeen=now end\n', '', 'START_LANE_HOLD'),
+    ('ligne rendue à côté d une voiture', 'src/director.lua', ' if s.alongside then s.laneSeen=now end\n', '', 'START_LANE_HOLD_ALONGSIDE_202'),  # 2.0.2 d : les deux files masquent ce cas dans START_LANE_HOLD
     ('ligne gardée après le départ', 'src/director.lua', " elseif s.lane~=0 or s.laneActive then s.lane=0; s.laneActive=false\n", '', 'START_LANE_HOLD'),
     ('voiture sur la trajectoire retenue', 'src/director.lua', 'abs(a.splineLat)>=K.laneMin and a.splineLat or 0', 'a.splineLat or 0', 'START_LANE_HOLD'),
     ('écart relevé à chaque image', 'src/director.lua', '  if not s.laneLatched and a.splineLatValid then\n', '  if a.splineLatValid then\n', 'INT:Beta 1.8 : maintien de ligne au départ'),
@@ -1353,7 +1359,10 @@ MUTATIONS = [
     ('1.42t méplats sans borne par relais', 'src/mistakes.lua', 'local km=math.min(p.lockFlatSpotKm,K.lockWearMaxKm-c.lockKm)', 'local km=p.lockFlatSpotKm', 'STRATEGY_142_LOCK_WEAR'),
     ('1.42t méplats option coupée', 'src/mistakes.lua', "if kind=='brake' and p.lockWearEnabled and", "if kind=='brake' and", 'STRATEGY_142_LOCK_WEAR'),
     ('1.42t panne en fin de course', 'src/strategy.lua', 'progress>=K.failureLateRace or ', '', 'STRATEGY_142_FAILURE'),
-    ('1.42t panne au premier tour', 'src/strategy.lua', '(a.lap or 0)<1 or progress<0', 'progress<0', 'STRATEGY_142_FAILURE'),
+    ('1.42t panne au premier tour', 'src/strategy.lua', '(a.lap or 0)<(K.failureMinLaps or 1) or progress<0', 'progress<0', 'STRATEGY_142_FAILURE'),
+    ('202i panne avant deux tours', 'src/config.lua', 'formationWaitSign=true,failureMinLaps=2', 'formationWaitSign=true,failureMinLaps=0', 'K_202I'),
+    ('202i abandon de toute IA depannee', 'src/engine.lua', 'and (not K.retireBrokenOnly or Incidents.brokenReason(a)~=nil) then st.retirePending', ' then st.retirePending', 'LOCK_RETIRE_BROKEN_ONLY_202'),
+    ('202i formation lancee sans sens mesure', 'src/formation.lua', 'if e.gridCaps~=true or not K.formationWaitSign then', 'if true then', 'LOCK_FORMATION_STANDING_KEPT_202'),
     ('1.42t perte de rythme sans borne', 'src/strategy.lua', 'c.failLoss=p.failureLossPct/100*U.lerp', 'c.failLoss=p.failureLossPct/50*U.lerp', 'STRATEGY_142_FAILURE'),
     ('1.42t accélérateur de panne sans plancher', 'src/strategy.lua', 'max(K.failureThrottleMin,1-loss*K.failureThrottleShare)', '1-loss*4', 'STRATEGY_142_FAILURE'),
     ('1.42t panne d un coup', 'src/strategy.lua', 'local f=U.clamp((now-c.failAt)/max(1,c.failRamp),0,1)', 'local f=1', 'STRATEGY_142_FAILURE'),
@@ -1517,7 +1526,7 @@ MUTATIONS = [
     ('1.45 couleur de fond de CSP revenue', 'manifest.ini', 'PADDING=0,0\n', 'PADDING=0,0\nBACKGROUND_COLOR=SETUP\n', 'WINDOW_EDGE_145'),
     # Beta 1.46 : pont des apps compagnes (SpotterEnginer) : ouvert seulement si l'app est installée, isolé, fermé.
     ('1.46 pont ouvert sans SpotterEnginer', 'src/applier.lua', ' return ok and yes==true\nend\n-- Beta 1.60 : version', ' return true\nend\n-- Beta 1.60 : version', 'INT:Beta 1.46 : pont des apps compagnes'),
-    ('1.46 controle d installation saute', 'AdvancedIA.lua', 'companionPresent=Applier.companionInstalled(companion)\n', 'companionPresent=true\n', 'INT:Beta 1.46 : pont des apps compagnes'),
+    ('1.46 controle d installation saute', 'AdvancedIA.lua', 'do if Applier.companionInstalled(name) then companion=name', 'do if true then companion=name', 'INT:Beta 1.46 : pont des apps compagnes'),  # 2.0.2 : ancre recalee (deux noms)
     ('1.46 pont appele sans port', 'AdvancedIA.lua', ' if released or not bridgePort then return end\n local ok,err=pcall(bridgeWork)\n', ' if released then return end\n local ok,err=pcall(bridgeWork)\n', 'INT:Beta 1.46 : pont des apps compagnes'),
     ('1.46 erreur du pont non isolee', 'AdvancedIA.lua', ' local ok,err=pcall(bridgeWork)\n', ' local ok,err=true,bridgeWork()\n', 'INT:Beta 1.46 : pont des apps compagnes'),
     ('1.46 pont non ferme sur erreur', 'AdvancedIA.lua', "  pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil\n  U.log(engine.log,engine.time or 0,'ERROR'", "  bridgePort=nil\n  U.log(engine.log,engine.time or 0,'ERROR'", 'INT:Beta 1.46 : pont des apps compagnes'),
@@ -3112,7 +3121,7 @@ MUTATIONS = [
     # Beta 1.64 (premier tour de Monza : IA accidentées relancées dans le peloton ; zones dangereuses enregistrées)
     ('164t1 dossier danger refuse', 'src/applier.lua', ' and folder~=K.dangerFolder) then return nil end', ') then return nil end', 'LOCK_DANGER_FILE_SAVE_164'),
     ('164t1 premier tour sans attente', 'src/incidents.lua', 'local wide=t.hotspotPause==true\n', 'local wide=false\n', 'LOCK_LAP1_REJOIN_WAIT_164'),
-    ('164t1 hauteur ignoree', 'src/incidents.lua', ' or wide and behind<=0 and behind>-K.rejoinSideGap then', ' then', 'LOCK_LAP1_REJOIN_WAIT_164'),
+    ('164t1 hauteur ignoree', 'src/incidents.lua', ' or wide and behind<=0 and behind>-K.rejoinSideGap then', ' then', 'LAP1_ALONGSIDE_NEAR_OFF_202'),  # 2.0.2 g : la règle de la file proche couvre aussi ce cas dans le verrou ; test dédié, règle coupée
     ('164v1 portee en temps ignoree', 'src/incidents.lua', 'local far=wide and reach or math.max(reach,math.min(K.rejoinRaceReachMax,b.kmh/3.6*K.rejoinRaceTime))', 'local far=reach', 'LOCK_RACE_REJOIN_TIME_164'),
     ('164v1 portee sans borne', 'src/incidents.lua', 'math.min(K.rejoinRaceReachMax,b.kmh/3.6*K.rejoinRaceTime)', 'b.kmh/3.6*K.rejoinRaceTime', 'LOCK_RACE_REJOIN_TIME_164'),
     ('164v1 attente d avant', 'src/incidents.lua', 'math.max(K.trackRecoverTime,K.rejoinRaceWait)', 'K.trackRecoverTime', 'REJOIN_RACE_WAIT_164V1'),
@@ -3140,7 +3149,7 @@ MUTATIONS = [
     ('164v1 attente bleue pendant l approche', 'src/director.lua', 'if bn.gap<=K.blueCloseGap and bn.sa>=-K.blueSlack then s.blueAiWait=(s.blueAiWait or 0)+dt end', 's.blueAiWait=(s.blueAiWait or 0)+dt', 'LOCK_BLUE_LATE_CLOSE_ONLY_164'),
     ('164t1 lentes ignorees', 'src/incidents.lua', 'local speed=wide and K.rejoinLap1Speed or K.rejoinSpeed', 'local speed=K.rejoinSpeed', 'LOCK_LAP1_REJOIN_WAIT_164'),
     ('164t1 portee ordinaire', 'src/incidents.lua', 'local reach=wide and math.max(p.rejoinGap,K.rejoinLap1Gap) or p.rejoinGap', 'local reach=p.rejoinGap', 'LOCK_LAP1_REJOIN_WAIT_164'),
-    ('164t1 retenue sans attente', 'src/incidents.lua', 'not traffic(frame,i,p,t.hotspotPause==true)) then', 'not traffic(frame,i,p)) then', 'LOCK_LAP1_HOLD_WAIT_164'),
+    ('164t1 retenue sans attente', 'src/incidents.lua', 'not traffic(frame,i,p,t.hotspotPause==true,t)) then', 'not traffic(frame,i,p,nil,t)) then', 'LOCK_LAP1_HOLD_WAIT_164'),  # 2.0.2 g : ancre recalée (t passé à traffic), même logique
     # Beta 1.64 u1 (déboîtement au dernier moment, Monza S12)
     ('164u1 regle coupee', 'src/director.lua', ' local late=K.lastPullEnabled and', ' local late=false and', 'LOCK_LAST_MOMENT_PULLOUT_164'),
     ('164u1 decalage strict', 'src/director.lua', 'and abs(target.lat)<=K.lastPullLat and (a.corner or 1)', 'and abs(target.lat)<=K.towLat and (a.corner or 1)', 'LOCK_LAST_MOMENT_PULLOUT_164'),
@@ -3344,6 +3353,20 @@ MUTATIONS = [
     ('201d devant : descente ordinaire malgre le suiveur', 'src/director.lua', '   rampDecel=min(rampDecel,K.yellowRearDecel)', '   rampDecel=rampDecel', 'LOCK_YELLOW_RAMP_201'),
     ('201d suiveur : enveloppe retardee par la descente', 'src/director.lua', ' if followCap<K.unlimitedSpeed then cmd.yellowLimit=min(cmd.yellowLimit,followCap) end', ' if followCap<K.unlimitedSpeed then cmd.yellowLimit=min(cmd.yellowLimit,max(followCap,U.approach(cmd.yellowLimit,followCap,p.yellowDecel*3.6*dt))) end', 'LOCK_YELLOW_RAMP_201'),
     ('201d suiveur : vitesse de devant ignoree', 'src/director.lua', '    local vf=frame.cars[j].kmh/3.6', '    local vf=a.kmh/3.6', 'LOCK_YELLOW_RAMP_201'),
+    ('202d deux files coupees', 'src/config.lua', 'pairs({startFiles=true,startFilesMax=25,', 'pairs({startFiles=false,startFilesMax=25,', 'LOCK_START_TWO_ABREAST_202'),
+    # 2.0.2 d : '202d deux files sans premier tour attentif' retirée (équivalente : sans « Premier tour attentif », la position de la grille n'est pas lue, src/engine.lua ; couverte par '202d position de la grille non lue').
+    ('202d file rendue sans attendre le freinage', 'src/director.lua', ' if s.filesOn and not s.filesDone then', ' if false then', 'LOCK_START_TWO_ABREAST_202'),
+    ('202d deux files limitees a la fenetre de depart', 'src/director.lua', " elseif profile=='C' and K.startFiles and s.laneActive and s.filesOn", " elseif false and s.laneActive and s.filesOn", 'LOCK_START_TWO_ABREAST_202'),
+    ('202d fusion sans regarder la file', 'src/director.lua', '     if d>-max(K.startFilesGapBack,(c.speed-a.speed)*K.startFilesGapTime) and d<K.startFilesGapAhead then hole=false; break end', '     if false then hole=false; break end', 'LOCK_START_TWO_ABREAST_202'),
+    ('202d jamais de fusion avant le freinage', 'src/director.lua', '   if hole then s.filesDone=true; s.laneSeen=now-K.laneRelease end', '   if false then s.filesDone=true end', 'LOCK_START_TWO_ABREAST_202'),
+    ('202d position de la grille non lue', 'src/engine.lua', '  or K.startFiles and e.run.firstLapCare==true and (not frame.started', '  or false and (not frame.started', 'LOCK_START_TWO_ABREAST_202'),
+    ('202f fenetre de couverture d avant', 'src/config.lua', 'M.K.coverGap=25; M.K.coverLatMax=1.6; M.K.coverAheadMin=80', 'M.K.coverGap=20; M.K.coverLatMax=1.2; M.K.coverAheadMin=120', 'LOCK_COVER_FIRES_202'),
+    ('202f coup de pouce jusqu au freinage', 'src/director.lua', '   and tbAhead and ownBrake<=K.ruleBrake and a.brake<=K.ruleBrake', '   and true', 'LOCK_TOWBOOST_ENDS_202'),
+    ('202f bilan jamais compte', 'src/director.lua', 'local cd=coverDiag(e); cd.cand=cd.cand+1;', 'local cd=coverDiag(e);', 'LOCK_COVER_FIRES_202'),
+    ('202f version Beta refusee', 'src/applier.lua', "VERSION%s*=%s*%a*%s*(%d+)", "VERSION%s*=%s*(%d+)", 'COMPANION_VERSION_PREFIX_202'),
+    ('202g reprise sans la file proche', 'src/incidents.lua', 'if t and K.rejoinNear and j~=i', 'if false and K.rejoinNear and j~=i', 'LOCK_REJOIN_NEAR_QUEUE_202'),
+    ('202g couverture sans point de freinage', 'src/director.lua', 'local ahead=FirstLap.nextPoint(e.fl,a,frame.length) -- cover', 'local ahead=math.huge -- cover', 'LOCK_COVER_BRAKE_POINT_202'),
+    ('202g voiture lente contre un tour d avance', 'src/director.lua', 'leadLaps(frame.cars[front.index],a)>=1)) and front.gap>=0', 'leadLaps(frame.cars[front.index],a)>=9)) and front.gap>=0', 'LOCK_SLOW_CAR_NO_UNLAP_202'),
     ('164s1 voiture suivie meme joueur en piste', 'src/incidents.lua', 'fs<=frame.count and a.pit and p.yellowEnabled', 'fs<=frame.count and p.yellowEnabled', 'LOCK_FOCUS_PANELS_164'),
     # Affinage 1.64 o1 (dépassement en sortie de virage)
     ('164o1 sortie de virage absente', 'src/director.lua', "if s.state=='OVT_ARM' and K.exitPassEnabled and (profile=='C' or pqExit)", "if false and s.state=='OVT_ARM' and K.exitPassEnabled and (profile=='C' or pqExit)", 'LOCK_CORNER_EXIT_PASS_164'),
@@ -3368,6 +3391,20 @@ MUTATIONS = [
     # 2.0.1 a : '164o1 dernier moment coupe' retirée (équivalente : le bloc 2.0.1 a remet lastPullEnabled=false ; voir '201a dernier moment rallume').
     ('164n1 prudence non relevee', 'src/director.lua', 'caution=max(caution,(s.baseCaution or caution)*K.duelConcedeCaution)', 'caution=caution', 'DUEL_CONCEDE_CAUTION_164N1'),
     ('164n1 attente ordinaire', 'src/director.lua', '(concede and K.duelConcedeHold or K.cornerGiveHold)', 'K.cornerGiveHold', 'LOCK_DUEL_CONCEDE_164'),
+    # 2.0.2 c : SpotterEnginer renomme SpotterEngineer : les deux noms reconnus, le nouveau d'abord.
+    ('202c ordre des noms inverse', 'src/config.lua', "M.K.companionNames={'SpotterEngineer','SpotterEnginer'}", "M.K.companionNames={'SpotterEnginer','SpotterEngineer'}", 'INT:LOCK_COMPANION_RENAME_202'),
+    ('202c nouveau nom ignore', 'src/config.lua', "M.K.companionNames={'SpotterEngineer','SpotterEnginer'}", "M.K.companionNames={'SpotterEnginer'}", 'INT:LOCK_COMPANION_RENAME_202'),
+    ('202c ancienne cle oubliee', 'AdvancedIA.lua', " if text==nil or text=='' then text=Applier.loadText(old) end return text end", " return text end", 'INT:LOCK_COMPANION_RENAME_202'),
+    ('202c nouvelle cle ignoree', 'AdvancedIA.lua', "local function seText(key,old) local text=Applier.loadText(key);", "local function seText(key,old) local text=nil;", 'INT:LOCK_COMPANION_RENAME_202'),
+    ('202c nom trouve ignore', 'AdvancedIA.lua', 'then companion=name; companionPresent=true; break end end', 'then companionPresent=true; break end end', 'INT:LOCK_COMPANION_RENAME_202'),
+    # 2.0.2 j : taille du texte de la fenêtre et interrupteur général des bips (demandes des joueurs).
+    ('202j echelle ignoree', 'src/widgets.lua', " f.s=math.max(0.5,math.min(u,space.x/W.minWidth))", " f.s=math.max(0.5,math.min(1,space.x/W.minWidth))", 'INT:LOCK_UI_SCALE_202'),
+    ('202j echelle non posee', 'src/ui.lua', " W.userScale=e.g.windowScale or 1", " W.userScale=1", 'INT:LOCK_UI_SCALE_202'),
+    ('202j fenetre jamais agrandie', 'AdvancedIA.lua', "host.windowScaleSeen=globals.windowScale; Applier.scaleWindow(", "host.windowScaleSeen=globals.windowScale; local _=(", 'INT:LOCK_UI_SCALE_202'),
+    ('202j borne de taille absente', 'src/config.lua', "M.globalBounds.windowScale={1,1.5}", "M.globalBounds.windowScale={0.5,3}", 'INT:LOCK_UI_SCALE_202'),
+    ('202j bip DRS jamais coupe', 'src/applier.lua', " a.beepServed=d.beepId\n if muted then return end", " a.beepServed=d.beepId", 'INT:LOCK_SOUNDS_SWITCH_202'),
+    ('202j bip delta jamais coupe', 'src/applier.lua', " a.deltaServed=d.beepId\n if muted then return end", " a.deltaServed=d.beepId", 'INT:LOCK_SOUNDS_SWITCH_202'),
+    ('202j interrupteur non lu', 'AdvancedIA.lua', " local muted=globals.appSounds==false", " local muted=false", 'INT:LOCK_SOUNDS_SWITCH_202'),
 ]
 
 

@@ -2,6 +2,55 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 2.0.2 — November 2026
+
+Livelier racing between the AI, built on your feedback and on many test races. Thanks a lot for the logs and videos!
+
+### Overtaking and slipstream
+- **Real pace differences in races.** Tyre wear, compound and fuel load now weigh more on each AI's pace in the race, and
+  start strategies are offset, so a car on fresher tyres really catches a car on worn ones. Bounded, and practice,
+  qualifying and track days are unchanged.
+- **A real tow between AI.** Assetto Corsa's slipstream setting only affects your own car, so on its own the AI barely
+  gain anything behind another car. The app now gives an AI that sits in the tow on a straight a small, bounded extra pace
+  (straights only, ending well before the braking zone, never under yellow). The session log notes AC's slipstream
+  setting at the start.
+- **Pull-out at the right moment.** The AI line up right behind in the tow and pull out at the slingshot point, late
+  enough to keep the tow and early enough to get alongside before braking, instead of in the middle of the straight.
+- **Attacks that don't give up too early.** An attacker no longer drops back as soon as the car ahead is briefly faster.
+- **No more hesitating behind a slow car.** Any clearly slow car ahead, or a car that moved aside, is passed on the free
+  side at the first safe chance, never at a braking point and never squeezing it. A car that is a lap ahead is never
+  targeted.
+- **The car that caused a yellow can be passed.** Under a local yellow, an AI may now pass the car that caused it (off
+  track, spun or just rejoining) on the far side, as in real racing. Never under a safety car, VSC, FCY or red flag, and
+  a car driving normally under someone else's yellow is still not passed. A car that rejoins and drives cleanly is no
+  longer avoided at reduced speed after 1.6 s.
+- **The anticipated defence now really triggers.** The car ahead covers the inside with a single move before the braking
+  zone when a faster car sits in its tow; the distance to the braking point now comes from the learned braking points.
+
+### Starts and incidents
+- **Two abreast at the start.** After the lights, every AI keeps the side of its grid slot down the first straight and
+  only merges onto the racing line, in order, near the first braking zone, so the back of the field no longer runs in a
+  single file on one side.
+- **Crashed AI wait for the queue.** An AI that crashed waits for the cars stopped or crawling just behind it before
+  rejoining, which removes the low-speed bumping in a queue under yellow.
+- **No more retirements of undamaged AI.** Since 2.0.0, every AI towed in a race retired, even without damage, so cars
+  stopped and never came back. Now only a really broken car (engine, suspension or gearbox) retires; an undamaged car is
+  repaired and rejoins. No progressive failure before two laps are completed.
+- **Standing start after a formation lap kept** on a fresh install, where it could switch to a rolling start.
+
+### Settings window
+- **Window text size** (100 to 150 %) in SETTINGS › ADVANCED › Overlay › Interface. The window grows with it.
+- **App sounds (beeps)**: one switch in the same place turns every beep of the app off.
+- The tooltip of the built-in preset for the detected session now explains how to keep your own settings.
+
+### Companion apps
+- **SpotterEngineer** (formerly SpotterEnginer) is recognised under both names: its folder, its pit plan, its strategy and
+  its update state. The bridge format does not change. Use SpotterEngineer Beta 2.1.1 or later.
+- A companion version written as « Beta x.y.z » is now read correctly.
+
+### Verification
+1491 unit checks, 190 integration cases, 3245 of 3245 mutations detected, endurance run with 0 errors, package accepted by the in-game updater from 2.0.1, 2.0.0, 1.63, 1.62, 1.59.1 and 1.58, and the real in-game update from 1.62 and from 2.0.1 checked with the fonts held open as in the game.
+
 ## Beta 2.0.1 — November 2026
 
 A fix-up release, built on your feedback on 2.0.0. Thanks a lot for the reports and logs!

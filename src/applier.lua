@@ -236,6 +236,22 @@ function M.compactWindow(a,target)
  end
  return true
 end
+-- 2.0.2 j : taille du texte de la fenêtre changée par le joueur : fenêtre agrandie (jamais réduite) à la taille compacte
+-- multipliée par l'échelle, pour que le texte grossisse sans rien couper. Renvoie true si fait ou impossible.
+function M.scaleWindow(a,target,scale)
+ if not callable(ac.accessAppWindow) or type(scale)~='number' or type(target)~='table' and type(target)~='cdata' then return true end
+ local ok,w=pcall(ac.accessAppWindow,'IMGUI_LUA_AdvancedIA_main')
+ if not ok or not w then return true end
+ local good,size=pcall(function() return w:size() end)
+ if not good or not size then return true end
+ local tx,ty=math.max(size.x,target.x),math.max(size.y,target.y)
+ if tx>size.x+1 or ty>size.y+1 then
+  -- Taille visée : vecteur fourni par l'interface (taille compacte x échelle), jamais réduit sous la taille actuelle.
+  local done=pcall(function() target.x=tx; target.y=ty; w:resize(target) end)
+  note(a,'INFO',string.format('fenetre de reglages %s pour le texte x%.1f: %.0f x %.0f -> %.0f x %.0f',done and 'agrandie' or 'non agrandie',scale,size.x,size.y,tx,ty),-1)
+ end
+ return true
+end
 function M.baselines(a,frame)
  for i=1,frame.count do
   local car,s=frame.cars[i],a.cars[i]; local known=s.owned and s.id==(car.identity or car.id)
@@ -988,9 +1004,10 @@ function M.penalty(a,frame,t)
 end
 -- Bip « DRS disponible » : fichier son de l'app, joué sans effet 3D ; un événement par bip, le précédent libéré.
 local function disposeBeep(a) if a.beepEvent then pcall(function() a.beepEvent:dispose() end); a.beepEvent=nil end end
-function M.beep(a,frame,d)
+function M.beep(a,frame,d,muted)
  if d.beepId==(a.beepServed or 0) then return end
  a.beepServed=d.beepId
+ if muted then return end
  if frame.online or frame.replay or frame.paused or not ac.AudioEvent or not callable(ac.dirname) then return end
  disposeBeep(a)
  local ok,event=pcall(ac.AudioEvent.fromFile,{filename=ac.dirname()..'/'..K.drsBeepFile,use3D=false,loop=false},false)
@@ -1009,9 +1026,10 @@ function M.beep(a,frame,d)
 end
 -- Bips du temps delta : fichier son de l'app, un seul événement créé une fois et relancé à chaque bip (jusqu'à
 -- plusieurs par seconde), même niveau quelle que soit la caméra, canal principal.
-function M.deltaBeep(a,frame,d)
+function M.deltaBeep(a,frame,d,muted)
  if d.beepId==(a.deltaServed or 0) then return end
  a.deltaServed=d.beepId
+ if muted then return end
  if frame.online or frame.replay or frame.paused or a.deltaFailed or not ac.AudioEvent or not callable(ac.dirname) then return end
  if not a.deltaEvent then
   local ok,event=pcall(ac.AudioEvent.fromFile,{filename=ac.dirname()..'/'..K.deltaBeepFile,use3D=false,loop=false},false)
@@ -1617,7 +1635,8 @@ function M.manifestVersion(text)
   local section=line:match('^%s*%[([^%]]+)%]')
   if section then about=section:upper()=='ABOUT'
   elseif about then
-   local a,b,c=line:match('^%s*VERSION%s*=%s*(%d+)%.(%d+)%.(%d+)%s*$')
+   -- 2.0.2 f : un mot devant le numéro est toléré (« VERSION=Beta 2.1.0 » de SpotterEngineer).
+   local a,b,c=line:match('^%s*VERSION%s*=%s*%a*%s*(%d+)%.(%d+)%.(%d+)%s*$')
    if a then return {tonumber(a),tonumber(b),tonumber(c)} end
   end
  end

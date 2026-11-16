@@ -52,14 +52,16 @@ tests.ABORT_SLOW_REAL_ESCAPE_160X=function()
  for _,profile in ipairs({'C','P'}) do
   local e,f,s=attempt(profile,12)
   local t,gap=0,12
-  while t<K.abortSlowTime+4 do
+  -- Affinage 2.0.2 : en course, la cible doit s'échapper K.abortSlowTimeRace s.
+  local lim=profile=='C' and K.abortSlowTimeRace or K.abortSlowTime
+  while t<lim+4 do
    gap=gap+10/3.6/60
    F.place(f,2,0,150,2); F.place(f,3,gap+4.4,160); s.nextPerception=0; s.passProgRef=gap; s.passProgTime=0
    F.tick(e,f,1/60); t=t+1/60
    if s.reason=='abort_slow' then break end
   end
   assert(s.reason=='abort_slow',profile..': target 10 km/h faster at a steady speed: ends « target faster » ('..tostring(s.reason)..')')
-  assert(t>K.abortSlowTime-0.1 and t<K.abortSlowTime+2,'after about K.abortSlowTime s, got '..t)
+  assert(t>lim-0.1 and t<lim+2,'after about the abort time, got '..t)
  end
 end
 -- Le compte attend l'écart en temps, il ne repart pas de zéro : dès que l'écart a grandi, l'abandon est immédiat.
@@ -67,7 +69,7 @@ tests.ABORT_SLOW_WAITS_160X=function()
  local e,f,s=attempt('C',12)
  for _=1,60 do F.place(f,2,0,150,2); F.place(f,3,12+4.4,151); s.nextPerception=0; F.tick(e,f,1/60) end
  assert(s.reason~='abort_slow' and s.abortSlow>0 and s.abortSlow<=K.abortSlowTime,'1 km/h faster for 1 s: counted, held at the threshold at most')
- s.passTg=s.passMinTg+K.abortTgGrowRace-1e-6; s.abortSlow=K.abortSlowTime -- affinage 1.61 : seuil de la course
+ s.passTg=s.passMinTg+K.abortTgGrowRace-1e-6; s.abortSlow=K.abortSlowTimeRace -- affinage 1.61 : seuil de la course (2.0.2 : durée de la course)
  F.place(f,2,0,150,2); F.place(f,3,12+4.4,160); s.nextPerception=0; F.tick(e,f,1/60); F.tick(e,f,1/60)
  assert(s.reason=='abort_slow','time gap grown past K.abortTgGrowRace with the count full: ends at once ('..tostring(s.reason)..')')
 end

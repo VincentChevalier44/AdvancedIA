@@ -2938,7 +2938,7 @@ return function(source)
   -- Absent : aucune structure partagée, aucun travail du pont à chaque image.
   launch(false); H.tick(HOST,3)
   assert(#connected==0 and beats==0 and pubs==0 and HUMANAI.bridgePort()==nil,'absent: nothing opened or computed')
-  assert(logged('pont des apps compagnes: SpotterEnginer absent, pont inactif'),'absent: one journal line')
+  assert(logged('pont des apps compagnes: SpotterEngineer absent, pont inactif'),'absent: one journal line')
   local callsAbsent,timeAbsent=HOST.calls,HUMANAI.engine.time
   -- Présent : deux structures (hello, data), battement et état publiés à chaque image ; commandes identiques.
   launch(true); H.tick(HOST,3)
@@ -4109,9 +4109,9 @@ return function(source)
   HOST.values['SpotterEnginer.strategy']='v=1;mode=undercut;rival=2;gain=1.2;lap=3;stamp=5'
   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
   E.changed(e); H.tick(HOST,3)
-  print(string.format('1.60 SpotterEnginer strategy: mode %s, target %s, %d line(s), published %s',tostring(e.incidents.seStrategyMode),tostring(e.incidents.seStrategyTarget),lines156(e,'SpotterEnginer strategie: undercut'),tostring(HOST.values['AdvancedIA.strategy'])))
+  print(string.format('1.60 SpotterEnginer strategy: mode %s, target %s, %d line(s), published %s',tostring(e.incidents.seStrategyMode),tostring(e.incidents.seStrategyTarget),lines156(e,'SpotterEngineer strategie: undercut'),tostring(HOST.values['AdvancedIA.strategy'])))
   assert(e.incidents.seStrategyMode=='undercut' and e.incidents.seStrategyTarget~='','advice read by the host and shown')
-  assert(lines156(e,'SpotterEnginer strategie: undercut')==1,'one journal line')
+  assert(lines156(e,'SpotterEngineer strategie: undercut')==1,'one journal line')
   assert(HOST.values['AdvancedIA.strategy']==nil,'strategySmart off: our key is never written')
   for i=2,4 do assert(not e.commands[i].rulePit,'no AI reacts to the advice') end
   e.profiles.C.strategyEnabled=true; e.profiles.C.strategySmart=true; E.changed(e); H.tick(HOST,3)
@@ -4120,6 +4120,44 @@ return function(source)
   local writes=HOST.storeWrites; H.tick(HOST,3)
   assert(HOST.values['AdvancedIA.strategy']==text,'same numbers: not rewritten')
   assert(writes>=0)
+ end)
+ -- 2.0.2 : SpotterEnginer renommé SpotterEngineer : les deux dossiers reconnus (nouveau d'abord), clés annexes lues sous
+ -- le nouveau préfixe d'abord puis sous l'ancien, clé de mise à jour et fenêtre suivent le nom trouvé.
+ check('LOCK_COMPANION_RENAME_202 : SpotterEngineer et SpotterEnginer reconnus (dossier, clés, fenêtre), nouveau nom d abord',function()
+  local sep=string.char(92)
+  local function launch(folders,values)
+   if HUMANAI then HOST.releasing=true; HUMANAI.release(); HOST.releasing=false end
+   HOST=H.create(true)
+   ac.FolderID.ACAppsLua=1029; local getFolder=ac.getFolder
+   ac.getFolder=function(id) if id==1029 then return 'appslua' end return getFolder(id) end
+   for _,f in ipairs(folders) do HOST.files['appslua'..sep..f..sep..'manifest.ini']='[ABOUT]' end
+   for k,v in pairs(values) do HOST.values[k]=v end
+   assert(loadstring(source))(); local e=HUMANAI.engine; course161(e.profiles.C); e.g.autoProfile=false; e.g.manualProfile='C'
+   E.changed(e); H.tick(HOST,3); return e
+  end
+  local function windowOpened()
+   local name; local acc=ac.accessAppWindow
+   ac.accessAppWindow=function(n) name=n; return {setVisible=function() end} end
+   HUMANAI.host.openCompanion(); ac.accessAppWindow=acc; return name
+  end
+  -- Nouveau nom seul : pont ouvert, conseil lu sous SpotterEngineer.strategy, fenêtre IMGUI_LUA_SpotterEngineer_main.
+  local e=launch({'SpotterEngineer'},{['SpotterEngineer.strategy']='v=1;mode=undercut;rival=2;gain=1.2;lap=3;stamp=5',['SpotterEngineer.update']='v=1;installed=2.1.0;latest=2.2.0;state=available'})
+  assert(lines156(e,'pont des apps compagnes: version de SpotterEngineer illisible')==1,'new folder: detected under the new name')
+  assert(e.incidents.seStrategyMode=='undercut','new folder: advice read under the new key')
+  assert(windowOpened()=='IMGUI_LUA_SpotterEngineer_main','new folder: its window')
+  local up=HUMANAI.host.companionUpdate; assert(up and up.installed=='2.1.0','new folder: update state read under SpotterEngineer.update')
+  -- Ancien nom seul : tout marche comme avant (ancienne clé, ancienne fenêtre).
+  e=launch({'SpotterEnginer'},{['SpotterEnginer.strategy']='v=1;mode=overcut;rival=2;gain=1.2;lap=3;stamp=5'})
+  assert(lines156(e,'pont des apps compagnes: version de SpotterEnginer illisible')==1 and e.incidents.seStrategyMode=='overcut','old folder: detected, old key read')
+  assert(windowOpened()=='IMGUI_LUA_SpotterEnginer_main','old folder: old window')
+  -- Les deux dossiers et les deux clés : le nouveau nom gagne.
+  e=launch({'SpotterEnginer','SpotterEngineer'},{['SpotterEnginer.strategy']='v=1;mode=overcut;rival=2;gain=1.2;lap=3;stamp=5',['SpotterEngineer.strategy']='v=1;mode=undercut;rival=2;gain=1.2;lap=3;stamp=5'})
+  assert(e.incidents.seStrategyMode=='undercut','both: new key preferred')
+  assert(windowOpened()=='IMGUI_LUA_SpotterEngineer_main','both: new window')
+  -- Aucun des deux : pont inactif, une ligne au nouveau nom.
+  e=launch({},{})
+  assert(HUMANAI.bridgePort()==nil and lines156(e,'pont des apps compagnes: SpotterEngineer absent')==1,'none: bridge inactive, new name in the journal')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
  -- Beta 1.60 E
  check('INT160E depart: raceStart standing = rien ne change ; tour de formation annonce, puis depart lance',function()
@@ -4369,6 +4407,51 @@ return function(source)
   assert(HOST.files[aside]=='garbage' and HOST.files[path]~=nil,'the next save writes a new file, the refused one is kept')
   e=boot(TF.build('t',{kind='zones',track='imola',layout='',length=10000,serial=3},{{name='zone.1',kind='attack',from=0.3,to=0.34,source='user'}}))
   assert(lines156(e,'zones: fichier refuse (circuit)')==1 and not e.zones.extra,'file of another track rejected')
+ end)
+ -- 2.0.2 j (demandes des joueurs sur Overtake) : taille du texte de la fenêtre de réglages (réglage global windowScale).
+ check('LOCK_UI_SCALE_202 : taille du texte de la fenetre gardee, bornee, appliquee au dessin, 1.0 inchange',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
+  local e=HUMANAI.engine; local g=e.g; local W=require('src/widgets'); H.tick(HOST,0.5)
+  assert(g.windowScale==1 and C.globalDefaults.windowScale==1,'default 1.0')
+  HOST.space={x=1000,y=780}; pause(true); main()
+  local r0=HOST.resizes; main(); assert(math.abs(W.frame().s-1)<1e-9 and HOST.resizes==r0,'default: same scale as before, no resize for the text at launch')
+  -- Taille changée : fenêtre agrandie une fois (taille compacte x 1,3), texte agrandi d'autant.
+  g.windowScale=1.3; main()
+  assert(HOST.resizes==r0+1 and math.abs(HOST.mainWindow.x-1170)<0.5 and math.abs(HOST.mainWindow.y-910)<0.5,'window grown to 1170 x 910')
+  HOST.space={x=1170,y=910}; main(); assert(math.abs(W.frame().s-1.3)<1e-9 and HOST.resizes==r0+1,'text drawn at 1.3x, no second resize')
+  -- Fenêtre trop étroite : réduite comme avant (jamais plus grand que la place).
+  HOST.space={x=900,y=700}; main(); assert(math.abs(W.frame().s-1)<1e-9,'narrow window: fits')
+  -- Bornes : valeurs hors plage ramenées au défaut.
+  local out=C.validateGlobals({windowScale=3}); assert(out.windowScale==1,'above 1.5 refused')
+  out=C.validateGlobals({windowScale=0.5}); assert(out.windowScale==1,'below 1.0 refused')
+  out=C.validateGlobals({windowScale=1.5}); assert(out.windowScale==1.5,'1.5 kept')
+  -- Retour à 1,0 : jamais de réduction de la fenêtre.
+  g.windowScale=1; HOST.space={x=1000,y=780}; main(); assert(HOST.resizes==r0+1 and math.abs(W.frame().s-1)<1e-9,'back to 1.0: window never shrunk')
+  -- Réglage de la fenêtre (onglet du profil, section Overlay) : curseur dessiné.
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ -- 2.0.2 j : interrupteur général des bips de l'app (DRS et delta), vrai par défaut.
+ check('LOCK_SOUNDS_SWITCH_202 : bips de l app coupes par l interrupteur general, consommes sans son',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
+  local e=HUMANAI.engine; local g=e.g; course161(e.profiles.C); E.changed(e); H.tick(HOST,0.5)
+  assert(g.appSounds==true and C.globalDefaults.appSounds==true,'on by default')
+  local A=require('src/applier'); local host=HUMANAI.host
+  local played=HOST.played
+  e.drs.beepId=e.drs.beepId+1; A.beep(host,e.frame,e.drs,false); assert(HOST.played==played+1,'DRS beep played when on')
+  e.deltaBeep.beepId=e.deltaBeep.beepId+1; A.deltaBeep(host,e.frame,e.deltaBeep,false); assert(HOST.played==played+2,'delta beep played when on')
+  -- Coupé : bips consommés sans son ; rallumé : l'ancien bip n'est jamais rejoué.
+  g.appSounds=false; played=HOST.played
+  e.drs.beepId=e.drs.beepId+1; e.deltaBeep.beepId=e.deltaBeep.beepId+1; H.tick(HOST,0.2)
+  assert(HOST.played==played,'no sound with the switch off')
+  assert(host.beepServed==e.drs.beepId and host.deltaServed==e.deltaBeep.beepId,'beeps consumed')
+  g.appSounds=true; H.tick(HOST,0.2); assert(HOST.played==played,'old beep never replayed')
+  e.drs.beepId=e.drs.beepId+1; H.tick(HOST,0.2); assert(HOST.played==played+1,'new beep played again')
+  local out=C.validateGlobals({appSounds='x'}); assert(out.appSounds==true,'invalid value: default')
+  -- Interrupteur dessiné dans la section Overlay (rubrique Interface), avec son curseur de taille ; clic : coupé.
+  HOST.space={x=1000,y=3000}; pause(true); section('overlay')
+  assert(drawn('window_scale') and drawn('app_sounds'),'interface settings drawn in the Overlay section')
+  press('app_sounds'); assert(g.appSounds==false,'switch toggles the setting')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
  C.globalDefaults.presetBySession=presetDefault
  return results

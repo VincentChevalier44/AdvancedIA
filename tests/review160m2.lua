@@ -348,9 +348,9 @@ tests.SE_STRATEGY_REAL_EXAMPLES_160M2=function()
   E.seStrategy(e,f,player,100+k)
   assert(e.incidents.seStrategyMode=='undercut' and e.incidents.seStrategyTarget=='Driver_5','shown every second while the stamp advances')
  end
- assert(count(e,'SpotterEnginer strategie: undercut')==1,'one journal line for 21 stamps: '..count(e,'SpotterEnginer strategie: undercut'))
+ assert(count(e,'SpotterEngineer strategie: undercut')==1,'one journal line for 21 stamps: '..count(e,'SpotterEngineer strategie: undercut'))
  e.seStrategy.raw='v=1;mode=cover;rival=3;gain=-1.0;lap=12;stamp=144'; E.seStrategy(e,f,player,121)
- assert(count(e,'SpotterEnginer strategie: cover (rival Driver_4, tour 12, gain -1.0 s')==1,'new line when the mode and the rival change')
+ assert(count(e,'SpotterEngineer strategie: cover (rival Driver_4, tour 12, gain -1.0 s')==1,'new line when the mode and the rival change')
  -- Stamp figé : oublié après K.seStrategyStale s.
  E.seStrategy(e,f,player,121+K.seStrategyStale+0.5); assert(e.incidents.seStrategyMode=='','stale after 6 s without a new stamp')
  e.seStrategy.raw='v=1;mode=none;rival=-1;gain=-1.0;lap=0;stamp=160'; E.seStrategy(e,f,player,140); assert(e.incidents.seStrategyMode=='','mode none: nothing shown')

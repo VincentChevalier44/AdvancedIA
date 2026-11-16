@@ -314,7 +314,9 @@ end
 -- Pont vers les apps compagnes (Beta 1.46, src/bridge.lua) : ouvert plus bas seulement si l'app lectrice est installée ;
 -- fermé au déchargement (les lecteurs passent à « absent » aussitôt).
 local bridge,bridgePort=nil,nil
-local companion='SpotterEnginer'
+-- 2.0.2 : SpotterEnginer renommé SpotterEngineer (15 novembre 2026) : les deux dossiers sont reconnus, le nouveau nom
+-- d'abord ; le nom trouvé au lancement règle aussi sa clé de mise à jour et sa fenêtre de réglages.
+local companion=K.companionNames[1]
 -- Beta 1.52 : sa mise à jour, signalée à l'accueil (clé publiée par lui, fenêtre de réglages ID=main de son manifeste).
 local companionKey,companionWindow=companion..'.update','IMGUI_LUA_'..companion..'_main'
 local companionPresent,companionAt=false,-math.huge
@@ -326,6 +328,8 @@ local sePlanAt=-math.huge
 local strategyPublished=''
 local sidePublished={} -- Beta 1.61 : dernier texte écrit de chaque clé annexe (engine.sideText)
 host.openCompanion=function() return Applier.openCompanion(companionWindow) end
+-- 2.0.2 : clé annexe de SpotterEngineer lue sous son nouveau nom d'abord, puis sous l'ancien (SpotterEnginer).
+local function seText(key,old) local text=Applier.loadText(key); if text==nil or text=='' then text=Applier.loadText(old) end return text end
 local function release()
  if released then return end
  if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil; if sessionKey.logged then pcall(Applier.storeText,SessionKey.key,SessionKey.closedText) end end
@@ -456,11 +460,11 @@ local function update(dt)
  if companionPresent and menuClock>=sePlanAt then
   sePlanAt=menuClock+K.sePlanPeriod
   local plan=engine.sePlan; if not plan then plan={}; engine.sePlan=plan end
-  plan.raw=Applier.loadText(K.sePlanKey)
+  plan.raw=seText(K.sePlanKey,K.sePlanKeyOld)
   -- Beta 1.60 (tranche D) : conseil de stratégie de SpotterEnginer (lecture seule, affichage et journal) ; temps perdu
   -- aux stands appris publié pour lui (réglage strategySmart ; écrit seulement quand le texte change).
   local advice=engine.seStrategy; if not advice then advice={}; engine.seStrategy=advice end
-  advice.raw=Applier.loadText(K.seStrategyKey)
+  advice.raw=seText(K.seStrategyKey,K.seStrategyKeyOld)
   local text=engine.pitloss.text
   if text~='' and text~=strategyPublished then strategyPublished=text; Applier.storeText(K.strategyPubKey,text) end
   -- Beta 1.61 : autres clés annexes pour SpotterEnginer (trafic, météo), mêmes règles : écrites quand le texte change.
@@ -697,8 +701,10 @@ local function update(dt)
  local flagValue,flagReason=Lights.output(engine.lights,engine.incidents,lightsOn)
  Applier.flag(host,frame,flagValue,flagReason,lightsOn and engine.time or nil,engine.run.lightsHold,engine.time)
  Applier.penalty(host,frame,engine.penalties)
- Applier.beep(host,frame,engine.drs)
- Applier.deltaBeep(host,frame,engine.deltaBeep)
+ -- 2.0.2 j : interrupteur général des bips (réglage global appSounds) : bips consommés sans son.
+ local muted=globals.appSounds==false
+ Applier.beep(host,frame,engine.drs,muted)
+ Applier.deltaBeep(host,frame,engine.deltaBeep,muted)
  Applier.drs(host,frame,engine.commands,engine.time)
  announce()
  local periodic=engine.time-lastCheckpoint>=K.saveDelay
@@ -751,7 +757,8 @@ HUMANAI={engine=engine,host=host,release=release,updater=updater,port=port,panel
 -- (ac.connect), après update(), même moteur arrêté (pause, replay, en ligne, app coupée : la raison est publiée). Sans
 -- lui : rien n'est ouvert ni calculé, une ligne au journal. Lecture seule du moteur ; une erreur coupe le pont seul (une
 -- ligne au journal), jamais le moteur ni l'interface.
-companionPresent=Applier.companionInstalled(companion)
+for _,name in ipairs(K.companionNames) do if Applier.companionInstalled(name) then companion=name; companionPresent=true; break end end
+companionKey,companionWindow=companion..'.update','IMGUI_LUA_'..companion..'_main'
 setupLabPresent=Applier.companionInstalled('SetupLab')
 -- Beta 1.63 (accord avec SuperHUD) : pont ouvert aussi pour SuperHUD, lecteur en lecture seule de la structure v1.
 local superHudPresent=Applier.companionInstalled('SuperHUD')
@@ -879,17 +886,25 @@ local function timedUI(fn,place)
  -- Correctif 1.61 : texte absent dessiné vide (src/widgets.lua), appelant noté une fois.
  if Widgets.missing and not missingNoted then missingNoted=true; U.log(engine.log,engine.time,'WARN','interface: texte absent ('..Widgets.missing..')',-1) end
 end
+-- 2.0.2 j : taille du texte changée : fenêtre agrandie une fois (pas au lancement : la taille gardée par AC est respectée).
+local function windowScaleCheck()
+ if host.windowScaleSeen==nil then host.windowScaleSeen=globals.windowScale
+ elseif host.windowScaleSeen~=globals.windowScale then host.windowScaleSeen=globals.windowScale; Applier.scaleWindow(host,UI.scaledSize(globals.windowScale),globals.windowScale) end
+end
 function script.HUMANAI__MAIN()
  script.HUMANAI__MENU()
  if host.menuVisible then
   panel.ingame=false; panel.ingameFull=false
   -- Une seule fois : fenêtre ramenée à la taille compacte (Beta 1.14), puis la taille du pilote est respectée.
   if not globals.windowCompacted and Applier.compactWindow(host,UI.compactSize()) then globals.windowCompacted=true; dirty() end
+  -- 2.0.2 j : taille du texte changée : fenêtre agrandie une fois (pas au lancement : la taille gardée par AC est respectée).
+  windowScaleCheck()
   timedUI(UI.main)
  -- Affinage 1.64 i1 (décision du pilote) : fenêtre ouverte en jeu par le joueur (barre des apps d'AC) : vue compacte,
  -- vue complète à la demande ; rien n'est dessiné ni calculé tant qu'elle est fermée.
  elseif Applier.windowOpenInGame(host) then
   panel.ingame=true
+  windowScaleCheck()
   timedUI(UI.main)
  end
 end

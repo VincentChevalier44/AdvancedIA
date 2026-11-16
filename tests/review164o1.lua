@@ -11,7 +11,7 @@ local tests={}
 
 -- Attaquant 2 à gap m derrière la cible 3 (décalée de lat m), rattrapée de sa km/h ; virage pendant cornerTime s puis
 -- ligne droite ; point de freinage connu à 2000 m.
-local function scene(lat,gap,sa,cornerTime,target)
+local function scene(lat,gap,sa,cornerTime,target,brakeAt)
  local e,f=F.scene('C',4); local p=e.profiles.C
  p.personalLineJitter=0; p.lapseEnabled=false; p.pressureEnabled=false; p.passAid=false; p.startDelay=0; p.startRelax=0
  E.changed(e); F.tick(e,f,0.2)
@@ -25,7 +25,7 @@ local function scene(lat,gap,sa,cornerTime,target)
   local yaw=t<cornerTime and 1.5 or 0
   f.cars[2].yawRate=yaw; f.cars[target].yawRate=yaw
   F.place(f,2,0,150+sa,0); F.place(f,target,gap+4.4,150,lat); s.nextPerception=0
-  e.fl.points={(f.cars[2].spline+2000/f.length)%1}; e.fl.count=1
+  e.fl.points={(f.cars[2].spline+(brakeAt or 2000)/f.length)%1}; e.fl.count=1
   F.tick(e,f,1/60); t=t+1/60
   if s.state=='OVT_IN' then pulled=true; break end
  end
@@ -49,6 +49,9 @@ tests.LOCK_CORNER_EXIT_PASS_164=function()
   -- Pas de virage récent, rapprochement trop faible, trop loin : jamais par cette règle.
   local _,e4=scene(lat,10,31,0); assert((e4.stats.exitPass or 0)==0,lat..': no recent corner')
   local _,e5=scene(lat,10,5,0.5); assert((e5.stats.exitPass or 0)==0,lat..': too little closing')
+  -- 2.0.2 (recalage des mutations) : près du freinage, la garde « pas en milieu de ligne droite » (towTooEarly) ne joue
+  -- plus et ne cache plus le seuil de rapprochement : à +5 km/h, toujours jamais par cette règle.
+  local _,e5b=scene(lat,10,5,0.5,nil,250); assert((e5b.stats.exitPass or 0)==0,lat..': too little closing, near the braking point')
   local _,e6=scene(lat,K.exitPassGap+8,31,0.5); assert((e6.stats.exitPass or 0)==0,lat..': too far')
  end
  -- Cible à peine décalée (0,4 m, les deux côtés libres) : le premier côté essayé est bien l'opposé de la cible (verrou

@@ -839,7 +839,7 @@ D.overlayBehaviourKeys={'overlayClickThrough','overlayHideReplay','overlayHidePi
 D.desk=require('src/desktops')
 D.overlayResetKeys={'overlayX','overlayY','overlayScale','overlayLocked','overlayBackground','overlayContent','panelOpacity','panelShow','panelInfoTime',
  'overlayEnabled','overlaySession','overlayExplain','overlayRecap','overlayNativeBox','overlayMessages','overlayBlockMessages','cspHideMessages','cspHideFlags','cspMessagesLost',
- 'overlayClickThrough','overlayHideReplay','overlayHidePits','overlayDesk1','overlayDesk2','overlayDesk3','overlayDesk4','overlayLayout','overlayParts'}
+ 'overlayClickThrough','overlayHideReplay','overlayHidePits','overlayDesk1','overlayDesk2','overlayDesk3','overlayDesk4','overlayLayout','overlayParts','windowScale','appSounds'}
 -- Affinage 1.64 u2 (demande du pilote : chaque élément de l'overlay affiché sur un bureau et pas sur un autre, à sa place) :
 -- une ligne par élément : interrupteur « sur ce bureau » et bouton « Replacer » (affiché, à sa place par défaut) ;
 -- « Tout replacer sur ce bureau » en dessous. Bureau illisible : message seulement. Renvoie le y suivant.
@@ -928,6 +928,14 @@ local function overlayBlock(v,e,x,y,w)
  yl=yl+46
  if v.infoFor~=g.panelInfoTime then v.infoFor=g.panelInfoTime; v.infoText=g.panelInfoTime>0 and string.format('%.0f',g.panelInfoTime) or L.overlayInfoAlways end
  yl=yl+globalSlider(v,g,'panel_info_time','panelInfoTime',L.overlayInfoTime,v.infoText,x,yl,cw,K.panelInfoStep,tips.panelInfoTime)
+ -- 2.0.2 j (demandes des joueurs) : taille du texte de la fenêtre et interrupteur général des bips de l'app.
+ yl=yl+8
+ if W.visible(yl,24) then W.heading(L.subgroups.interface[1],x,yl,cw,L.subgroups.interface[2]) end
+ yl=yl+30
+ if v.windowScaleFor~=g.windowScale then v.windowScaleFor=g.windowScale; v.windowScaleText=number(g.windowScale)..'×' end
+ yl=yl+globalSlider(v,g,'window_scale','windowScale',L.windowScale,v.windowScaleText,x,yl,cw,K.windowScaleStep,tips.windowScale)
+ if W.visible(yl,28) then globalSwitch(v,g,'app_sounds','appSounds',L.appSounds,x,yl,cw,tips.appSounds) end
+ yl=yl+28
  -- Contenu, affichages d'AC, comportement (seconde colonne).
  local rx=two and x+cw+18 or x
  if not two then yr=yl+8 end
@@ -2344,6 +2352,8 @@ local function diagnosticTab(v,e,host)
 end
 -- Taille compacte de la fenêtre de réglages (Beta 1.14), pour l'applicateur.
 function M.compactSize() return vec2(K.compactWidth,K.compactHeight) end
+-- 2.0.2 j : taille de la fenêtre pour la taille de texte choisie (taille compacte x échelle).
+function M.scaledSize(s) return vec2(K.compactWidth*s,K.compactHeight*s) end
 -- Textes et mesures de la fenêtre qui dépendent de la langue (refaits au changement de langue), couleurs des panneaux
 -- lumineux ; mesurés pendant le dessin (police chargée).
 local function windowSetup(v)
@@ -2480,6 +2490,7 @@ function M.main(v)
   if kind=='builtin' then name=v.builtinNames[name] or name end
   v.loadedName=name or e.g.loadedPreset
  end
+ W.userScale=e.g.windowScale or 1
  W.begin('main')
  -- Erreur de dessin : polices et découpes refermées dans la même image, puis l'erreur remonte (journalisée une fois).
  local ok,err=pcall(drawWindow,v,e,host)

@@ -400,13 +400,21 @@ end
 -- Beta 1.64 (Monza S11 : IA accidentées relancées au milieu du peloton du premier tour à la Prima Variante, puis
 -- percutées ou percutant 3 voitures) : wide (départ, premier tour, relance) : toute voiture qui roule (au moins
 -- K.rejoinLap1Speed km/h) à moins de K.rejoinLap1Gap m derrière, ou à sa hauteur (moins de K.rejoinSideGap m devant).
-local function traffic(frame,i,p,wide)
+local function traffic(frame,i,p,wide,t)
  local a=frame.cars[i]; local length=frame.length
  if length<=0 or not a.splineValid then return false end
  local speed=wide and K.rejoinLap1Speed or K.rejoinSpeed
  local reach=wide and math.max(p.rejoinGap,K.rejoinLap1Gap) or p.rejoinGap
  for j=1,frame.count do
   local b=frame.cars[j]
+  -- 2.0.2 g (Monza, 15 novembre, 90 à 125 s : IA accidentées reparties dans une file arrêtée sous double jaune, contacts
+  -- à 0-28 km/h) : une voiture en course toute proche (K.rejoinNearBehind m derrière, ou à hauteur à K.rejoinSideGap m
+  -- devant) compte comme trafic quelle que soit sa vitesse, sauf une autre voiture accidentée (t.cars[j].incident) ;
+  -- seulement pour la reprise et la retenue d'une IA accidentée (t donné), jamais pour la grille du départ retardé.
+  if t and K.rejoinNear and j~=i and b.valid and not b.pit and b.splineValid and not (t.cars[j] and t.cars[j].incident) then
+   local d=U.spline(a.spline-b.spline)*length
+   if d>0 and d<K.rejoinNearBehind or d<=0 and d>-K.rejoinSideGap then return true end
+  end
   if j~=i and b.valid and not b.pit and b.splineValid and b.kmh>=speed then
    local behind=U.spline(a.spline-b.spline)*length
    -- Affinage 1.64 (Monza S12) : hors départ, portée en temps : une voiture lancée qui la rejoindrait en moins de
@@ -431,6 +439,7 @@ local function brokenReason(a)
  return nil
 end
 M.brokenReason=brokenReason
+M.trafficTest=traffic -- 2.0.2 g : banc (tests/review202g.lua)
 -- Affinage 1.63 (lot 3, Red Bull Ring : trois IA intactes dépannées sous la voiture de sécurité) : aussi sous VSC, FCY et
 -- voiture de sécurité (elle repart prudemment et suit les règles de la neutralisation) ; jamais sous drapeau rouge.
 local function rejoin(t,frame,p,c,a,i,now,ready)
@@ -466,7 +475,7 @@ local function rejoin(t,frame,p,c,a,i,now,ready)
   c.rejoining=false; return
  end
  local wide=t.hotspotPause==true
- if traffic(frame,i,p,wide) then
+ if traffic(frame,i,p,wide,t) then
   -- Beta 1.64 (Monza S11) : départ, premier tour, relance : attente du passage du peloton, une ligne par incident.
   if wide and not c.rejoinWaitNoted then c.rejoinWaitNoted=true; note(t,'INFO',string.format('IA accidentee: attend le passage du peloton avant de repartir (premier tour), %s',a.name),i) end
   -- Relecture 1.63 (S2) : en piste, trafic continu sans aucun essai possible : dépannage au délai d'avant (K.trackRecoverTime s ;
@@ -1040,7 +1049,7 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   -- (K.rejoinWaitMaxJ s au plus) avant de repartir.
   -- Libérée : un choc relevé pendant la retenue (fin de glissade) appartient au même accident, jamais une nouvelle
   -- retenue aussitôt.
-  if c.holding and (not candidate or now>=c.holdMax or now>=c.holdUntil and not traffic(frame,i,p,t.hotspotPause==true)) then
+  if c.holding and (not candidate or now>=c.holdMax or now>=c.holdUntil and not traffic(frame,i,p,t.hotspotPause==true,t)) then
    c.holding=false; c.crashAt=-math.huge
    note(t,'INFO',string.format('IA accidentee repart apres %.1f s (%s)',now-(c.holdStart or now),not candidate and 'retenue annulee' or now>=c.holdMax and 'attente maximale' or 'piste libre'),i)
   end

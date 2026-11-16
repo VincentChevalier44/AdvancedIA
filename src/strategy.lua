@@ -367,7 +367,7 @@ local function failure(t,e,frame,a,c,i,p,now,seed,racing,cmd)
   if now<c.failNext then return end
   c.failNext=now+K.failureCheck
   local progress=e.race.progress
-  if (a.lap or 0)<1 or progress<0 or progress>=K.failureLateRace or a.pit or inc.red or inc.neutral or (a.kmh or 0)<K.failureMinKmh then return end
+  if (a.lap or 0)<(K.failureMinLaps or 1) or progress<0 or progress>=K.failureLateRace or a.pit or inc.red or inc.neutral or (a.kmh or 0)<K.failureMinKmh then return end
   -- Beta 1.59 : pannes espacées d'au moins K.failureGap s dans tout le plateau (jamais deux en même temps).
   if now-(t.lastFailAt or -math.huge)<K.failureGap then return end
   c.failChecks=c.failChecks+1

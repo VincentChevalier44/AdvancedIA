@@ -103,7 +103,14 @@ function M.update(t,e,frame,now,dt)
       if now-t.hot[i]>=K.wearHotTime then hot=K.wearHotPct end
      else t.hot[i]=-1 end
     else t.hot[i]=-1 end
-    t.target[i]=U.clamp(1-loss+compound+fuel-hot,1-K.wearScaleMaxLoss,1+K.wearScaleMaxGain)
+    -- Affinage 2.0.2 (décision du pilote : vrais écarts de rythme en course) : en course, l'usure, la gomme et le carburant
+    -- pèsent K.wearRaceMult fois plus (la surchauffe reste telle quelle), bornés à K.wearRaceMaxLoss / K.wearRaceMaxGain ;
+    -- essais, qualifications et journée circuit inchangés.
+    if K.wearRaceMult and e.profile=='C' then
+     t.target[i]=U.clamp(1+K.wearRaceMult*(compound+fuel-loss)-hot,1-K.wearRaceMaxLoss,1+K.wearRaceMaxGain)
+    else
+     t.target[i]=U.clamp(1-loss+compound+fuel-hot,1-K.wearScaleMaxLoss,1+K.wearScaleMaxGain)
+    end
     if w>=0 then
      s.wearBrake=1+K.wearBrakeCaution*U.clamp((w-K.wearPaceStart)/(1-K.wearPaceStart),0,1)
      s.wearExit=1+K.wearExitGain*max(0,rear)

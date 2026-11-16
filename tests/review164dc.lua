@@ -49,8 +49,9 @@ local function never(...)
  return not covered(s) and count(e,'defense anticipee:')==0 and (e.stats.defenceCover or 0)==0
 end
 tests.K_164DC=function()
- assert(K.coverEnabled==true and K.coverGap==20 and K.coverSaMin==0 and K.coverLatMax==1.2 and K.coverAheadMin==120 and K.coverAheadMax==600)
- assert(K.coverTimeMax==6 and K.coverChance==0.35 and K.coverAssert==0.3 and K.coverSeed==7 and K.coverLogGap==20)
+ -- 2.0.2 f : fenêtre élargie (25 m, 1,6 m, dès 80 m) et tirage à 0,5 (aucune couverture en jeu avant).
+ assert(K.coverEnabled==true and K.coverGap==25 and K.coverSaMin==0 and K.coverLatMax==1.6 and K.coverAheadMin==80 and K.coverAheadMax==600)
+ assert(K.coverTimeMax==6 and K.coverChance==0.5 and K.coverAssert==0.3 and K.coverSeed==7 and K.coverLogGap==20)
 end
 -- LOCK : couverture de l'intérieur, dans les deux sens de virage, contre un suiveur aligné 15 m derrière ; aucune à
 -- hauteur, au freinage, hors de la bande de distance, contre une voiture qui se dédouble, au premier tour, règle coupée ;

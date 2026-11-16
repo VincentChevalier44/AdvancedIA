@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 2.0.1. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 2.0.2. See [CHANGELOG.md](CHANGELOG.md).
 - **Interactive guide:** chapter-by-chapter videos and the full manual: https://vincentchevalier44.github.io/AdvancedIA/
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
@@ -50,7 +50,7 @@ AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP).
   - [Front radar and the other global options](#front-radar-and-the-other-global-options)
   - [In-game overlay](#in-game-overlay)
   - [Track light panels](#track-light-panels)
-  - [Companion apps (SpotterEnginer bridge)](#companion-apps-spotterenginer-bridge)
+  - [Companion apps (SpotterEngineer bridge)](#companion-apps-spotterengineer-bridge)
   - [Beeps](#beeps)
   - [Custom presets](#custom-presets)
   - [Track zones and class patterns](#track-zones-and-class-patterns)
@@ -145,7 +145,7 @@ Since Beta 1.49 the app is called **AdvancedIA**: its folder is `apps/lua/Advanc
 4. **To keep your settings and custom presets**, before the first launch, rename `Documents/Assetto Corsa/cfg/extension/state/lua/app/ACAdvancedIA.ini` to `AdvancedIA.ini` (same folder). CSP stores each app's settings under its folder name. If you launched AdvancedIA first, close the game and replace `AdvancedIA.ini` with a copy of `ACAdvancedIA.ini`; the app reminds you under **HOME › TO CHECK** on that first launch.
 5. Start the game and reopen the window from the app bar: as a new app, its window and overlay positions start from their defaults.
 
-What keeps its old name on purpose: the CSP state file `Documents/Assetto Corsa/cfg/extension/state/ACAdvancedIA-cspgui.ini` (it holds your original **Hide race flags** / **Hide system messages** values, given back when you switch the options off), and the keys of the companion-app bridge (`ACAdvancedIA.Bridge.*`, a frozen format shared with SpotterEnginer). SpotterEnginer needs a version that knows the new folder name. The previous update work folder `state/ACAdvancedIA-update` is no longer used and can be deleted. The update button then works again, from the new repository.
+What keeps its old name on purpose: the CSP state file `Documents/Assetto Corsa/cfg/extension/state/ACAdvancedIA-cspgui.ini` (it holds your original **Hide race flags** / **Hide system messages** values, given back when you switch the options off), and the keys of the companion-app bridge (`ACAdvancedIA.Bridge.*`, a frozen format shared with SpotterEngineer). SpotterEngineer needs a version that knows the new folder name. The previous update work folder `state/ACAdvancedIA-update` is no longer used and can be deleted. The update button then works again, from the new repository.
 
 **From the app.** At launch, about ten seconds into the game, the app makes **one request** to GitHub (`api.github.com`) to read the latest published release; nothing about you or your installation is sent. When a newer version exists:
 - **UPDATE · <version>** appears in the header, right of the tabs, and *Update available* under **HOME › TO CHECK**, with an **Update** button (both greyed while you drive);
@@ -591,7 +591,7 @@ Good to know:
 - Rolling start: the AI drive their first corner carefully even if **Careful first lap** is off, and the green is postponed by one lap if a car is stopped just after the line.
 - An incident that neutralises the race during the formation lap ends it: the race starts under Full Course Yellow, then with a rolling start at the green flag.
 - Not available online, in a replay, or on a track longer than 7.5 km: AC's standing start is kept (one line in the log). If the grid cannot be formed, the formation lap ends with a rolling start.
-- With SpotterEnginer: it must know the new start states (`form`, `roll`) to announce them properly; an older version announces a restart lap instead.
+- With SpotterEngineer: it must know the new start states (`form`, `roll`) to announce them properly; an older version announces a restart lap instead.
 
 Formation lap and rolling start: ideas from Artood2s.
 
@@ -915,7 +915,7 @@ The settings are under **RACING RULES › Mandatory stop in the race**. They are
 - **The window.** It opens and closes at a percentage of the race (**Window opens (% of race)** 25%, **Window closes (% of race)** 75% by default). The race is measured in leader laps, or in time for a timed race.
   - A window that closes at 100% never closes.
   - A window declared by CSP (server, race mode) is used first.
-- **Your reminder** (Beta 1.59): when the window opens, the overlay says so for 15 s; after that, the stop reminder shows at most once per lap, for 10 s, just before the pit entry once it is known (otherwise in the last third of the lap), never permanently. With SpotterEnginer, its pit plan is followed (see [Companion apps](#companion-apps-spotterenginer-bridge)).
+- **Your reminder** (Beta 1.59): when the window opens, the overlay says so for 15 s; after that, the stop reminder shows at most once per lap, for 10 s, just before the pit entry once it is known (otherwise in the last third of the lap), never permanently. With SpotterEngineer, its pit plan is followed (see [Companion apps](#companion-apps-spotterengineer-bridge)).
 - **The AI.** Each one stops at its own moment in the window, with at most three called in at once.
   - Only stops made with the window open count, and reloading the app mid-race does not make them stop again.
   - A recovery to the pits and the Safety Car do not count as stops, except under a red flag.
@@ -1124,13 +1124,17 @@ Appearance (**APPEARANCE**):
 - **Background**: **OPAQUE**, **DIMMED** or **TRANSPARENT**.
 - **Background opacity**: 86% by default; at 0% only the flag, texts and delta remain.
 - **Content opacity**: 30–100%.
+
+Interface (**INTERFACE**, same section):
+- **Window text size**: 1.0x to 1.5x (1.0x by default). Scales the text of this settings window, the in-game compact view included; the window grows by itself so nothing is cut off. The in-game overlay keeps its own **Size**.
+- **App sounds (beeps)**: master switch for every sound of the app (the "DRS available" beep and the delta time beeps). Unticked, no beep is played; the DRS panel and the delta keep working. The volume is in **RACING RULES** (**DRS and delta beeps: volume**).
 - **Display**:
   - **Only with information** (default): the overlay appears for a flag, a penalty, DRS or the delta.
   - **Always**: it stays on screen, showing **TRACK CLEAR** when there is nothing to report.
 - **Information: display time**: how long non-urgent information stays (green flag, start, DRS available, last lap, chequered flag, slippery surface). 0 = **While they last**. Flags always stay as long as they are active.
 
 Content (**CONTENT**):
-- **App overlay (off: AC’s own displays)** (on, Beta 1.59): off, the app draws no overlay at all (band, session line, summary, DRS, lap-line and sanction notices, AC messages taken over, even unlocked) and gives AC's own displays back: its session box is no longer hidden and the two CSP options below are set back to your values, so AC draws its own flags, penalties and banners. AC's messages are no longer blocked. While CSP still hides AC's flags or system messages (it has not re-read `gui.ini` yet, the session's write limit was reached, or the file is read-only), the overlay keeps drawing only the game's own flags and penalties, and AC's messages, so they are never lost; it disappears once CSP shows them again. Driving, rules, penalties and the SpotterEnginer bridge are unchanged.
+- **App overlay (off: AC’s own displays)** (on, Beta 1.59): off, the app draws no overlay at all (band, session line, summary, DRS, lap-line and sanction notices, AC messages taken over, even unlocked) and gives AC's own displays back: its session box is no longer hidden and the two CSP options below are set back to your values, so AC draws its own flags, penalties and banners. AC's messages are no longer blocked. While CSP still hides AC's flags or system messages (it has not re-read `gui.ini` yet, the session's write limit was reached, or the file is read-only), the overlay keeps drawing only the game's own flags and penalties, and AC's messages, so they are never lost; it disappears once CSP shows them again. Driving, rules, penalties and the SpotterEngineer bridge are unchanged.
 - **Session info (position, lap, time, best lap, fuel, stop)**: a permanent top line with **POS**, **LAP** (lap of the total) or **LEFT** (time left), **BEST**, **STOP** (mandatory stop done or to do) and **FUEL** (fuel left in laps, orange below two laps).
 - **Flag explanations**: under the instruction, an explanation of what is happening. For a yellow flag: *A car is in trouble ahead, near the track (spin, off, stopped)…*. For a double yellow: *A car is stopped or sideways on the track…*. Also for the Safety Car, VSC, FCY, red and blue flags, slippery track and the last lap.
 - **End of race summary**: at the finish, **RACE OVER**, the chequered flag and a summary, also written to the log (`fin de course: …`). It contains:
@@ -1221,15 +1225,15 @@ The panels have their own section, **SETTINGS › RACE & SAFETY › Track light 
 - **AC's start flag.** AC keeps its own start flag up for a long time (the whole session in hotlap); it never blocks the panels. Every wanted colour that cannot be written is logged once with its cause (`panneaux lumineux du circuit: jaune voulu, non ecrit (drapeau natif 12)`, `capacite missing`, `echec: …`), and every change of AC's own flag is logged (`drapeau d AC: 1 (depart)`). The track configuration is read even when no section is ticked.
 - **Not confirmed in game yet.** The SDK marks the slippery (3) and slow vehicle (6) values as *does not work yet* for AC's own display; whether the panels show them, and red (5), is to be checked in game.
 
-### Companion apps (SpotterEnginer bridge)
+### Companion apps (SpotterEngineer bridge)
 
-AdvancedIA can share its live state with a companion app, today **SpotterEnginer** (voice spotter and race engineer).
+AdvancedIA can share its live state with a companion app, today **SpotterEngineer** (voice spotter and race engineer, formerly SpotterEnginer: AdvancedIA recognises both folder names, `apps/lua/SpotterEngineer` first, and reads its keys under both prefixes, `SpotterEngineer.*` first).
 
-- **Two separate apps.** SpotterEnginer is optional, with its own repository ([VincentChevalier44/SpotterEnginer](https://github.com/VincentChevalier44/SpotterEnginer)) and its own update module. It depends on AdvancedIA: without it, it stays silent, and it never works online. Install AdvancedIA alone, or both. SpotterEnginer 1.1.0 needs AdvancedIA Beta 1.46 or later (`REQUIRES_ADVANCEDIA` in its manifest).
-- **Its updates, announced on HOME.** SpotterEnginer publishes the state of its own update (`ac.store` key `SpotterEnginer.update`, contract v1). AdvancedIA reads it only when SpotterEnginer is installed, every 10 s at most, so the line appears once SpotterEnginer has made its own check, about 10 s after loading. **HOME › TO CHECK** then shows *SpotterEnginer x.y available (installed: a.b): update it from its own window* or *SpotterEnginer needs AdvancedIA x.y: update AdvancedIA first*; the **SpotterEnginer ›** link opens SpotterEnginer's window, which installs its own update. AdvancedIA never downloads or installs anything for it and makes no GitHub request for it. SpotterEnginer 1.1.0 and 1.1.1 cannot update themselves (their button stays grey): for them HOME says to update it by hand from its GitHub page (Beta 1.59).
-- **Its pit plan** (Beta 1.59, read only): SpotterEnginer publishes the player's pit plan (`ac.store` key `SpotterEnginer.pitplan`, contract v1: `v=1;lap=N;compound=-;state=planned|boxnow|done|none;window=a-b;boxcalls=0|1;stamp=s`), read every second while it is installed. A fresh plan (its stamp moved in the last 6 s) is followed: nothing is said before the planned lap, and the stop reminder comes on the planned lap; near the end of the window (the last 20% of it) the app's own reminders come back; *box now* is never shown with the pits closed. A stale, absent, unreadable or *none* plan, a plan lap outside our window, or *done* while the stop is still owed: the app's own reminders apply. Nothing is written for it.
+- **Two separate apps.** SpotterEngineer is optional, with its own repository ([VincentChevalier44/SpotterEngineer](https://github.com/VincentChevalier44/SpotterEngineer)) and its own update module. It depends on AdvancedIA: without it, it stays silent, and it never works online. Install AdvancedIA alone, or both. SpotterEngineer 1.1.0 needs AdvancedIA Beta 1.46 or later (`REQUIRES_ADVANCEDIA` in its manifest).
+- **Its updates, announced on HOME.** SpotterEngineer publishes the state of its own update (`ac.store` key `SpotterEngineer.update`, contract v1). AdvancedIA reads it only when SpotterEngineer is installed, every 10 s at most, so the line appears once SpotterEngineer has made its own check, about 10 s after loading. **HOME › TO CHECK** then shows *SpotterEngineer x.y available (installed: a.b): update it from its own window* or *SpotterEngineer needs AdvancedIA x.y: update AdvancedIA first*; the **SpotterEngineer ›** link opens SpotterEngineer's window, which installs its own update. AdvancedIA never downloads or installs anything for it and makes no GitHub request for it. SpotterEngineer 1.1.0 and 1.1.1 cannot update themselves (their button stays grey): for them HOME says to update it by hand from its GitHub page (Beta 1.59).
+- **Its pit plan** (Beta 1.59, read only): SpotterEngineer publishes the player's pit plan (`ac.store` key `SpotterEngineer.pitplan`, contract v1: `v=1;lap=N;compound=-;state=planned|boxnow|done|none;window=a-b;boxcalls=0|1;stamp=s`), read every second while it is installed. A fresh plan (its stamp moved in the last 6 s) is followed: nothing is said before the planned lap, and the stop reminder comes on the planned lap; near the end of the window (the last 20% of it) the app's own reminders come back; *box now* is never shown with the pits closed. A stale, absent, unreadable or *none* plan, a plan lap outside our window, or *done* while the stop is still owed: the app's own reminders apply. Nothing is written for it.
 
-- **Only when SpotterEnginer is installed**: at launch the app checks once for `apps/lua/SpotterEnginer/manifest.ini`. If it is absent, nothing is opened or computed and the journal says `pont des apps compagnes: SpotterEnginer absent, pont inactif`; AdvancedIA behaves exactly as without the bridge.
+- **Only when SpotterEngineer is installed**: at launch the app checks once for `apps/lua/SpotterEngineer/manifest.ini`. If it is absent, nothing is opened or computed and the journal says `pont des apps compagnes: SpotterEngineer absent, pont inactif`; AdvancedIA behaves exactly as without the bridge.
 - **When it is installed**: two shared structures are opened with `ac.connect` (`ACAdvancedIA.Bridge.Hello` and `ACAdvancedIA.Bridge.Data.v2`, layout in `src/bridge_layout.lua`, identical in both apps) and the engine state is copied into them every frame, read only: flags and neutralisations, the delta, the player's penalties, the pit window, the AI sanctions and stops. Journal: `pont des apps compagnes: ouvert (version 1)`.
 - **Bridge v2 (Beta 2.0.0).** The data key is now `ACAdvancedIA.Bridge.Data.v2` and the hello carries
   `bridgeVersion=2`; a reader built for v1 finds no data and stops cleanly. New fields at the end of each car:
@@ -1237,18 +1241,18 @@ AdvancedIA can share its live state with a companion app, today **SpotterEnginer
   `lastReason` (reason of the AI's last real sanction: 0 none, 2–13 the codes of `L.reasons` in
   `src/bridge_layout.lua`, 99 other; a simple track-limit warning never writes it). New global fields at the end:
   `trackWarnings` and `serveLaps` (the thresholds in effect). Companion apps need their bridge-v2 update
-  (SpotterEnginer 1.3.9 or later).
+  (SpotterEngineer Beta 2.1.1 or later).
 - **Announcements** (`messageId`, `messageKind`, `messageValue`, `messageExtra`, `messageTitle`, `messageText`): one per event, in the app's language. Silent kinds (never a message at the top of the screen; re-sent on the next frame if another announcement takes their frame): `pitCompound`, `pitPlanSame`, `pitNotCounted`, `pitValidated` (F1 compound change), `pitPlanOk` (strategy fixed after a « same compound » warning; value = fitted compound index, extra = planned one); `scOut` (Safety Car on track, sent in the same frame as `safetyPhase` becoming `out`; value = AC index (0-based) of the first car behind it, -1 if none, extra = gap in m), `scLeading` (queue formed behind it; value = AC index of the first car, extra = gap in m), `restartPlace` (race, at the red flag and when you leave the pit lane on the relaunch lap; value = your frozen place (1-based), extra = AC index of the car to follow, -1 in P1), `restartRetake` (a car classed behind you is ahead; value = its AC index, extra = your place). Shown kind `fastCar` (Practice and Qualifying: a flying AI is coming while you are on an out-lap or cool-down lap; value = its AC index, extra = gap in s). The text names the driver. The internal Safety Car phase `exit` (released, in the pit lane) is published as `call`, as `place` is.
 - **Beta 1.60, layout unchanged.**
   - `wrong` is true for a car travelling nose first against the track direction; a reversing car is not wrong way.
   - `standing` can also be `form` (formation lap) or `roll` (rolling start called); announcements `formation`, `rollStart`, `rollGreen`. During the formation lap the neutralisation is published as it is (`neutral`, `neutralMode='fcy'`, `relaunch`), without a delta.
   - `penaltyReason='contact'` and the announcement `playerContact` for a contact where you are judged at fault.
-  - AdvancedIA reads `SpotterEnginer.strategy` (the engineer's undercut / overcut advice, contract v1: `v=1;mode=undercut|overcut|cover|none;rival=<AC index|-1>;gain=<s>;lap=<stop lap|0>;stamp=<sim s>`, ignored after 6 s without a new stamp) to show the reason next to your pit-stop reminder and to log it. AdvancedIA's own rules stay authoritative; the AI never use it.
-  - Formation lap and rolling start need **SpotterEnginer 1.3.4 or later**: with an older one installed and a **Race start** other than Standing, HOME shows a warning (its version is read once at launch from its `manifest.ini`).
+  - AdvancedIA reads `SpotterEngineer.strategy` (the engineer's undercut / overcut advice, contract v1: `v=1;mode=undercut|overcut|cover|none;rival=<AC index|-1>;gain=<s>;lap=<stop lap|0>;stamp=<sim s>`, ignored after 6 s without a new stamp) to show the reason next to your pit-stop reminder and to log it. AdvancedIA's own rules stay authoritative; the AI never use it.
+  - Formation lap and rolling start need **SpotterEngineer 1.3.4 or later**: with an older one installed and a **Race start** other than Standing, HOME shows a warning (its version is read once at launch from its `manifest.ini`).
   - With **Advanced strategy** on, in a race, AdvancedIA publishes its learnt pit-lane loss in `AdvancedIA.strategy` (`v=1;pitLoss=s;pitLossNeutral=s;laneTime=s;samples=n;stamp=s`, `-1.0` = not learnt yet).
 - **Isolation**: the bridge never writes into the engine, the commands or the settings; an error in it closes the bridge alone (`pont des apps compagnes coupe: …`), and it is closed when the app unloads, so the reader sees AdvancedIA as absent at once.
 
-- Beta 1.61 side keys, written only while SpotterEnginer is installed and their switch is on, when the text changes (`stamp` is the time of the last change, not a heartbeat):
+- Beta 1.61 side keys, written only while SpotterEngineer is installed and their switch is on, when the text changes (`stamp` is the time of the last change, not a heartbeat):
   - `AdvancedIA.traffic` (**Lapped cars and classes: nuanced behaviour**): `v=1;blue=<none|lap|class>;stage=<none|advise|order>;car=<AC index|-1>;gap=<m>;closing=<km/h>;count=<n>;stamp=<s>`.
   - `AdvancedIA.weather` (**Live weather**): `v=1;wet=<0.00-1.00>;rain=<0.00-1.00>;water=<0.00-1.00>;trend=<wetting|steady|drying>;eta=<s|-1>;next=<dry|inter|wet|none>;forecast=<none|light|rain|heavy|unknown>;forecastIn=<s|-1>;aiDry=<n>;aiRain=<n>;stamp=<sim s>`.
 - **SetupLab** (Beta 1.63): when the SetupLab app is installed (apps/lua/SetupLab), the bridge also opens for it and the app writes a
@@ -1429,7 +1433,7 @@ The settings window is described in [The settings window](#the-settings-window).
 
 | Tab | Contents |
 |---|---|
-| **HOME** | **PROFILE SHOWN AND EDITED** (**TRACK DAY**, **PRACTICE**, **QUALI**, **RACE**, **HOTLAP**), **Automatic profile**, **SESSION** (detected session and its source), **BUILT-IN PRESETS**, the recognised preset, **RESTORE DEFAULTS: <profile>**. On the right: **LIVE STATUS** (AI cars driven by the app, incidents, yellow zones, neutralisation), **TO CHECK** (warnings, each with a link to the section concerned, **SpotterEnginer ›** for a SpotterEnginer update) and **CUSTOM PRESETS**. The page scrolls with the mouse wheel |
+| **HOME** | **PROFILE SHOWN AND EDITED** (**TRACK DAY**, **PRACTICE**, **QUALI**, **RACE**, **HOTLAP**), **Automatic profile**, **SESSION** (detected session and its source), **BUILT-IN PRESETS**, the recognised preset, **RESTORE DEFAULTS: <profile>**. On the right: **LIVE STATUS** (AI cars driven by the app, incidents, yellow zones, neutralisation), **TO CHECK** (warnings, each with a link to the section concerned, **SpotterEngineer ›** for a SpotterEngineer update) and **CUSTOM PRESETS**. The page scrolls with the mouse wheel |
 | **SETTINGS** | The sidebar of sections (below). On the right, the chosen section: its title, profile buttons, description, live status lines, **RESET SECTION**, then its settings in two columns |
 | **RACING RULES** | On the left: **Racing rules on**, **Mandatory stop in the race**, **Safety Car**, then **CHAMPIONSHIP RULES** (**Base rules**, **F1 2025**, **F1 2026**, **GT**, **Endurance**; *Applied together to Practice, Qualifying and Race*) and **RESET TO DEFAULTS**. On the right, the settings of the selected row |
 | **DIAGNOSTICS** | See [Diagnostics tab](#diagnostics-tab) |
@@ -1848,6 +1852,8 @@ Ticked by default in every profile, Hotlap included. See [Track light panels](#t
 | **Display** | **Only with information** / **Always** | **Only with information** |
 | **Information: display time** | 0 (**While they last**) – 60 s | **While they last** |
 | **Content opacity** | 30 – 100% | 100% |
+| **Window text size** | 1.0x – 1.5x | 1.0x |
+| **App sounds (beeps)** | on / off | on |
 | **App overlay (off: AC’s own displays)** | on / off | on |
 | **Session info (position, lap, time, best lap, fuel, stop)** | on / off | on |
 | **Flag explanations** | on / off | on |
@@ -2047,6 +2053,10 @@ Summary counters: `tow` and `tow_end` (tows broken and ended), `dirtyAir` (dirty
 
 **The overlay is off screen or the wrong size.** **SETTINGS › ADVANCED › Overlay › PUT BACK ON SCREEN**.
 
+**The settings window text is too small.** **SETTINGS › ADVANCED › Overlay › Window text size** (up to 1.5x).
+
+**I want no beep at all.** Untick **SETTINGS › ADVANCED › Overlay › App sounds (beeps)**.
+
 **AC messages appear twice, or not at all.**
 - **Hide the original AC messages** and **Hide AC system messages (CSP option)** (Overlay section) hide the original display; both are on by default. AC's red cut and penalty banners (*CUT DETECTED*, *PENALTY…*) cannot be hidden through CSP: AC keeps drawing them, and the overlay does not duplicate them (log `messages d AC: penalites et coupes laissees a l affichage d AC`).
 - If hiding would also remove them from the overlay, the app lifts it until the next launch (log line `messages d AC:`).
@@ -2113,7 +2123,7 @@ src/                    the HumanAI engine and its interface
   zones.lua               no-manoeuvre zone data grammar
   hudinfo.lua, panel.lua  overlay decisions (session line, lap line, recap, flags), no drawing
   lights.lua              track light panels, slow vehicle ahead, player damage, track configuration parsing (files read by applier.lua)
-  bridge.lua              companion-app bridge (SpotterEnginer): engine state copied each frame, read only
+  bridge.lua              companion-app bridge (SpotterEngineer): engine state copied each frame, read only
   bridge_layout.lua       the bridge's shared layout, identical in both apps
   update.lua              in-app update from GitHub: pure logic
   remote.lua              the update's port: network, digest, zips, files and restart

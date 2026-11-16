@@ -75,7 +75,7 @@ function M.reset(s,now,keepOffset,preserveErrors)
  s.blockedYield=0; s.radarBrake=0; s.speedWindowStart=now; s.speedWindow=0
  s.trafficReference=0; s.trafficApplied=false; s.yellow=false; s.overtakeArmed=false; s.overtakeSpline=-1; s.yieldClass=false
  if not keepOffset then s.offset=0 end
- s.lane=0; s.laneActive=false; s.laneLatched=false; s.laneMeters=0; s.laneLogged=false
+ s.lane=0; s.laneActive=false; s.laneLatched=false; s.laneMeters=0; s.laneLogged=false; s.filesOn=false; s.filesDone=false
  -- Beta 1.52 : refus comptés (tours lancés, premier tour attentif) oubliés.
  s.qualiHeldFor=nil; s.flPassHeldFor=nil
  s.towing=false; s.towDone=false; s.dirty=0; s.dirtyBefore=false; s.urgency=0
@@ -199,6 +199,12 @@ end
 M.transitionTest=transition -- relecture d'ensemble 1.62 : tests du décompte des fins de dépassement
 local function faster(p,a,b) return p.multiClass and a.classified and b.classified and a.class<b.class end
 local function sideFree(row,side) return side<0 and not row.left or side>0 and not row.right end
+-- 2.0.2 f : compteurs de la défense anticipée, créés au premier usage (bilan au journal).
+local function coverDiag(e)
+ local cd=e.coverDiag
+ if not cd then cd={cand=0,band=0,turn0=0,roll=0,side=0,done=0,at=-math.huge}; e.coverDiag=cd end
+ return cd
+end
 -- Allure libre apprise d'une voiture à l'endroit b (m/s) : la sienne, sinon celle de sa classe corrigée de son rythme
 -- relatif (comme s.freePace) ; 0 inconnue. Jamais le maximum des deux (Delta.pace), qui rendrait deux voitures égales.
 local function freeAt(e,s,b,p)
@@ -253,6 +259,21 @@ end
 -- Beta 1.44 : joueur nettement plus lent que l'allure libre de l'IA s ici (moins de K.playerSlowRatio fois elle ;
 -- inconnue : seulement sous K.speedMinPass*K.playerCrawlRatio km/h, au pas). Jamais son allure apprise à lui : apprise à
 -- chaque image en conduite libre, elle suit sa vitesse du moment quand il ralentit.
+-- 2.0.2 h : sous jaune de zone seule, la voiture j est celle qu'il est permis de doubler (accidentee, hors piste, tout
+-- juste repartie, en difficulte, aux stands) : le jaune ne retient pas son depassement (regle de course, aucune sanction).
+local function yellowZoneOf(inc,i,yellow) return yellow==true and not inc.neutral and not inc.red and not (inc.restart and inc.cars[i] and inc.cars[i].restart) end
+M.yellowZoneTest=yellowZoneOf
+local function yellowPassOk(e,s,frame,j,p,now)
+ return K.yellowPassIncident==true and s.yellowZone==true and j~=nil and j>0 and j<=frame.count and e.incidents.cars[j]~=nil
+  and Penalties.passable(frame.cars[j],e.incidents.cars[j],p,now)
+end
+-- 2.0.2 h : voiture accidentee qui est repartie : roule au-dessus de la vitesse d'obstacle (plus la marge), sans glisser ni
+-- tourner sur elle-meme, jamais immobile, jamais une IA anormalement lente.
+local function rejoining(e,frame,j,p)
+ local o=frame.cars[j]; local c=e.incidents.cars[j]
+ return o~=nil and c~=nil and not (e.states[j] and e.states[j].abnormal) and o.kmh>=p.obstacleSpeedKmh+K.avoidClearMargin
+  and (o.slip or 0)<=K.slipDegrees and (c.spin or 0)<K.spinTime and (o.stopped or 0)<K.obstacleTime
+end
 local function playerSlow(e,s,b,a,p)
  local mine=freeAt(e,s,Delta.bin(a.spline,e.delta.bins),p)
  if mine>0 then return b.speed<mine*K.playerSlowRatio end
@@ -577,6 +598,31 @@ local function laneHold(e,s,a,row,g,frame,now,i)
   U.log(e.log,now,'INFO',string.format('maintien de ligne: %s a %+.1f m de la trajectoire (decalage %+.2f)',a.name,s.laneMeters,s.lane),i)
  end
  if s.alongside then s.laneSeen=now end
+ -- Affinage 2.0.2 (départ en deux files) : place de la grille tenue jusqu'au premier freinage de la voiture elle-même
+ -- (pédale au-delà de K.ruleBrake, hors freinage de l'app) ; ensuite le maintien ordinaire, relâché K.laneRelease s
+ -- après la fin du freinage ou de la voiture à côté.
+ if s.filesOn and not s.filesDone then
+  -- Rapprochement du premier point de freinage (relevé au premier tour ou gardé pour le circuit), à K.startFilesMerge s :
+  -- rendue à la trajectoire seulement dans un trou de la file de la trajectoire (aucune voiture sur la trajectoire de
+  -- K.startFilesGapBack m derrière, ou K.startFilesGapTime s de rapprochement d'une voiture plus rapide, à K.startFilesGapAhead
+  -- m devant) ; sinon tenue jusqu'au freinage. (Toutes rendues au
+  -- même moment, essayé : les deux files se resserrent ensemble, 9 contacts au lieu de 1 sur le banc des départs.)
+  local np=e.fl and FirstLap.nextPoint(e.fl,a,frame.length) or math.huge
+  if np<=max(a.speed,K.firstLapSpeedMin)*K.startFilesMerge and frame.length>0 then
+   local hole=true
+   for j=1,frame.count do
+    local c=frame.cars[j]
+    if j~=i and c.valid and c.splineValid and (not c.splineLatValid or abs(c.splineLat)<K.laneMin+K.startFilesLineWidth) then
+     local d=(((c.spline-a.spline)+0.5)%1-0.5)*frame.length
+     if d>-max(K.startFilesGapBack,(c.speed-a.speed)*K.startFilesGapTime) and d<K.startFilesGapAhead then hole=false; break end
+    end
+   end
+   if hole then s.filesDone=true; s.laneSeen=now-K.laneRelease end
+  end
+  if s.filesDone then
+  elseif a.brake>K.ruleBrake and a.brake>(s.appBrake or 0)+K.brakeEcho then s.filesDone=true; s.laneSeen=now
+  else local target=laneTarget(s,a,row,g); if target~=0 then s.lane=target end; return s.lane end
+ end
  if now-s.laneSeen<K.laneRelease or a.brake>K.ruleBrake then
   local target=laneTarget(s,a,row,g); if target~=0 then s.lane=target end
   return s.lane
@@ -1202,6 +1248,23 @@ end
 -- 30 cm ou 1 m ») : aussi pour tout attaquant dans le sillage direct de sa cible (au plus K.towLat m de côté, moins de
 -- K.seekRange m) ; déboîtement à K.wakePullGap m, ou rapprochement arrêté depuis K.wakeStallTime s à moins de
 -- K.wakeStallGap m (AC garde sa distance : rien de plus à gagner), ou ligne droite juste suffisante.
+-- Affinage 2.0.2 (le pilote : « des IA déboîtent trop tôt, côte à côte en plein milieu de la ligne droite, l'aspiration est
+-- perdue et le dépassement échoue » ; replays de Monza : 20 à 38 % des déboîtements dans le sillage à plus de 6 s du
+-- freinage, aucun n'arrive à hauteur) : en course, hors premier tour, attaquant aligné dans le sillage d'une IA (au plus
+-- K.towLat m de côté), point de freinage connu : déboîtement trop tôt s'il reste plus de K.pullOutSlackMax s de ligne droite
+-- au-delà du temps qu'il faut pour arriver à hauteur (rapprochement mesuré, au moins le gain de l'aspiration K.slingGainKmh).
+-- Il attend alors la fronde (seekLate) au lieu de déboîter à la sortie du virage.
+local function towTooEarly(e,s,a,target,frame,profile)
+ if not K.pullOutSlackMax or profile~='C' or (s.flW or 0)>0 or target.index==frame.player then return false end
+ -- Attaquant pas tout à fait aligné (jusqu'à K.towTooEarlyLat m) aussi : il se recale (wakeAlign) au lieu de déboîter ; un
+ -- vrai avantage de vitesse (K.towTooEarlySa km/h ou plus) n'a pas besoin de l'aspiration : déboîtement libre.
+ if abs(target.lat)>K.towTooEarlyLat or target.sa>=K.towTooEarlySa or (target.long or 1)<=0 or target.gap<=K.wakePullGap or s.slowPlayerFor==target.index then return false end
+ local np=FirstLap.nextPoint(e.fl,a,frame.length)
+ if not (np<math.huge) then return false end
+ local need=(target.gap+(a.length or 4.5))/max(target.sa/3.6,(K.slingGainKmh or 0)/3.6,K.pullOutClosingMin)
+ return np/max(a.speed,1)>need+K.pullOutSlackMax
+end
+M.towTooEarlyTest=towTooEarly
 local function seekLate(e,s,a,target,frame)
  -- Relecture 1.63 (S5) : sillage tardif entre IA seulement, jamais derrière le joueur (freinage imprévisible).
  local tow=target.index~=frame.player and abs(target.lat)<=K.towLat and target.gap<=K.seekRange
@@ -1365,7 +1428,7 @@ local function unlapCap(e,frame,i,a,cap,p)
  local vt=(frame.cars[bj].kmh+Incidents.SK.rel)/3.6
  return min(cap,max(K.trafficMinSpeed,math.sqrt(vt*vt+2*p.yellowDecel*max(0,best-K.queueKeep))*3.6))
 end
-local H={closeInOf=closeInOf,overlapYieldOf=overlapYieldOf,capText=capText,limitText=limitText,aeroMap=aeroMap,aeroRuns=aeroRuns,finalLapsFor=finalLapsFor,urgency=urgency,towStart=towStart,playerSlow=playerSlow,straightHoldCount=straightHoldCount,laneHold=laneHold,passFinished=passFinished,passEnd=passEnd,lapsAhead=lapsAhead,yieldRefused=yieldRefused,firstLapHeld=firstLapHeld,inviteGeometry=inviteGeometry,passFreeOf=passFreeOf,bogging=bogging,slipSeek=slipSeek,seekLate=seekLate,exitHold=exitHold}
+local H={towTooEarly=towTooEarly,closeInOf=closeInOf,overlapYieldOf=overlapYieldOf,capText=capText,limitText=limitText,aeroMap=aeroMap,aeroRuns=aeroRuns,finalLapsFor=finalLapsFor,urgency=urgency,towStart=towStart,playerSlow=playerSlow,yellowPassOk=yellowPassOk,rejoining=rejoining,straightHoldCount=straightHoldCount,laneHold=laneHold,passFinished=passFinished,passEnd=passEnd,lapsAhead=lapsAhead,yieldRefused=yieldRefused,firstLapHeld=firstLapHeld,inviteGeometry=inviteGeometry,passFreeOf=passFreeOf,bogging=bogging,slipSeek=slipSeek,seekLate=seekLate,exitHold=exitHold}
 function M.step(e,i,dt,now)
  local frame=e.frame; local a=frame.cars[i]; local s=e.states[i]; local cmd=e.commands[i]
  local p,g,profile=e.run,e.runtimeG,e.profile; local row=e.perception.rows[i]
@@ -1463,6 +1526,10 @@ function M.step(e,i,dt,now)
  -- Drapeau jaune ou neutralisation : limite propre, composée avec l'espacement par l'applicateur, descente bornée.
  local cap,yellow=Incidents.cap(e.incidents,frame,i,p,e.delta,e.states,s.persona.deltaMargin)
  s.yellow=yellow
+ -- 2.0.2 h (pilote, 16 novembre : « dans l'herbe, je reviens sur la piste, l'IA reste derriere et freine ») : drapeau
+ -- jaune venu seulement d'une zone locale (ni neutralisation, ni drapeau rouge, ni tour de relance) : la voiture en cause,
+ -- accidentee, hors piste ou tout juste repartie (src/penalties.lua, passable), peut etre doublee (H.yellowPassOk).
+ s.yellowZone=yellowZoneOf(e.incidents,i,yellow)
  local regimeCap=cap
  -- Sous drapeau (zone jaune et son approche, neutralisation, drapeau rouge) : en file derrière la voiture de devant,
  -- sans la rattraper au-delà d'un léger rapprochement ; jamais derrière une voiture accidentée, arrêtée ou très lente,
@@ -1696,7 +1763,7 @@ function M.step(e,i,dt,now)
      local nearest,distance=0,math.huge
      for j=1,frame.count do
       local c=e.incidents.cars[j]
-      if j~=i and c.incident and c.onTrack then
+      if j~=i and c.incident and c.onTrack and not (K.avoidRejoinEnds and H.rejoining(e,frame,j,p)) then
        local r=P.relative(a,frame.cars[j],frame.length,s.scanRel)
        if r.coherent and r.long>0 and r.gap<p.obstacleDetect and abs(r.lat)<=K.latPass and r.gap<distance then
         if frame.cars[j].kmh>=slowRef then refused=true else nearest=j; distance=r.gap end
@@ -1744,6 +1811,9 @@ function M.step(e,i,dt,now)
      -- Cible repartie à vive allure, sans glisser ni être un incident, pendant une seconde : l'évitement s'achève.
      local other=frame.cars[target.index]
      local moving=not e.incidents.cars[target.index].incident and not e.states[target.index].abnormal and other.kmh>=p.obstacleSpeedKmh+K.avoidClearMargin and other.slip<=K.slipDegrees and other.stopped<K.obstacleTime
+     -- 2.0.2 h (pilote : « je reviens sur la piste, l'IA reste derriere, freine et ne me double pas ») : voiture repartie,
+     -- qui roule sans glisser, sa zone encore ouverte : plus un obstacle a contourner au ralenti, une voiture lente a doubler.
+     if K.avoidRejoinEnds and not moving then moving=H.rejoining(e,frame,target.index,p) end
      s.avoidClear=moving and s.avoidClear+dt or 0
      if target.long<-K.obstacleClear or s.avoidClear>=K.avoidRecheck then transition(e,s,'DRIVE','obstacle_clear',now) end
     else transition(e,s,'DRIVE','obstacle_lost',now) end
@@ -1873,7 +1943,7 @@ function M.step(e,i,dt,now)
      if not blueKeep and now-s.yieldStart>p.yieldMaxHold+(s.frankLift and K.frankYieldExtra or 0) and s.state~='YIELD_OUT' then s.ignoreTarget=s.target; s.ignoreUntil=now+K.ignoreFollower; transition(e,s,'YIELD_OUT','hold_limit',now) end
      if s.state=='YIELD_OUT' then desired=s.base; if abs(s.offset-M.reachable(s,a,p,g,s.base))<K.centerEpsilon then transition(e,s,'DRIVE','yield_end',now); s.target=0 end end
     elseif passStates[s.state] then
-     if s.yellow and not s.alongside and s.state~='OVT_OUT' then transition(e,s,'OVT_OUT','abort_yellow',now) end
+     if s.yellow and not s.alongside and s.state~='OVT_OUT' and not yellowPassOk(e,s,frame,s.target,p,now) then transition(e,s,'OVT_OUT','abort_yellow',now) end
      desired=s.targetSide*p.overtakeOffset*(K.cornerAmpMin+(1-K.cornerAmpMin)*a.corner)
      -- Affinage 1.63 w2 (Monza, session 2 : un « reussi » compté alors que la cible entrait dans la voie des stands) : cible
      -- entrée aux stands : fin « cible aux stands », jamais une réussite.
@@ -1996,6 +2066,10 @@ function M.step(e,i,dt,now)
        -- droite, à 7–12 m au plus près ; la cible ressortait du virage plus vite) : en course, l'écart ne se juge qu'en
        -- ligne droite hors freinage, et il doit avoir grandi de K.abortTgGrowRace s (au lieu de K.abortTgGrow).
        if race and not straight then s.abortSlow=min(s.abortSlow,K.abortSlowTime) end
+       -- Affinage 2.0.2 (attaque plus décidée : ≈70 fins « cible plus rapide » par course) : en course, la cible doit
+       -- s'échapper K.abortSlowTimeRace s (au lieu de K.abortSlowTime) avant l'abandon (les plafonds à K.abortSlowTime
+       -- hors ligne droite ou sans écart en temps grandi gardent leur effet : il faut une seconde et demie de plus).
+       local slowLimit=race and K.abortSlowTimeRace or K.abortSlowTime
        if s.passTg-s.passMinTg<(race and K.abortTgGrowRace or K.abortTgGrow) then s.abortSlow=min(s.abortSlow,K.abortSlowTime) end
        s.passStall=s.state~='OVT_ARM' and target.long>0 and not s.passAlongside and target.sa<K.passStallSa and s.passStall+dt or 0
        -- Affinage 1.63 (lot 3) : en course, « sans rapprochement » seulement si l'écart a vraiment grandi (K.raceStallGrow m au-dessus
@@ -2013,7 +2087,7 @@ function M.step(e,i,dt,now)
        -- droite ; plus loin que K.wakeHoldGap m ou hors ligne droite, les règles d'avant reprennent.
        local wakeHold=K.wakeHoldEnabled and race and not firstLap and straight and not s.passAlongside and target.long>0
         and s.target~=frame.player and target.gap<=K.wakeHoldGap and abs(target.lat)<=K.lastPullLat
-        and FirstLap.nextPoint(e.fl,a,frame.length)<math.huge and not (now<(s.exitPassUntil or -math.huge))
+        and FirstLap.nextPoint(e.fl,a,frame.length)<math.huge and not (now<(s.exitPassUntil or -math.huge)) and s.slowPlayerFor~=s.target
        if wakeHold then
         s.abortSlow=min(s.abortSlow,K.abortSlowTime*0.5); s.passStall=min(s.passStall,K.passStallTime*0.5)
         e.stats.wakeHold=(e.stats.wakeHold or 0)+dt
@@ -2077,9 +2151,9 @@ function M.step(e,i,dt,now)
         if yielded or aside or slow then fastBack=false end
         if aside and s.freePace>0 and frame.cars[s.target].speed<s.freePace then s.abortSlow=0; s.passStall=0 end
        end
-       if s.passBlocked>K.abortBlocked or s.abortSlow>K.abortSlowTime or s.passStall>K.passStallTime or fastBack or s.holdStall>K.passHoldMax or noProgress or tooLong then
+       if s.passBlocked>K.abortBlocked or s.abortSlow>slowLimit or s.passStall>K.passStallTime or fastBack or s.holdStall>K.passHoldMax or noProgress or tooLong then
         s.aborts=s.aborts+1
-        local why=s.passBlocked>K.abortBlocked and 'abort_blocked' or s.abortSlow>K.abortSlowTime and 'abort_slow' or s.passStall>K.passStallTime and 'abort_stall' or fastBack and 'abort_follower'
+        local why=s.passBlocked>K.abortBlocked and 'abort_blocked' or s.abortSlow>slowLimit and 'abort_slow' or s.passStall>K.passStallTime and 'abort_stall' or fastBack and 'abort_follower'
          or s.holdStall>K.passHoldMax and 'hold_limit' or noProgress and 'abort_noprogress' or tooLong and 'abort_timeout' or 'hold_limit'
         transition(e,s,'OVT_OUT',why,now)
         -- Beta 1.41 : cible repartie plus vite : plus de dépassement sur cession ni sur retenue de cette cible pendant
@@ -2123,7 +2197,7 @@ function M.step(e,i,dt,now)
        -- lente, ligne droite hors freinage : côté qu'elle a libéré pris aussitôt (comme une invitation), couloir libre.
        -- Affinage 2.0.1 b : en course, joueur nettement plus lent que l'allure libre de l'IA, loin d'un point de freinage appris :
        -- le freinage d'AC pour garder l'écart derrière lui ne retient plus le déboîtement (replay : la file entière à sa vitesse).
-       local followBrake=K.raceSlowPlayer==true and profile=='C' and s.target==frame.player and H.playerSlow(e,s,frame.cars[s.target],a,p)
+       local followBrake=K.raceSlowPlayer==true and profile=='C' and (s.target==frame.player or K.raceSlowAny==true and s.slowPlayerFor==s.target) and H.playerSlow(e,s,frame.cars[s.target],a,p)
         and FirstLap.nextPoint(e.fl,a,frame.length)>max(a.speed,K.firstLapSpeedMin)*K.firstLapAnticipate
        if abs(target.lat)>=K.inviteLat and target.long>0 and target.sa>=0 and a.corner>=K.passCornerC and not s.alongside and (ownBrake<K.passBrakeMax and not braking or followBrake) then
         local side=target.lat>0 and 1 or -1
@@ -2152,7 +2226,8 @@ function M.step(e,i,dt,now)
        local pqExit=K.pqExitPass and (profile=='P' or profile=='Q') and e.quali and e.quali.active and e.quali.push[i] and not e.quali.push[s.target]
        if s.state=='OVT_ARM' and K.exitPassEnabled and (profile=='C' or pqExit) and (not firstLap or mistakeAhead) and s.target~=frame.player and not s.yellow
         and target.long>0 and target.gap<=K.exitPassGap and (target.sa>=K.exitPassSa or mistakeAhead) and not s.alongside and ownBrake<K.ruleBrake and not braking
-        and (mistakeAhead or now-(s.exitCornerAt or -math.huge)<=K.exitPassWindow) then
+        and (mistakeAhead or now-(s.exitCornerAt or -math.huge)<=K.exitPassWindow)
+        and (mistakeAhead or not H.towTooEarly(e,s,a,target,frame,profile)) then
         local first=abs(target.lat)>=K.exitPassLatMin and (target.lat>0 and -1 or 1) or s.targetSide
         for _,side in ipairs({first,-first}) do
          if s.state=='OVT_ARM' and -target.lat*side<K.pullOutTargetLat and sideFree(row,side) and P.corridor(frame.cars,frame.count,i,side,K.corridorMin,s.target,g.occLatMax) then
@@ -2168,7 +2243,8 @@ function M.step(e,i,dt,now)
        end
        -- Déboîtement en ligne droite seulement (PDR §10.2.4).
        if s.state=='OVT_ARM' and target.gap<=U.clamp(p.pullOutGapBase+p.pullOutGapPerMps*a.speed,p.pullOutGapBase,K.pullOutMax) and a.corner>=K.passCornerC and not s.alongside and ownBrake<K.passBrakeMax and not braking
-        and -target.lat*s.targetSide<K.pullOutTargetLat and M.pullOutTime(e,a,target,frame,s) and H.seekLate(e,s,a,target,frame) then
+        and -target.lat*s.targetSide<K.pullOutTargetLat and M.pullOutTime(e,a,target,frame,s) and H.seekLate(e,s,a,target,frame)
+        and not H.towTooEarly(e,s,a,target,frame,profile) then
         transition(e,s,'OVT_IN','pull_out',now)
         if s.slingNp then e.stats.slingPull=(e.stats.slingPull or 0)+1; U.log(e.log,now,'INFO',string.format('fronde: %s deboite derriere %s a %.0f m, %.0f m avant le freinage',a.name,frame.cars[s.target].name,target.gap,s.slingNp),i) end
         -- Affinage 1.64 (session 12) : écart au déboîtement (au plus une ligne par voiture toutes les K.lastPullLogPeriod s).
@@ -2337,15 +2413,26 @@ function M.step(e,i,dt,now)
       and not s.defendUsed and e.flash.requests[i].untilTime<=now and (s.coverAttacker~=back.index or s.coverLap~=a.lap)
       and m.bins>0 and m.at>-math.huge and a.splineValid and frame.length>0 then
       local b=Delta.bin(a.spline,m.bins)
-      local ahead=m.seen[b]>=K.towMapSeen and m.run[b]*frame.length/m.bins or -1
+      -- 2.0.2 g (course du 15 novembre : « dans la bande 0 » sur 39 candidats) : distance au prochain point de freinage
+      -- appris (FirstLap.nextPoint, comme le déboîtement et la recherche de l'aspiration), la carte des lignes droites
+      -- (morcelée par les levers de pied en file) seulement à défaut.
+      local ahead=FirstLap.nextPoint(e.fl,a,frame.length) -- cover
+      if not (ahead<math.huge) then ahead=m.seen[b]>=K.towMapSeen and m.run[b]*frame.length/m.bins or -1 end
+      -- 2.0.2 f : compteurs de la défense anticipée (bilan au journal toutes les K.coverDiagPeriod s), pour voir en jeu ce
+      -- qui l'empêche (aucune « defense anticipee » dans les courses 2.0.2 du 15 novembre).
+      local cd=coverDiag(e); cd.cand=cd.cand+1; if cd.at==-math.huge then cd.at=now+K.coverDiagPeriod end
+      local inBand=ahead>=K.coverAheadMin and ahead<=K.coverAheadMax; if inBand then cd.band=cd.band+1 end
       if ahead>=K.coverAheadMin and ahead<=K.coverAheadMax then
        local laps,upper=lapOrClass(e,s,a,frame.cars[back.index],back,p,profile)
        local turn=laps==0 and not upper and H.lapsAhead(a,frame.cars[back.index],back,frame.length)<=0 and Snapshot.turnAhead((a.spline+ahead/frame.length)%1,frame.length) or 0
+       if turn==0 then cd.turn0=cd.turn0+1 end
        if turn~=0 then
         s.coverAttacker=back.index; s.coverLap=a.lap
         local side=turn>0 and -1 or 1
         local probability=min(1,(K.coverChance+K.coverAssert*s.persona.assertiveness)*boost)
-        if U.unit(g.seed,i,a.lap*K.coverSeed+back.index)<probability and sideFree(row,side) then
+        local rolled=U.unit(g.seed,i,a.lap*K.coverSeed+back.index)<probability
+        if not rolled then cd.roll=cd.roll+1 elseif not sideFree(row,side) then cd.side=cd.side+1 else cd.done=cd.done+1 end
+        if rolled and sideFree(row,side) then
          s.targetSide=side; s.defendUntil=now+min(K.coverTimeMax,ahead/max(a.speed,1)); s.defendCooldown=now+p.defenseCooldown/boost; s.defendUsed=true; s.towing=false
          transition(e,s,'DEFEND','cover',now); defend=true
          e.stats.defenceCover=(e.stats.defenceCover or 0)+1
@@ -2355,6 +2442,13 @@ function M.step(e,i,dt,now)
          end
         end
        end
+      end
+     end
+     do local cd=coverDiag(e)
+      if cd.cand>0 and cd.at>-math.huge and now>=cd.at then
+       cd.at=now+K.coverDiagPeriod
+       U.log(e.log,now,'INFO',string.format('defense anticipee, bilan: candidats %d, dans la bande %d, sens du virage inconnu %d, tirage refuse %d, cote occupe %d, couvertures %d',cd.cand,cd.band,cd.turn0,cd.roll,cd.side,cd.done),-1)
+       cd.cand,cd.band,cd.turn0,cd.roll,cd.side,cd.done=0,0,0,0,0,0
       end
      end
      if not defend and H.towStart(e,s,a,back,row,p,profile,frame,now,startPhase or firstLap,braking,m,i,g) then defend=true end
@@ -2368,6 +2462,15 @@ function M.step(e,i,dt,now)
       if invitee and invitee.long>0 and invitee.gap<=K.inviteGap and abs(invitee.lat)>=K.inviteLat and abs(invitee.lat)<=K.inviteLatMax
        and (not front or invitee.gap<front.gap) then front=invitee end
      end
+     -- 2.0.2 h : voiture devant qu'il est permis de doubler sous jaune de zone (accidentee, hors piste, repartie).
+     local yellowPass=front~=nil and yellowPassOk(e,s,frame,front.index,p,now)
+     local yellowHeld=s.yellow and not yellowPass
+     if s.yellow and yellowPass and front.gap<=K.raceSlowGap then
+      if s.yellowPassFor~=front.index then
+       s.yellowPassFor=front.index; e.stats.yellowPassIncident=(e.stats.yellowPassIncident or 0)+1
+       U.log(e.log,now,'INFO',string.format('jaune: %s peut doubler %s, voiture en cause (%.0f m, %.0f km/h)',a.name,frame.cars[front.index].name,front.gap,frame.cars[front.index].kmh),i)
+      end
+     elseif s.yellowPassFor~=nil and (not front or front.index~=s.yellowPassFor) then s.yellowPassFor=nil end
      -- Beta 1.31 : terrain gagné sur la voiture de devant (mètres, mémoire de K.closeMemory s), suivi à chaque image,
      -- virages compris : une suite de virages ne le remet pas à zéro.
      if front and front.index==s.closeFront then s.closeMeters=s.closeMeters+(front.sa/3.6-s.closeMeters/K.closeMemory)*dt
@@ -2381,8 +2484,16 @@ function M.step(e,i,dt,now)
      -- elles finissent dans lui) : en course aussi, premier tour compris (hors départ), joueur juste devant nettement plus lent
      -- que l'allure libre de l'IA ici (H.playerSlow) et écarté d'au moins K.inviteLat m ou plus lent de K.raceSlowPlayerSa
      -- km/h : voiture lente à doubler à la première occasion sûre (pas au freinage), du côté qu'il libère.
-     local raceSlowPlayer=K.raceSlowPlayer==true and profile=='C' and not startPhase and front~=nil and front.index==frame.player and front.gap>=0
-      and front.gap<=K.raceSlowGap and not s.yellow and H.playerSlow(e,s,frame.cars[front.index],a,p) and (abs(front.lat)>=K.inviteLat or front.sa>=K.raceSlowPlayerSa)
+     -- Affinage 2.0.2 (le pilote : « en course, dès qu'un pilote peut en doubler un autre, il doit le faire » ; une voiture qui
+     -- ralentit et s'écarte, IA comprise) : K.raceSlowAny : même règle pour toute voiture juste devant (jamais la voiture de
+     -- sécurité), nettement plus lente que l'allure libre de l'IA ici et écartée ou plus lente de K.raceSlowPlayerSa km/h.
+     local raceSlowPlayer=K.raceSlowPlayer==true and profile=='C' and not startPhase and front~=nil
+      and (front.index==frame.player or K.raceSlowAny==true and not frame.cars[front.index].safetyCar and not frame.cars[front.index].pit
+       and (not firstLap or abs(front.lat)>=K.inviteLat)
+       -- 2.0.2 g (course du 15 novembre, 15 h 17 : Vilenius, un tour de retard, redouble Koch qui vient de le prendre d'un tour,
+       -- puis lui cède sous drapeau bleu, six fois de suite) : jamais contre une IA qui a un tour d'avance ou plus.
+       and not (K.raceSlowNoUnlap and leadLaps(frame.cars[front.index],a)>=1)) and front.gap>=0
+      and front.gap<=K.raceSlowGap and not yellowHeld and H.playerSlow(e,s,frame.cars[front.index],a,p) and (abs(front.lat)>=K.inviteLat or front.sa>=K.raceSlowPlayerSa)
      if raceSlowPlayer then slowPlayer=true end
      -- Beta 1.59 : hors course, la file derrière une voiture lente compte aussi (voitures 2 à n de la file) ; derrière
      -- elle, le freinage d'AC pour garder l'écart ne retient plus le dépassement en ligne droite (radar inchangé).
@@ -2409,7 +2520,7 @@ function M.step(e,i,dt,now)
      -- d'au moins K.diveSa km/h ; (2) voiture devant qui ralentit (K.raceSlowSa km/h de rapprochement, à moins de
      -- K.raceSlowGap m) : le freinage d'AC pour la suivre ne retient plus le dépassement. Côté libre et couloir vérifiés
      -- ensuite comme toujours ; la priorité au virage (nez devant) décide toujours au braquage.
-     local raceAttack=profile=='C' and front~=nil and front.index~=frame.player and front.gap>=0 and not s.yellow
+     local raceAttack=profile=='C' and front~=nil and front.index~=frame.player and front.gap>=0 and not yellowHeld
      -- Affinage 1.63 w2 (Monza, pilote : « très souvent on double en entrée de virage, surtout au freinage » ; 243 refus
      -- « virage ou freinage ») : en course hors premier tour, attaque au freinage dès que l'attaquant est à K.diveGapRace m
      -- au plus et que la cible ne s'éloigne pas (K.diveSaRace km/h) ; côté libre, couloir et priorité au virage décident ensuite.
@@ -2418,7 +2529,7 @@ function M.step(e,i,dt,now)
      local raceSlow=raceAttack and front.gap<=K.raceSlowGap and front.sa>=K.raceSlowSa and a.corner>=passCorner
      if dive or raceSlow then slowFree=true end
      local minPass=slowAhead and min(K.speedMinPass,K.slowPassRatio*frame.cars[front.index].kmh) or K.speedMinPass
-     local canPass=not s.returning and not startPhase and not s.yellow and (not braking or slowFree) and now>=(s.cornerGiveUntil or 0) and s.lapseUntil<=now and p.overtakeEnabled and front and front.gap>=0 and now>=s.restUntil and directionBudget(s,now,p) and not s.zone.noOvertake and not s.zone.passWait and not s.hotspot and not s.alongside
+     local canPass=not s.returning and not startPhase and not yellowHeld and (not braking or slowFree) and now>=(s.cornerGiveUntil or 0) and s.lapseUntil<=now and p.overtakeEnabled and front and front.gap>=0 and now>=s.restUntil and directionBudget(s,now,p) and not s.zone.noOvertake and not s.zone.passWait and not s.hotspot and not s.alongside
       and a.kmh>=minPass and (a.corner>=passCorner or dive) and (ownBrake<K.passBrakeMax or dive or raceSlow or raceSlowPlayer and slowFree)
      -- Beta 1.62 (qualifications, accord tacite de fin de tour) : deux voitures qui préparent leur tour (aucune lancée)
      -- ne se doublent pas dans les K.lapEndMeters derniers mètres avant la ligne ; un épisode compté une fois.
@@ -2433,7 +2544,7 @@ function M.step(e,i,dt,now)
      if canPass and p.classNuance and not passStates[s.state] and M.nuanceGate(e,s,a,front,p,profile,frame,now,i) then canPass=false; refused(e,s,front.index,'nuanceHold') end
      -- Lot 5 : voiture rattrapée à portée et dépassement interdit par l'état de la voiture : raison comptée.
      if not canPass and p.overtakeEnabled and front and front.gap>=0 and front.gap<=p.overtakeDetectAhead and front.sa>=p.overtakeAheadMargin and not passStates[s.state] and not defend and not s.returning then
-      refused(e,s,front.index,s.yellow and 'flag' or startPhase and 'start' or (s.zone.noOvertake or s.hotspot) and 'zone' or not directionBudget(s,now,p) and 'budget'
+      refused(e,s,front.index,yellowHeld and 'flag' or startPhase and 'start' or (s.zone.noOvertake or s.hotspot) and 'zone' or not directionBudget(s,now,p) and 'budget'
        or (braking and not slowFree or ownBrake>=K.passBrakeMax or a.corner<passCorner) and 'corner' or 'other')
      end
      -- Beta 1.30 : joueur écarté juste devant (invitation) sans dépassement engagé au bout de K.inviteReport s : la raison
@@ -2443,7 +2554,7 @@ function M.step(e,i,dt,now)
       s.inviteWait=s.inviteWait+dt
       if s.inviteWait>=K.inviteReport and not s.inviteLogged then
        s.inviteLogged=true
-       local why=s.yellow and 'drapeau jaune' or startPhase and 'depart' or s.returning and 'retour a la ligne' or (braking or ownBrake>=K.passBrakeMax) and 'freinage'
+       local why=yellowHeld and 'drapeau jaune' or startPhase and 'depart' or s.returning and 'retour a la ligne' or (braking or ownBrake>=K.passBrakeMax) and 'freinage'
         or a.corner<passCorner and 'virage' or now<s.restUntil and 'repos apres manoeuvre' or not directionBudget(s,now,p) and 'plafond anti-zigzag'
         or s.alongside and 'voiture a cote' or a.kmh<minPass and 'trop lent' or not p.overtakeEnabled and 'depassements coupes' or s.zone.noOvertake and 'zone sans depassement' or s.zone.passWait and 'zone d attaque attendue' or s.hotspot and 'point difficile'
         or s.lapseUntil>now and 'inattention' or front.sa<=-K.inviteSa and 'joueur plus rapide'
@@ -2500,7 +2611,12 @@ function M.step(e,i,dt,now)
       local free=s.freePace
       trigger=trigger or slowTarget
       if raceSlowPlayer and s.slowPlayerFor~=front.index then s.slowPlayerFor=front.index; e.stats.slowPlayerPass=(e.stats.slowPlayerPass or 0)+1
-       U.log(e.log,now,'INFO',string.format('joueur lent devant: %s va le doubler (%.0f m, %+.0f km/h, ecart lateral %.1f m)',a.name,front.gap,front.sa,abs(front.lat)),i)
+       if front.index==frame.player then
+        U.log(e.log,now,'INFO',string.format('joueur lent devant: %s va le doubler (%.0f m, %+.0f km/h, ecart lateral %.1f m)',a.name,front.gap,front.sa,abs(front.lat)),i)
+       else
+        e.stats.slowCarPass=(e.stats.slowCarPass or 0)+1
+        U.log(e.log,now,'INFO',string.format('voiture lente devant: %s va doubler %s (%.0f m, %+.0f km/h, ecart lateral %.1f m)',a.name,frame.cars[front.index].name,front.gap,front.sa,abs(front.lat)),i)
+       end
       elseif not raceSlowPlayer and s.slowPlayerFor~=nil and (not front or s.slowPlayerFor~=front.index) then s.slowPlayerFor=nil end
       -- Affinage 1.63 w2 : attaque au freinage en course (hors premier tour) : à K.diveGapRace m au plus, cible qui ne s'éloigne
       -- pas : déclenchée sans rapprochement exigé (au freinage, deux voitures égales freinent pareil).
@@ -2702,6 +2818,27 @@ function M.step(e,i,dt,now)
   end
   if p.slipstreamEnabled and (a.cornerYaw or a.corner)>=K.slipCorner and a.kmh>K.slipSpeed then s.slipTime=s.slipTime+dt; if s.slipTime>K.slipTime then caution=min(caution,max(K.slipCautionMin,caution*K.slipCaution)) end else s.slipTime=0 end
   if profile=='C' and front.index==frame.player and front.gap<K.playerFollowGap then caution=caution*K.playerCaution end
+  -- Affinage 2.0.2 (le pilote : « l'aspiration est faible ou absente » ; replays de Monza, AC à x1 : vitesse maxi avant le
+  -- freinage dans le sillage 5-30 m, aligné : de -1 à +10 km/h par rapport à seule, médiane ≈ +2 km/h ; 4 à 12 déboîtements
+  -- par course, aucun côte à côte atteint) : en course, hors premier tour, en ligne droite, dans le sillage d'une voiture
+  -- (K.towBoostMin à K.towBoostRange m, au plus K.towLat m de côté, plus de K.towBoostSpeed km/h) : niveau ×(1+K.towBoost),
+  -- dégressif avec l'écart ; jamais en virage (plafond de la 2.0.0 en virage gardé), jamais sous jaune, jamais en attaque
+  -- poussée (son propre bonus). Imite une aspiration plus forte que celle d'AC à x1.
+  -- 2.0.2 f : jamais au freinage, et fini K.towBoostEndAhead m avant le bout de la ligne droite (carte apprise) : le
+  -- niveau relevé ne doit pas retarder le freinage de l'entrée de chicane.
+  local tbAhead=true
+  do local mm=e.aero
+   if mm and mm.bins and mm.bins>0 and mm.at>-math.huge and a.splineValid and frame.length>0 then
+    local b=Delta.bin(a.spline,mm.bins); if mm.seen[b]>=K.towMapSeen then tbAhead=mm.run[b]*frame.length/mm.bins>=K.towBoostEndAhead end
+   end
+  end
+  if K.towBoost and profile=='C' and not firstLap and not s.yellow and a.corner>=K.passCornerC and a.kmh>K.towBoostSpeed
+   and tbAhead and ownBrake<=K.ruleBrake and a.brake<=K.ruleBrake
+   and front.gap>=K.towBoostMin and front.gap<=K.towBoostRange and abs(front.lat)<=K.towLat and (front.long or 1)>0
+   and not (s.pushFor and s.pushFor==s.passStartAt and now-(s.pushAt or -math.huge)<=(K.pushMaxRace or K.pushMax)) then
+   level=level*(1+K.towBoost*U.clamp((K.towBoostRange-front.gap)/(K.towBoostRange-K.towBoostMin),0,1))
+   e.stats.towBoost=(e.stats.towBoost or 0)+dt
+  end
  end
  -- Relecture 1.62 (S1) : plafond de l'attaquant décalé appliqué ici, avant les règles de sécurité (radar, intention de la
  -- file, départ, côte à côte, sortie des stands, freinage, usure) : elles ne sont plus annulées.
@@ -2886,7 +3023,12 @@ function M.step(e,i,dt,now)
   local care=frame.started and s.startCare or 1
   caution=caution*U.lerp(U.lerp(1,p.startCautionMult,care),1,relax); aggression=aggression*U.lerp(U.lerp(1,p.startAggrMult,care),1,relax)
   s.laneActive=false
-  if s.state~='AVOID' then desired=p.startLaneHold and H.laneHold(e,s,a,row,g,frame,now,i) or 0 end
+  s.filesOn=K.startFiles and p.firstLapCare==true and (not frame.started or elapsed<K.startFilesMax)
+  if s.state~='AVOID' then desired=(p.startLaneHold or s.filesOn) and H.laneHold(e,s,a,row,g,frame,now,i) or 0 end
+ -- Affinage 2.0.2 : deux files tenues au-delà de la fenêtre de départ, jusqu'au premier freinage (au plus
+ -- K.startFilesMax s), seulement en conduite ordinaire (jamais pendant un dépassement, une cession ou un évitement).
+ elseif profile=='C' and K.startFiles and s.laneActive and s.filesOn and elapsed<K.startFilesMax and (s.state=='DRIVE' or s.state=='IDLE' or s.state=='CALM') then
+  desired=H.laneHold(e,s,a,row,g,frame,now,i)
  elseif s.lane~=0 or s.laneActive then s.lane=0; s.laneActive=false
  end
  -- Beta 1.47 : premier tour attentif : agressivité au plus K.firstLapAggr de la base.

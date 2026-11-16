@@ -31,7 +31,7 @@ tests.LOCK_PULLOUT_REACHABLE_201=function()
 end
 
 tests.K_201A=function()
- assert(K.lastPullEnabled==false and K.coverSaMin==0 and K.coverAheadMax==600 and K.coverAheadMin==120 and K.wakeStallGapRace==6)
+ assert(K.lastPullEnabled==false and K.coverSaMin==0 and K.coverAheadMax==600 and K.coverAheadMin==80 and K.wakeStallGapRace==6) -- 2.0.2 f : bande dès 80 m (tests/review202f.lua)
 end
 
 return tests

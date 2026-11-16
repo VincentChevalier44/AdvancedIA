@@ -101,8 +101,16 @@ function M.begin(f,e,frame,now)
  local kind=want=='formation' and 'formation' or 'rolling'
  -- Grille indisponible (capacités, sens latéral non mesuré) : départ lancé, comme le repli d'une relance arrêtée.
  if kind=='formation' and not (e.gridCaps==true and e.g.offsetSign~=0) then
-  U.log(e.log,now,'INFO',string.format('depart: grille indisponible (%s) : depart lance apres le tour de formation',e.gridCaps~=true and 'capacites' or 'sens lateral non mesure'),-1)
-  kind='rolling'
+  -- 2.0.2 i (retour d'un joueur : « tour de formation arrêté » toujours suivi d'un départ lancé) : sens latéral pas
+  -- encore mesuré au feu vert (première séance, course seule) : le tour de formation reste « arrêté » ; la mesure peut
+  -- se faire pendant le tour, et la fin du tour (Incidents standing, t.gridReady relu à chaque image) choisit la grille
+  -- ou, toujours inconnu, le départ lancé (une ligne au journal). Capacités absentes (CSP) : départ lancé dès le feu vert.
+  if e.gridCaps~=true or not K.formationWaitSign then
+   U.log(e.log,now,'INFO',string.format('depart: grille indisponible (%s) : depart lance apres le tour de formation',e.gridCaps~=true and 'capacites' or 'sens lateral non mesure'),-1)
+   kind='rolling'
+  else
+   U.log(e.log,now,'INFO','depart: sens lateral pas encore mesure : mesure pendant le tour de formation, sinon depart lance',-1)
+  end
  end
  -- Relecture : IA seulement (le meneur du tour est une IA) ; sans aucune IA en piste, pas de tour de formation.
  local n=0

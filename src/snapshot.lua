@@ -529,6 +529,20 @@ local function tick(i,at)
 end
 function M.read(s,dt,now,light)
  local at=M.clock and M.clock() or nil
+ -- Affinage 2.0.2 : réglage « aspiration » d'AC (ac.getAssists, CSP 0.3.0-preview247 ou plus), lu une fois, protégé.
+ if s.towAssist==nil then local got,assists=pcall(ac.getAssists); s.towAssist=got and type(assists)=='table' and tonumber(assists['slipstream']) or false end
+ -- Affinage 2.0.2 f : valeur écrite par Content Manager (cfg/assists.ini, SLIPSTREAM) lue une fois aussi, pour le journal :
+ -- ac.getAssists rend l'aide de la voiture du joueur, les IA ne la reçoivent pas (replays du 15 novembre : x3 au fichier,
+ -- même gain d'aspiration des IA qu'en x1).
+ if s.towAssistFile==nil then
+  s.towAssistFile=false
+  pcall(function()
+   local text=io.load(ac.getFolder(ac.FolderID.Cfg)..'/assists.ini')
+   local v=nil
+   if type(text)=='string' then for line in text:gmatch('[^%c]+') do v=v or line:match('^%s*SLIPSTREAM%s*=%s*([%d%.]+)') end end
+   s.towAssistFile=tonumber(v) or false
+  end)
+ end
  local ok,err=pcall(simRead,s)
  -- Beta 1.57 : premier échec : champs de la session essayés un par un (version de CSP plus ancienne), puis relecture
  -- par la vue ; seul un champ essentiel absent reste une erreur de lecture.

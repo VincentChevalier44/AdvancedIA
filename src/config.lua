@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 2.0.1',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 2.0.2',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -1913,4 +1913,54 @@ M.K.yellowFollowWatch=250; M.K.yellowFollowSa=15; M.K.yellowFollowDecel=6; M.K.y
 for key,value in pairs({yieldExitNoDecel=true,yieldExitGap=40,slowLapRelax=true,slowLapBehind=5,slowLapFastKmh=20,slowLapExitTime=2.5,
  slowLapRelaxIn=0.5,slowLapRelaxOut=2,pqExitPass=true,yieldClosingTTC=4,yieldStallCorners=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
 M.optionalTimerFields[#M.optionalTimerFields+1]='yieldCornerAt'
+-- Affinage 2.0.2 (décision du pilote : « les deux » : vrais écarts de rythme en course et attaque plus décidée ; replays de
+-- Monza : 1 à 5 vrais dépassements par course après le premier tour, écart mini médian 9 m, 10 % sous 4 m, ≈70 fins
+-- « cible plus rapide ») : wearRaceMult : en course, l'usure, la gomme et le carburant pèsent davantage sur le rythme,
+-- bornés à wearRaceMaxLoss / wearRaceMaxGain ; abortSlowTimeRace : en course,
+-- abandon « cible plus rapide » après abortSlowTimeRace s (au lieu de abortSlowTime). Dispersion du niveau du préréglage
+-- « Course réaliste » gardée à 2 % (3 % essayé : un évitement de plus au premier tour sur le banc des départs). towBoost : en course, en ligne droite dans le sillage d'une voiture
+-- (towBoostMin à towBoostRange m, plus de towBoostSpeed km/h), niveau ×(1+towBoost) dégressif avec l'écart : aspiration
+-- d'AC à x1 trop faible pour finir un dépassement (replays : ≈ +2 km/h). pullOutSlackMax : en course, aligné dans le
+-- sillage, pas de déboîtement en sortie de virage s'il reste plus de pullOutSlackMax s de ligne droite au-delà du temps
+-- pour arriver à hauteur (replays : 20 à 38 % des déboîtements à plus de 6 s du freinage) : il attend la fronde.
+-- (towTooEarlyLat : jusqu'à 2,5 m de côté ; pas pour un vrai avantage de towTooEarlySa km/h ou plus). raceSlowAny : la règle
+-- du joueur lent de la 2.0.1 vaut pour toute voiture juste devant, IA comprise (au premier tour : seulement écartée).
+for key,value in pairs({wearRaceMult=1.8,wearRaceMaxLoss=0.03,wearRaceMaxGain=0.015,abortSlowTimeRace=4.5,towBoost=0.02,towBoostMin=3,towBoostRange=30,towBoostSpeed=200,pullOutSlackMax=3,towTooEarlyLat=2.5,towTooEarlySa=15,raceSlowAny=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.2 : SpotterEnginer renommé SpotterEngineer (décision de son pilote, 15 novembre 2026). Les deux noms sont reconnus :
+-- companionNames (dossier apps/lua/<nom>, le nouveau d'abord), clés annexes lues sous le nouveau nom puis sous l'ancien.
+M.K.companionNames={'SpotterEngineer','SpotterEnginer'}
+M.K.sePlanKey='SpotterEngineer.pitplan'; M.K.sePlanKeyOld='SpotterEnginer.pitplan'
+M.K.seStrategyKey='SpotterEngineer.strategy'; M.K.seStrategyKeyOld='SpotterEnginer.strategy'
+-- Affinage 2.0.2 (vidéo du pilote, départs : de la 15e à la dernière place, les voitures se mettent en file sur la
+-- trajectoire et laissent l'autre côté vide) : startFiles : en course, chaque IA garde après le feu vert la position
+-- latérale de sa place sur la grille (deux files, comme la grille en quinconce) jusqu'à son premier freinage, au plus
+-- startFilesMax s après le lancement ; à startFilesMerge s du premier point de freinage connu, rendue seulement dans un
+-- trou de la file de la trajectoire (startFilesGapBack m derrière ou startFilesGapTime s d'une voiture plus rapide, startFilesGapAhead m devant) ; ensuite le maintien ordinaire (tenu tant qu'une voiture est à côté et pendant le
+-- freinage) puis la rampe vers la trajectoire, jamais vers un côté occupé. Indépendant du réglage « Maintien de ligne
+-- au départ » (resté coupé par défaut) ; suit « Premier tour attentif » (onglet Départ). Replay de Monza (2.0.1) : la file à +5,5 m de la trajectoire rejoint la
+-- trajectoire en 10 à 14 s, en pleine ligne droite.
+for key,value in pairs({startFiles=true,startFilesMax=25,startFilesMerge=5,startFilesGapBack=15,startFilesGapTime=2,startFilesGapAhead=20,startFilesLineWidth=0.5}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.2 f (courses du 15 novembre) : défense anticipée jamais vue en jeu (suiveur dans l'aspiration à 20-30 m, peu
+-- aligné à 1,2 m près) : fenêtre élargie (25 m, 1,6 m de côté, dès 80 m avant le freinage), tirage plus probable, et bilan au
+-- journal toutes les coverDiagPeriod s. Coup de pouce de l'aspiration fini towBoostEndAhead m avant le freinage.
+for key,value in pairs({coverDiagPeriod=120,towBoostEndAhead=150}) do assert(M.K[key]==nil,key); M.K[key]=value end
+M.K.coverGap=25; M.K.coverLatMax=1.6; M.K.coverAheadMin=80; M.K.coverChance=0.5
+-- 2.0.2 g : reprise d'une IA accidentée : une voiture en course toute proche (rejoinNearBehind m derrière, ou à hauteur)
+-- compte comme trafic quelle que soit sa vitesse (file arrêtée sous double jaune), sauf une autre voiture accidentée.
+-- raceSlowNoUnlap : la règle « voiture lente devant » ne joue jamais contre une IA qui a un tour d'avance ou plus.
+for key,value in pairs({rejoinNear=true,rejoinNearBehind=40,raceSlowNoUnlap=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.2 i (retours des joueurs) : retireBrokenOnly : en course, seule une IA vraiment cassée abandonne après un dépannage ;
+-- formationWaitSign : tour de formation « arrêté » gardé quand le sens latéral n'est pas encore mesuré au feu vert.
+-- failureMinLaps : jamais de panne progressive avant 2 tours bouclés (retours des joueurs).
+for key,value in pairs({retireBrokenOnly=true,formationWaitSign=true,failureMinLaps=2}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.2 j (demandes des joueurs sur Overtake) : windowScale, taille du texte de la fenêtre de réglages (1 = inchangé, jusqu'à
+-- 1,5 ; vue compacte en jeu comprise) ; appSounds, interrupteur général des bips de l'app (DRS et delta), vrai par défaut.
+assert(M.globalDefaults.windowScale==nil and M.globalDefaults.appSounds==nil); M.globalDefaults.windowScale=1; M.globalDefaults.appSounds=true
+assert(M.globalBounds.windowScale==nil); M.globalBounds.windowScale={1,1.5}
+for key,value in pairs({windowScaleStep=0.1}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.2 h (pilote, 16 novembre : « en course, l'IA freine et ne me double pas si je suis plus lent, meme quand je suis dans
+-- l'herbe et que je reviens sur la piste ») : yellowPassIncident : sous jaune de zone seule, la voiture en cause (accidentee,
+-- hors piste, tout juste repartie) peut etre doublee ; avoidRejoinEnds : une voiture repartie qui roule sans glisser n'est
+-- plus un obstacle a contourner au ralenti.
+for key,value in pairs({yellowPassIncident=true,avoidRejoinEnds=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
 return M

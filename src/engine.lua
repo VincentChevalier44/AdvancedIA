@@ -112,7 +112,7 @@ local function seStrategyIgnored(e,s,why,now)
  s.ignored=s.ignored or {}
  if s.ignored[why] then return end
  s.ignored[why]=true
- U.log(e.log,now,'INFO','SpotterEnginer strategie: ignoree ('..why..')',-1)
+ U.log(e.log,now,'INFO','SpotterEngineer strategie: ignoree ('..why..')',-1)
 end
 -- À chaque image (course) : conseil valable montré sur le rappel d'arrêt du joueur (e.incidents.seStrategyMode et
 -- seStrategyTarget, src/panel.lua) et journalisé à chaque changement, avec notre propre temps perdu appris à côté du
@@ -136,7 +136,7 @@ function M.seStrategy(e,frame,player,now)
  if plan.mode~=s.logMode or plan.rival~=s.logTarget or plan.lap~=s.logLap then
   s.logMode=plan.mode; s.logTarget=plan.rival; s.logLap=plan.lap
   local pc=player and e.pits.cars[frame.player]
-  U.log(e.log,now,'INFO',string.format('SpotterEnginer strategie: %s (rival %s, tour %d, gain %.1f s ; notre temps perdu aux stands %.1f s)',plan.mode,target~='' and target or '-',plan.lap,plan.gain,
+  U.log(e.log,now,'INFO',string.format('SpotterEngineer strategie: %s (rival %s, tour %d, gain %.1f s ; notre temps perdu aux stands %.1f s)',plan.mode,target~='' and target or '-',plan.lap,plan.gain,
    Pitloss.loss(e.pitloss,pc and pc.lapTime or 0)),-1)
  end
  if plan.mode~='none' then inc.seStrategyMode=plan.mode; inc.seStrategyTarget=target end
@@ -161,7 +161,7 @@ local function startReport(e,frame,now)
   end
  end
  U.log(e.log,now,'INFO',string.format('depart: maintien de ligne %s, %d IA, trajectoire mesuree %d, decalees %d, maintenues %d, largeur connue %d, signe %d ; prudence x%.2f, agressivite x%.2f ; drapeaux bleus %s (%.0f m) ; radar avant %s',
-  e.run.startLaneHold and 'actif' or 'coupe',n,measured,offset,held,sides,e.runtimeG.offsetSign or 0,e.run.startCautionMult,e.run.startAggrMult,e.run.blueFlagEnabled and 'actifs' or 'coupes',e.run.blueFlagRange,e.runtimeG.useBrakeAssist and 'actif' or 'coupe'),-1)
+  e.run.startLaneHold and 'actif' or K.startFiles and e.run.firstLapCare and 'deux files' or 'coupe',n,measured,offset,held,sides,e.runtimeG.offsetSign or 0,e.run.startCautionMult,e.run.startAggrMult,e.run.blueFlagEnabled and 'actifs' or 'coupes',e.run.blueFlagRange,e.runtimeG.useBrakeAssist and 'actif' or 'coupe'),-1)
  local parts={}; for _,key in ipairs(order) do parts[#parts+1]=tyres[key]..' x '..key end
  U.log(e.log,now,'INFO','pneus au depart: '..(#parts>0 and table.concat(parts,', ') or 'inconnus'),-1)
 end
@@ -753,6 +753,13 @@ function M.step(e,frame,dt)
   if e.loggedSession~=e.session then
    U.log(e.log,now,'INFO',string.format('session: indice %d, type CSP %d, type race.ini %d%s, circuit %s, voitures %d, longueur %.0f m',
     frame.session,frame.type,frame.configType,frame.configTrackDay and ' (Track Day)' or '',frame.track,frame.count,frame.length),-1)
+   -- Affinage 2.0.2 (le pilote : aspiration faible) : réglage « aspiration » d'AC lu une fois par séance (ac.getAssists, CSP
+   -- 0.3.0-preview247 ou plus, lu par src/snapshot.lua) ; absent : rien.
+   if type(frame.towAssist)=='number' then U.log(e.log,now,'INFO',string.format('aspiration d AC: x%.1f',frame.towAssist),-1) end
+   -- 2.0.2 f : réglage de Content Manager (assists.ini) quand il diffère : aide du joueur seulement, pas des IA.
+   if type(frame.towAssistFile)=='number' and frame.towAssistFile~=frame.towAssist then
+    U.log(e.log,now,'INFO',string.format('aspiration d AC: x%.1f dans assists.ini (aide de la voiture du joueur, pas des IA)',frame.towAssistFile),-1)
+   end
   end
   U.log(e.log,now,'INFO','profil: '..e.profile..(e.g.autoProfile and ' (automatique)' or ' (manuel)'),-1)
   e.loggedSession=e.session; e.loggedProfile=e.profile
@@ -856,7 +863,8 @@ function M.step(e,frame,dt)
  if e.wasStarted and not frame.started and not frame.replay then e.raceGen=(e.raceGen or 0)+1; HudInfo.restart(e.hud); U.log(e.log,now,'INFO','course relancee: recapitulatif et place de depart remis a zero',-1) end
  e.wasStarted=frame.started
  -- Maintien de ligne au départ : écart à la trajectoire lu dans l'instantané suivant, pendant le départ seulement.
- frame.laneWanted=e.profile=='C' and e.run.startLaneHold==true and (not frame.started or now-math.max(e.startedAt,e.launchAt or -math.huge)<e.run.startDelay+math.min(e.run.startRelax,K.startWindowMax))
+ frame.laneWanted=e.profile=='C' and (e.run.startLaneHold==true and (not frame.started or now-math.max(e.startedAt,e.launchAt or -math.huge)<e.run.startDelay+math.min(e.run.startRelax,K.startWindowMax))
+  or K.startFiles and e.run.firstLapCare==true and (not frame.started or now-math.max(e.startedAt,e.launchAt or -math.huge)<K.startFilesMax))
  -- Beta 1.60 : jugement des collisions en service : écart latéral à la piste lu pour toutes les voitures (src/snapshot.lua).
  frame.blameWanted=Blame.active(e)
  -- Informations de l'overlay (Beta 1.25) : à chaque image, même app à l'arrêt ou session finie ; récapitulatif de
@@ -1504,7 +1512,10 @@ function M.step(e,frame,dt)
    -- immobile en piste, sous neutralisation) abandonne comme une voiture enlevée par la grue : garée à son stand jusqu'à
    -- la fin (marquée à son arrivée aux stands, plus bas). Rouge et délai maximal : toutes rentrent et repartent.
    local st=e.states[i]
-   if K.recoverRetire and e.profile=='C' and cmd.recover and not red and retireReasons[cmd.recoverReason] then st.retirePending=cmd.recoverReason
+   -- 2.0.2 i (retours des joueurs : arrêts sans accident, voitures jamais revenues) : seule une IA vraiment cassée (moteur,
+   -- suspension ou boîte hors d'usage, Incidents.brokenReason) abandonne ; une IA intacte dépannée (bloquée, immobile en
+   -- piste, sous neutralisation, jamais repartie) rentre, est réparée et repart comme avant la 2.0.0.
+   if K.recoverRetire and e.profile=='C' and cmd.recover and not red and retireReasons[cmd.recoverReason] and (not K.retireBrokenOnly or Incidents.brokenReason(a)~=nil) then st.retirePending=cmd.recoverReason
    elseif st.retirePending and not cmd.recover and not a.pit then st.retirePending=nil end
    -- Beta 1.41 : IA anormalement lente en tête de file depuis K.slowPitTime s et endommagée (suspension, carrosserie) :
    -- hors course, dépannée à son stand (puis réparée, plus bas) ; en course, arrêt demandé (réparée selon les règles),
