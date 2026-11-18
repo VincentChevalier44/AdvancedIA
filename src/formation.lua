@@ -16,6 +16,8 @@
 local U=require('src/util')
 local K=require('src/config').K
 local Incidents=require('src/incidents')
+local Pits=require('src/pits') -- Relecture 2.0.4 (E4) : tours du leader (repli de la 2.0.3)
+local Grid=require('src/grid') -- 2.0.4 : place de chaque voiture lue sur la grille au feu vert
 local max=math.max
 local M={}
 -- Correctif 1.63 (Montréal, 12 novembre : « file etiree (4074 m entre deux voitures) » dès le feu vert, des voitures
@@ -73,7 +75,7 @@ local function arm(f,e,frame,now,kind)
  local kmh=M.pace(p)
  t.neutral=true; t.relaunch=true; t.ending=false; t.escalated=false; t.neutralMode='fcy'; t.neutralSince=now; t.neutralUntil=now
  t.relaunchSpanUntil=now; t.relaunchLeader=0; t.relaunchTravel=0; t.relaunchToLine=math.huge
- t.formation=true; t.formationKind=kind; t.formationAborted=false; t.formationExtra=0; t.formationKmh=kmh; t.rollGo=false; t.rollCall=false
+ t.formation=true; t.formationKind=kind; t.formationAborted=false; t.formationExtra=0; t.formationKmh=kmh; t.rollGo=false; t.rollCall=false; t.rollWaitLogged=false
  f.phase='lap'; f.kind=kind; f.called=false; f.begun=f.begun+1
  -- Beta 1.61 (tranche D) : la voiture de tête choisit son moment : drapeau vert du départ lancé entre
  -- K.rollZoneFrom m et K.rollGreenBefore m de la ligne (jamais plus tard qu'en 1.60), tiré de la graine.
@@ -126,9 +128,18 @@ function M.begin(f,e,frame,now)
  local ranked=0
  for i=1,frame.count do local a=frame.cars[i]; if a.valid and not a.pit and not a.finished and not a.safetyCar and (a.control or a.player) and (a.position or 0)>=1 then rank[i]=a.position; ranked=ranked+1 end end
  t.formationRankN=ranked; t.formationAt=now
+ -- 2.0.4 (pilote, Monza, 18 novembre 10:34 : toutes les IA une place derrière la leur, de biais : le classement d'AC
+ -- au feu vert compte une voiture de plus) : place de chaque voiture lue sur la grille elle-même (nœud AC_START sur lequel
+ -- elle est posée au feu vert, src/grid.lua) ; nil si une voiture n'est sur aucun nœud (places dans l'ordre, comme avant).
+ t.formationNode=Grid.nodeRanks(e.grid and e.grid.nodes,frame,rank,e.g.offsetSign,t.formationNode)
+ -- 2.0.4 (décision du pilote du 18 novembre : « recaler ») : pose exacte de chaque place (position et cap où AC a posé la
+ -- voiture), pour la reposer exactement là une fois arrêtée à sa place (src/grid.lua, M.snap).
+ if e.grid then Grid.recordPoses(e.grid,frame,t.formationNode) end
  local kmh=arm(f,e,frame,now,kind); f.report=true
  if p.startRealism then
-  U.log(e.log,now,'INFO',string.format('tour de formation: depart par rangees, zigzags %s, deux files a %.0f m de la ligne','oui',kind=='rolling' and K.rollCallDistance or 0),-1)
+  -- Beta 2.0.4 : entrée des stands lue (zone sans décalage), à la fin de la ligne.
+  local entry=(e.pitEntry or -1)>=0 and string.format(', entree des stands a %.0f m',e.pitEntry*frame.length) or ', entree des stands inconnue'
+  U.log(e.log,now,'INFO',string.format('tour de formation: depart par rangees, zigzags %s, deux files a %.0f m de la ligne%s','oui',kind=='rolling' and (K.rollPairs and K.rollPairFrom or K.rollCallDistance) or 0,entry),-1)
   U.log(e.log,now,'INFO',string.format('tour de formation: tete sans limite de vitesse sur %d %% du tour, chauffe a %.0f km/h sur %d %%, regroupee sur les %.0f derniers m',math.floor(FK.freeShare*100+0.5),kmh*FK.warmMult,math.floor(FK.warmShare*100+0.5),FK.compactFrom),-1)
  end
  U.log(e.log,now,'INFO',string.format('depart: tour de formation (%d voitures, %.0f km/h en tete), puis depart %s',n,kmh,kind=='formation' and 'arrete' or 'lance'),-1)
@@ -147,7 +158,8 @@ function M.rearm(f,e,frame,now)
  local why=t.red and 'drapeau rouge' or t.neutral and 'neutralisation' or (e.profile~='C' or not frame.started) and 'course relancee'
   or from=='start' and f.phase~='grid' and 'formation inactive' or frame.length<=0 and 'circuit inconnu'
   -- Relecture 1.64 : au moins un vrai tour de course après le tour en plus et le nouveau départ (course aux tours).
-  or (frame.sessionLaps or 0)>0 and not frame.timedRace and (frame.leaderLaps or 0)+2>=frame.sessionLaps and 'course trop courte' or nil
+  -- Relecture 2.0.4 (E4) : tours du leader avec le repli de la 2.0.3 (src/pits.lua, M.leaderLaps).
+  or (frame.sessionLaps or 0)>0 and not frame.timedRace and Pits.leaderLaps(frame)+2>=frame.sessionLaps and 'course trop courte' or nil
  if why then
   Incidents.clearStartAbort(t)
   U.log(e.log,now,'INFO',string.format('depart retarde impossible (%s): grille annulee',why),-1)
@@ -167,6 +179,10 @@ function M.rearm(f,e,frame,now)
   local ranked=0
   if not roll then for i=1,frame.count do local k=t.cars[i].abortSlot or 0; if k>0 then rank[i]=k; ranked=ranked+1 end end end
   t.formationRankN=ranked; t.formationAt=now
+  -- 2.0.4 : départ avorté : chaque voiture reprend la place de la grille avortée (abortSlot, déjà une place de la grille).
+  local node=t.formationNode or {}; for k in pairs(node) do node[k]=nil end
+  for i,k in pairs(rank) do node[i]=k end
+  t.formationNode=ranked>0 and node or nil
   arm(f,e,frame,now,roll and 'rolling' or 'formation')
   f.strungFor=0; f.strungLogged=false; f.slowKmh=nil
  else
@@ -273,6 +289,24 @@ function M.step(f,e,frame,now,dt)
   -- Beta 1.62 (règles de la course) : jamais plus de dix longueurs de voiture entre deux voitures de la file : file
   -- étirée depuis K.formationGapTime s, la tête ralentit (K.formationWaitMult) jusqu'au regroupement.
   if t.formation then M.bunch(f,e,frame,now,dt) else f.strungFor=0; f.strungLogged=false end
+  -- Affinage 2.0.4 (Monza, 16 h 29 : rangées de tête encore espacées de 20 à 38 m au drapeau vert) : pendant l'appel des
+  -- deux files, toutes les K.rollLogPeriod s, une ligne : places 1 à K.rollLogCars, écart à la voiture de la place
+  -- d'avant (m, sur la piste), paire formée (P) ou non (-), écart latéral réel (m), limite de vitesse de l'app.
+  if t.formation and t.rollCall and K.rollLogPeriod and now>=(f.rollLogAt or -math.huge) then
+   f.rollLogAt=now+K.rollLogPeriod
+   local byPos={}
+   for i=1,frame.count do local a=frame.cars[i]; local p=e.states[i].rollPlace or 0; if p>=1 and p<=K.rollLogCars and a.valid then byPos[p]=i end end
+   local parts={}
+   for p=1,K.rollLogCars do
+    local i=byPos[p]
+    if i then
+     local a=frame.cars[i]; local prev=byPos[p-1]; local gap=prev and frame.cars[prev].splineValid and a.splineValid and U.spline(frame.cars[prev].spline-a.spline)*frame.length or 0
+     local s=e.states[i]; local lim=e.commands[i] and e.commands[i].yellowLimit or K.unlimitedSpeed
+     parts[#parts+1]=string.format('%d:%.0f%s%s/%s/%s',p,gap,s.rollPaired and 'P' or '-',a.player and 'J' or (a.pit and 'S' or ''),s.formLat and string.format('%.1f',s.formLat) or '?',lim<K.unlimitedSpeed and string.format('%.0f',lim) or '-')
+    end
+   end
+   U.log(e.log,now,'DEBUG','appel des files: '..table.concat(parts,' '),-1)
+  end
   if not t.formation and not t.formationAborted then
    -- Fin du tour : grille en formation (src/grid.lua), sinon état inattendu : la course est lancée.
    if t.standing~='none' then f.phase='grid' else f.phase='none'; f.report=false; return 'roll' end

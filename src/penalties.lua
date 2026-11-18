@@ -92,6 +92,10 @@ function M.update(t,frame,p,profile,inc,now,_,d)
  -- jusqu'à la ligne après une reprise derrière la voiture de sécurité. Un dépassement en attente survit à la fin du
  -- régime : il est pardonné si la place est rendue, sanctionné à l'échéance sinon.
  local regime=inc.playerNoPass or inc.neutral or inc.red or inc.playerRestart==true
+ -- 2.0.4 (Racer63, 18 novembre : pénalisé en passant près d'un incident ; décision du pilote : rendre la place d'abord) :
+ -- zone jaune locale seule (ni neutralisation, ni rouge, ni reprise) : un dépassement laisse toujours au moins
+ -- K.giveBackMin s pour rendre la place avant la pénalité, même quand le régime dure depuis plus de K.passGiveBack s.
+ local localZone=inc.playerNoPass==true and not inc.neutral and not inc.red and inc.playerRestart~=true
  -- Beta 1.64 (lot 5) : joueur autorisé à se dédoubler, ou arrivé pendant une arrivée neutralisée : rien de jugé.
  if i>0 and inc.cars and inc.cars[i] and inc.cars[i].scFree then regime=false end
  -- Beta 1.60 (fusion, doute de la tranche E) : tour de formation, les K.formationGrace premières secondes après le feu
@@ -154,7 +158,7 @@ function M.update(t,frame,p,profile,inc,now,_,d)
       t.ahead[j]=true; t.waiting[j]=nil
      elseif r.long<-half then
       if t.ahead[j] and regime then
-       if now-t.regimeAt<K.passGiveBack then t.waiting[j]=deadline(t.regimeAt,now)
+       if now-t.regimeAt<K.passGiveBack or localZone then t.waiting[j]=deadline(t.regimeAt,now); t.waitNew=j; t.waitLocal=localZone
        else t.passMade=true; grant(t,j,i); if ready and not result then t.passed=j; result=decide(t,'pass',p.penaltySeconds,now,p) end end
       end
       t.ahead[j]=false
@@ -216,6 +220,10 @@ function M.ai(t,frame,p,profile,inc,states,rows,now)
  if not p.aiPenalties or C.solo(profile) then clear(t.ai.giveBack); return nil end
  -- Correctif 1.63 (règlement du tour de formation) : aucune sanction d'IA ni place à rendre pendant le tour de formation.
  if inc.formation and not inc.red then clear(t.ai.giveBack); t.whole=false; return nil end
+ -- 2.0.4 (pilote, Monza, 18 novembre 10:53 : « place a rendre IA » sur le chemin de la grille, juste avant un
+ -- tête-à-queue) : formation de la grille et feux d'un départ arrêté : les places de la grille décident de l'ordre, aucun
+ -- dépassement d'IA jugé, aucune place à rendre.
+ if (inc.standing=='grid' or inc.standing=='lights') and not inc.red then clear(t.ai.giveBack); t.whole=false; return nil end
  local s=t.ai; local events=nil
  local whole=inc.neutral or inc.red
  if whole and not t.whole then t.wholeAt=now end

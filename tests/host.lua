@@ -203,7 +203,8 @@ function M.create(native110,options)
  rawset(_G,'vec3',v3)
  ac.trackProgressToWorldCoordinate=function(v) assert(type(v)=='number' and v>=0 and v<1); return v3(0,0,v*h.sim.trackLengthM) end
  physics.setCarPosition=function(index,pos,dir)
-  assert(index~=0 and h.cars[index].isAIControlled and getmetatable(pos)==V3 and dir==nil,'aligned by CSP along the AI spline')
+  -- 2.0.4 : direction donnée pour le recalage exact sur la grille (src/grid.lua) ; absente pour la répartition (alignée par CSP).
+  assert(index~=0 and h.cars[index].isAIControlled and getmetatable(pos)==V3 and (dir==nil or getmetatable(dir)==V3),'aligned by CSP along the AI spline, or an explicit direction')
   h.positions[index]={pos=pos,dir=dir}; h.positionWrites=(h.positionWrites or 0)+1
   if not h.positionsIgnored then local car=h.cars[index]; car.isInPit=false; car.isInPitlane=false; car.splinePosition=pos.z/h.sim.trackLengthM; car.position={x=0,y=0,z=pos.z}; car.look={x=0,z=1}; car.velocity={x=0,y=0,z=0}; car.speedKmh=0 end
  end
@@ -231,6 +232,7 @@ function M.create(native110,options)
  physics.setAISplineOffset=function(index,value,override)
   verify(index,value,math.abs(value)<=math.abs(h.offsets[index] or 0)+1e-9); assert(override==nil or type(override)=='boolean')
   h.cars[index].position.x=(right and -value or value)*5; h.offsets[index]=value; h.offsetCalls=h.offsetCalls+1
+  h.offsetOverrides=h.offsetOverrides or {}; h.offsetOverrides[index]=override
  end
  -- Couverture des infobulles : chaque commande doit être suivie d'une infobulle avant la commande suivante.
  local function widget(label)

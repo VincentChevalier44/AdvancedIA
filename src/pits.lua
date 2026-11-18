@@ -12,9 +12,11 @@ local function clear(c)
  -- passages servis sans arrêt compté pendant une même demande d'arrêt obligatoire (borne : jamais redemandée en boucle),
  -- premier passage à l'emplacement de ce passage dans la voie des stands (un seul service par passage), dépannage de l'app.
  c.usedDry={}; c.usedCount=0; c.requestServices=0; c.requestAbandoned=false; c.laneVisit=nil; c.laneStopped=false; c.reboxLogged=false; c.appTowAt=nil
+ -- Beta 2.0.4 : tour de la demande d'arrêt en cours (nil : aucune) et demande ignorée par le jeu (abandonnée).
+ c.askLap=nil; c.askLaps=0; c.requestIgnored=false
 end
 function M.new()
- local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false,sprintKm=-1,sprintLap=0,sprintSaid=false,sprintShow=false,sprintEmitted=false,sprintSeen=false}
+ local t={cars={},entrySpline=-1,playerNotice='',playerNoticeUntil=-math.huge,playerNoticeFrom='',playerNoticeTo='',hintFor=-2,hintTyre='',hintOthers={},opened=false,openedAt=-math.huge,justClosed=false,stopAwait=false,wasStarted=false,progress=-1,position=-1,open=-1,close=-1,csp=false,state='off',done=0,total=0,restored={},models={},restoredSession=-1,dirty=false,wetRace=false,waived=false,sprintKm=-1,sprintLap=0,sprintSaid=false,sprintShow=false,sprintEmitted=false,sprintSeen=false,ignoredCount=0}
  for i=1,K.maxCars do local c={identity='',lastStop=0}; clear(c); t.cars[i]=c end
  return t
 end
@@ -24,6 +26,7 @@ function M.reset(t,now)
  -- Relecture 164e (A4) : ouverture retardée par la décision oubliée avec la session.
  t.openedPos=-1; t.heldOpen=false
  t.shortWaived=false; t.effectiveKey=nil; t.callBy=nil; t.leaderFallbackSaid=false
+ t.ignoredCount=0
  -- Beta 1.64, lot 4 : course sprint (décision, distance, annonce) oubliée avec la session.
  t.sprint=nil; t.sprintKm=-1; t.sprintLap=0; t.sprintSaid=false
  -- Relecture 164d : message de la course sprint en attente ou tout juste émis, première image de la session vue.
@@ -36,7 +39,7 @@ function M.reset(t,now)
 end
 function M.rebase(t,amount)
  -- Relecture 1.52 : dépannage récent (towedAt) décalé aussi.
- for i=1,K.maxCars do local c=t.cars[i]; c.boxSince=c.boxSince-amount; c.lastStop=c.lastStop-amount; c.lapAt=c.lapAt-amount; if c.pendingUntil then c.pendingUntil=c.pendingUntil-amount end; if c.towedAt then c.towedAt=c.towedAt-amount end end
+ for i=1,K.maxCars do local c=t.cars[i]; c.boxSince=c.boxSince-amount; c.lastStop=c.lastStop-amount; c.lapAt=c.lapAt-amount; if c.pendingUntil then c.pendingUntil=c.pendingUntil-amount end; if c.towedAt then c.towedAt=c.towedAt-amount end; if c.appTowAt then c.appTowAt=c.appTowAt-amount end end
  if t.playerNoticeUntil>-math.huge then t.playerNoticeUntil=t.playerNoticeUntil-amount end
  if t.openedAt>-math.huge then t.openedAt=t.openedAt-amount end
  if t.remindAt then t.remindAt=t.remindAt-amount end; if t.hintAt then t.hintAt=t.hintAt-amount end
@@ -151,7 +154,9 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed,bus
  local active=profile=='C' and (p.mandatoryStops>0 or p.maxStintMin>0 or p.minPitTime>0)
  local progress=M.progress(frame); t.progress=progress
  -- 2.0.3 a : repli sur les tours des voitures dit une fois par session.
- if not t.leaderFallbackSaid and (frame.leaderLaps or 0)==0 and frame.sessionLaps>0 and not frame.timedRace and M.leaderLaps(frame)>0 then
+ -- Relecture 2.0.4 (H2) : dit seulement quand une voiture a bouclé au moins K.leaderFallbackWarnLaps tours (un compteur du
+ -- leader lu une image après celui des voitures, au passage de la ligne, ne fait plus écrire un faux avertissement).
+ if not t.leaderFallbackSaid and (frame.leaderLaps or 0)==0 and frame.sessionLaps>0 and not frame.timedRace and M.leaderLaps(frame)>=(K.leaderFallbackWarnLaps or 1) then
   t.leaderFallbackSaid=true
   if t.note then t.note('WARN','tours du leader indisponibles, avancement d apres les voitures',-1) end
  end
@@ -266,7 +271,8 @@ function M.update(t,frame,commands,p,profile,now,seed,announce,red,dq,closed,bus
  local requested=0
  -- Relecture 1.42 : la stratégie (image précédente, cmd.stratCalled) partage la même limite d'appels. Relecture 1.52 :
  -- l'appel d'une IA lente et endommagée (engine.lua, cmd.slowCalled) aussi.
- for i=1,frame.count do local a=frame.cars[i]; if (t.cars[i].wanted and t.cars[i].identity==(a.identity or a.id) or commands[i].stratCalled or commands[i].sanCalled or commands[i].slowCalled) and not a.pit then requested=requested+1 end end
+ -- Beta 2.0.4 : demande ignorée par le jeu (M.ignored) : aucune place d'appel retenue.
+ for i=1,frame.count do local a=frame.cars[i]; if (t.cars[i].wanted and t.cars[i].identity==(a.identity or a.id) or commands[i].stratCalled or commands[i].sanCalled or commands[i].slowCalled) and not a.pit and not t.cars[i].requestIgnored then requested=requested+1 end end
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local cmd=commands[i]
   local identity=a.identity or a.id
@@ -480,6 +486,28 @@ end
 -- Décisions : cmd.fuelSet (plein de course avant le départ, sans ravitaillement prévu), cmd.fuelTarget (carburant
 -- demandé à un arrêt forcé : règles, météo, drapeau rouge) et cmd.fuelLaps (tours avant un arrêt natif de secours).
 -- Sous drapeau rouge, rien n'est ajouté sauf pour finir (ravitaillement interdit en F1 et en WEC).
+-- Beta 2.0.4 (décision du pilote ; journaux d'un joueur : douze IA appelées pendant toute la course, aucune entrée aux
+-- stands) : demande d'arrêt finale de l'image (règles, stratégie, dégâts, sanctions) tenue K.pitIgnoredLaps tours par une
+-- IA restée en piste : le jeu l'ignore. Une ligne d'avertissement par voiture, compteur pour l'accueil, demande abandonnée
+-- pour la session (sans pénalité : l'arrêt obligatoire ne lui est plus demandé). Jamais sous drapeau rouge (retour aux
+-- stands de la procédure).
+function M.ignored(t,frame,commands,red)
+ for i=1,frame.count do
+  local a=frame.cars[i]; local c=t.cars[i]; local cmd=commands[i]
+  if not (a.valid and a.control and not a.player and not a.finished) or a.pit or red then c.askLap=nil
+  elseif cmd.rulePit and c.identity==(a.identity or a.id) then
+   -- Tours comptés un par un (passage de la ligne) : un saut du compteur (dépannage, rechargement) ne compte pas.
+   local lap=a.lap or 0
+   if c.askLap==nil then c.askLap=lap; c.askLaps=0 elseif lap==c.askLap+1 then c.askLap=lap; c.askLaps=c.askLaps+1 elseif lap~=c.askLap then c.askLap=lap end
+   if not c.requestIgnored and c.askLaps>=K.pitIgnoredLaps then
+    c.requestIgnored=true; t.ignoredCount=(t.ignoredCount or 0)+1
+    c.requestAbandoned=true
+    if t.note then t.note('WARN',string.format('arret demande ignore par le jeu: %s, %d tours sans entrer aux stands, demande abandonnee',a.name,K.pitIgnoredLaps),i) end
+   end
+   if c.requestIgnored then cmd.rulePit=false; cmd.slowCalled=false end
+  else c.askLap=nil end
+ end
+end
 function M.fuel(t,frame,commands,p,profile,now,red)
  local mode=p.pitFuel
  local learning=profile=='C' and not frame.online and not frame.replay

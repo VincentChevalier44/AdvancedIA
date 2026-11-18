@@ -27,6 +27,8 @@ end
 -- Temps au tour « 2:01,456 » (séparateur décimal de la langue) ; 0 ou moins : aucun.
 function M.lapTime(seconds)
  if not seconds or seconds<=0 then return '' end
+ -- Relecture 2.0.4 (B7) : arrondi au millième avant la coupe en minutes (59,9996 s s'affichait « 0:60.000 »).
+ seconds=math.floor(seconds*1000+0.5)/1000
  local m=math.floor(seconds/60); local s=seconds-m*60
  return (string.format('%d:%06.3f',m,s):gsub('%.',L.decimalMark))
 end

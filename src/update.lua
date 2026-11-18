@@ -113,7 +113,14 @@ local function safe(name)
  local rest=name:sub(#M.prefix+1)
  if rest:sub(-1)=='/' then rest=rest:sub(1,-2) end
  if rest=='' then return true end
- for segment in (rest..'/'):gmatch('([^/]*)/') do if segment=='' or segment=='.' or segment=='..' then return false end end
+ for segment in (rest..'/'):gmatch('([^/]*)/') do
+  if segment=='' or segment=='.' or segment=='..' then return false end
+  -- Relecture 2.0.4 (F1) : noms réservés de Windows (CON, NUL, COM1… avec ou sans extension) et point ou espace final,
+  -- que Windows ouvre comme un périphérique ou renomme en silence.
+  local base=segment:match('^([^.]*)'):upper()
+  if base=='CON' or base=='PRN' or base=='AUX' or base=='NUL' or base:match('^COM%d$') or base:match('^LPT%d$') then return false end
+  local last=segment:sub(-1); if last=='.' or last==' ' then return false end
+ end
  return true
 end
 -- Contenu du paquet : chemins sûrs, avec les fichiers indispensables (dont le module de mise à jour lui-même : une version

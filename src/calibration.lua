@@ -31,7 +31,8 @@ local function safe(frame,i,active)
 end
 function M.step(self,frame,caps,g,now)
  if frame.online or frame.replay or frame.paused then return false end
- if self.index==0 and g.offsetSign~=0 and g.sideSign~=0 then self.phase='ready'; return false end
+ -- 2.0.4 : sens -1 / -1 provisoire (installation neuve, révision 23) : la mesure tourne quand même, pour le confirmer.
+ if self.index==0 and g.offsetSign~=0 and g.sideSign~=0 and not g.signProvisional then self.phase='ready'; return false end
  if self.index>0 then
   local a,b=frame.cars[self.index],frame.cars[self.reference]
   if a and a.valid and self.indexID~=(a.identity or a.id) then self.index=0; self.phase='aborted'; self.retryAt=now+K.calibrationRetry; return false end
@@ -41,6 +42,7 @@ function M.step(self,frame,caps,g,now)
     if valid then
      local lat=-(b.x-a.x)*b.lz+(b.z-a.z)*b.lx; local delta=lat-self.startLat
      if math.abs(delta)>=K.calibrationMinMove then
+      if g.signProvisional then g.signProvisional=false; self.confirmed=true end
       g.offsetSign=U.sign(delta); g.sideSign=a.sideDot and U.sign(a.sideDot) or 1; self.phase='ready'
      else self.phase='inconclusive' end
     else self.phase='aborted' end

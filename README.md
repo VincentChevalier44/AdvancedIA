@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 2.0.3. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 2.0.4. See [CHANGELOG.md](CHANGELOG.md).
 - **Interactive guide:** chapter-by-chapter videos and the full manual: https://vincentchevalier44.github.io/AdvancedIA/
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
@@ -126,6 +126,8 @@ The repository download also contains the test bench and the technical documents
    - **Per desktop (Beta 2.0.0):** each overlay element can be shown, hidden and placed separately on each AC
      desktop; the app remembers it per desktop. Open AdvancedIA from AC's apps bar on that desktop to show,
      hide, move or reset the overlay there.
+   - **Hidden with AC's apps (Beta 2.0.4):** when you hide AC's apps (Ctrl+H), the overlay hides with them and comes
+     back with them; the app keeps running.
    - Move it, resize it or choose its content in **SETTINGS › ADVANCED › Overlay**.
    - While the app is active, it hides Assetto Corsa's own flags and its top message banner (CSP options **Hide race flags** and **Hide system messages**). They stay ticked, also with the game closed, so Content Manager shows them ticked; your values come back when you switch the app or the option off (see [CSP display options](#csp-display-options)). CSP may only apply them at the next game launch; **HOME › TO CHECK** says so.
 7. **Track days on long circuits (7 km and more) with many AI.**
@@ -589,6 +591,8 @@ Good to know:
 - AC counts the formation lap as lap 1 and starts its race clock at its own lights: **add one lap to the race**. Pit windows given in percent follow AC's count.
 - AC's own jump-start rule applies at its lights (the formation getaway); the app's jump-start rule applies at the standing start after the formation lap.
 - Rolling start: the AI drive their first corner carefully even if **Careful first lap** is off, and the green is postponed by one lap if a car is stopped just after the line.
+- Standing start after the formation lap: an incident near the pit entry, or of a car in the pit lane, no longer cancels the start (Beta 2.0.4); elsewhere an incident on the way to the grid cancels it and adds a formation lap.
+- Standing start after the formation lap (Beta 2.0.4): each car takes its own starting slot again (read on the grid itself at the green flag); the slot of a car in the pit lane stays empty, and a car that lost its place lines up behind the last slot. The AI move to their column gently (about 1 m/s sideways at most), following the slots of that column. Each AI drives right up to its slot (held 0.3 m from the pose recorded at the green flag); on the way its lateral target overrides the game AI's own avoidance and its native aggression is zero, both given back at lights out. Once stopped (within 4 m and 25°, nobody within 3.5 m), it is set exactly on the pose the game gave it for the start, with its wheels straight, before the lights, usually a matter of centimetres; the pose is read back on the car 0.4 s later and corrected if it is off (the lights wait for these checks, 4 s at most). A car more than 500 m from the pack when the grid forms starts from the back of the grid and is not waited for. Journal: `grille: places …` and `grille aux feux: …` (gaps of each AI at the lights). From the end of the formation lap to lights out nobody overtakes, defends or yields, and an AI stopped a few metres short of its slot keeps creeping forward (held there only after 1.5 s still).
 - An incident that neutralises the race during the formation lap ends it: the race starts under Full Course Yellow, then with a rolling start at the green flag.
 - Not available online, in a replay, or on a track longer than 7.5 km: AC's standing start is kept (one line in the log). If the grid cannot be formed, the formation lap ends with a rolling start.
 - With SpotterEngineer: it must know the new start states (`form`, `roll`) to announce them properly; an older version announces a restart lap instead.
@@ -597,8 +601,9 @@ Formation lap and rolling start: ideas from Artood2s.
 
 **Realistic starts (off by default)** (section **Start**, Race profile, Beta 1.61) makes every start less uniform.
 - Each AI gets its own reaction time, and a few cars (three at most) make a poor getaway: wheelspin, or bogging down. It happens more often in the rain. No car is ever left standing on the grid.
-- With a formation lap (**Race start**: formation or rolling), the grid leaves row by row, the leader keeps a slow pace out of the grid and before the line so the pack closes up, and the AI weave on the straights to warm their tyres. Behind the Safety Car they weave only while their tyres are below working temperature.
-- In a rolling start the pack forms two files, and the pole car chooses its moment between 300 m and 100 m before the line. Still no overtaking before the line.
+- Formation lap in strict single file (Beta 2.0.4): an AI never gets closer than 6 m to the car ahead of it on the track, whatever its lateral position, so the grid order is kept all lap (inside that distance it only runs slightly slower than the car ahead, so a queue closing up under braking does not grind to a halt); a weaving car freezes its lateral position while another car is level with it. Not during the two-file call of a rolling start. Journal: `tour de formation: file stricte, … rapprochement(s) …`.
+- With a formation lap (**Race start**: formation or rolling), the grid leaves row by row, the leader keeps a slow pace out of the grid and before the line so the pack closes up, and the AI weave on the straights to warm their tyres (Beta 2.0.4: decisive moves over about 90 % of the track width, centred on the middle of the track; never in corners or at the pit entry). Before a standing start, near the end of the lap, they also do one to three burnouts with hard braking, then line up straight on their slot (Beta 2.0.4). Behind the Safety Car they weave only while their tyres are below working temperature.
+- In a rolling start the pack forms two files during the regroup at the end of the formation lap (Beta 2.0.4), the cars running in tight pairs side by side with a slight stagger and the pack closing up, and the pole car chooses its moment between 300 m and 100 m before the line. Still no overtaking before the line.
 - On the app's own grid (after a red flag or a formation lap), jump starts come in three grades: a small movement gives a warning, a jump start the usual penalty, a flagrant one a doubled penalty. Five seconds after lights out, a car that gained no place is judged one grade lower.
 - An AI can jump the start, rarely, and only when the jump-start sanction is on.
 - AC's own start lights are judged by AC, as before.
@@ -633,6 +638,7 @@ Section **Accidents** (sidebar **RACE & SAFETY**).
   - After a heavy deceleration with contact, an off or a spin, the AI stays still for 3 to 8 s, like a driver collecting their thoughts.
   - It then waits until no car at speed is within 120 m behind (at most 10 s more).
 - **Restart after a crash** (Beta 1.63): an AI stopped in an incident whose engine, suspension and gearbox still work is asked to restart when the track behind is clear (at most 3 times, every 6 s, within 40 s) and is not towed while it tries; once it has moved away it keeps lapping. It is towed only when it cannot go on (engine dead, suspension or gearbox broken, or no move after its attempts). It also restarts under a VSC, an FCY or the Safety Car and then follows the neutralisation rules; under a red flag the red-flag procedure applies.
+- **Parked off track** (Beta 2.0.4): an AI stopped off track, away from the racing line, closes its yellow zone after 15 s and is still towed to its pit box after 30 s without moving away (also when it only spins its wheels on the spot); intact, it is repaired and rejoins.
 - **Cool-down lap** (race, Beta 1.63): an AI that has taken the chequered flag drives back to the pits at about 70 % of its usual pace, slowing gently, and moves towards the free side when a car still racing comes up behind; everything is given back to AC in the pit lane.
 - **Pit stop for damage** (Race, Practice and Qualifying; never on a track day or in hotlap; off by default).
   - With the switch on, the app also reads AI damage while they drive: one AI per frame, each at most every 2 s. Before, damage was only read below 25 km/h or in the pit box.
@@ -718,11 +724,13 @@ kept for the track (caution zone) gets the first level from the start.
   - An overtake already side by side when the flag comes out may be completed.
 - **Giving the place back.**
   - An overtake made within 10 s of the flag (while braking) is forgiven if you give the place back, even after the flag has ended. The overlay shows *GIVE THE POSITION BACK TO … (… s)*, with at least 5 s to do it.
+  - In a local yellow zone (Beta 2.0.4), every overtake leaves you at least 5 s to give the place back before the penalty, and the panel shows it inside the zone (journal: `place a rendre: …`). Under a neutralisation or a red flag, an overtake after those first 10 s is penalised at once.
   - The AI you passed does not queue behind you; it comes back past. Retaking a place an AI gives back to you is not an overtake.
   - Any car passed illegally, AI or you, may retake its place without sanction while the flag lasts.
 - **After the Safety Car**: no overtaking until you cross the line.
 - **Red flag**: restarting outside the pits is penalised.
-- **Mandatory stops**: a stop missing when the window closes is penalised.
+- **Pit requests ignored by the game** (Beta 2.0.4): an AI that keeps a pit request for 5 laps without entering the pits is reported in the journal (`arret demande ignore par le jeu: …`) and in **HOME › TO CHECK**, and the app stops asking it for the session (no penalty). This comes from the game side (CSP or the track); try a newer CSP version.
+- **Mandatory stops**: a stop missing when the window closes is penalised, except when the pits are closed at that moment (neutralisation): you could not stop any more, so there is no penalty (Beta 2.0.4).
 - **The sanction.**
   - AC adds no time to the classification, so the penalty is a native **throttle cut** (5 s, **Penalty: throttle cut (s)**). It is announced on screen and on the overlay, and logged. It needs race settings that allow AC's throttle-cut penalty.
   - Beyond **Offences allowed before disqualification** (5), you are disqualified with AC's black flag, in a race only: in practice and qualifying you keep getting the throttle cut. The overlay shows your count, and its black flag says *Disqualified: 6 offences*.
@@ -800,7 +808,7 @@ Tab **RACING RULES**.
 
 **Rules that always apply** while the racing rules are on: one defence per straight, never a move towards a car alongside (one car width), and the defence ends as soon as the cars overlap.
 
-**Race-only rules.** Neutralisations, mandatory stops and Overtake Mode only apply in the race. The other rules apply in every profile where the racing rules are on (red flags: Practice, Qualifying and Race).
+**Race-only rules.** Neutralisations, mandatory stops and Overtake Mode only apply in the race. Picking a rule set leaves the mandatory stop at its default: it then applies only to races over 100 km, until you set the switch yourself (Beta 2.0.3). The other rules apply in every profile where the racing rules are on (red flags: Practice, Qualifying and Race).
 
 Emulated BoP (**BoP: pace evened out within each class**): within each class, the AI level slowly converges towards the class median pace, by at most ±2%, updated every minute. Car weight and power are never changed.
 
@@ -922,7 +930,7 @@ The settings are under **RACING RULES › Mandatory stop in the race**. They are
   - A recovery to the pits and the Safety Car do not count as stops, except under a red flag.
 - **You.** The overlay reminds you when the window opens and towards its end. A stop missing when the window closes means a penalty (throttle cut, counted as an infringement).
 - **F1 rules.** **Change dry compound (F1)**: a different dry compound at the stop. It is no longer mandatory if the race turns wet.
-- **Mandatory stop and race length.** A configured mandatory stop is always kept, whatever the race length (decision for 1.64). Only a stop that is impossible in a very short race (no lap left for the window) is lifted, with a message.
+- **Mandatory stop and race length.** A mandatory stop you set yourself is always kept, whatever the race length; left at its default, the race distance decides (see above). Only a stop that is impossible in a very short race (no lap left for the window) is lifted, with a message.
 - **Pit lane closed** (**Pit lane closed under neutralisation**; GT and Endurance rules):
   - No AI is called in, and a stop made with the pit lane closed does not count.
   - A tyre change for rain is still allowed. The overlay shows **PIT LANE CLOSED**.
@@ -986,6 +994,8 @@ Section **Classes / Endurance** (sidebar **RACE & SAFETY**).
 - **Multi-class**:
   - The AI are split into classes by pace: a new class opens at a gap of **Gap between classes (%)** (8%), with four classes at most.
   - A slower class yields to a faster one (**Class speed advantage (km/h)**, 4 km/h), which overtakes it more easily. Faster classes get a longer blue-flag range.
+  - A faster class glued behind at the same pace (15 m or less) is let through too, in every session (Beta 2.0.4); in qualifying, a car on a flying lap never yields to one on its out-lap.
+  - Each time the recognised classes change, the journal writes one line: `classes reconnues: 1 = … voiture(s), la plus rapide … (… km/h) ; 2 = …` (`motif` for a class set by a pattern) (Beta 2.0.4).
   - Without a large enough gap the grid stays one class, and an AI still learning its pace is compared with no class.
   - **Class patterns** take priority over the automatic split (see [Track zones and class patterns](#track-zones-and-class-patterns)).
 - **Slower class: predictable line** (Endurance rules): an AI of a slower class caught by a faster class holds its line instead of moving aside. It is up to the faster car to overtake cleanly.
@@ -1810,7 +1820,7 @@ Ticked by default in every profile, Hotlap included. See [Track light panels](#t
 
 | Setting | Range | Track day | Practice / Qualifying | Race |
 |---|---|---|---|---|
-| **Mandatory stop in the race** | on / off | off | off | off |
+| **Mandatory stop in the race** | on / off | off | off | by race distance until you set it (100 km or less: off; longer: on) |
 | **Window opens (% of race)** | 5 – 95 | 25 | 25 | 25 |
 | **Window closes (% of race)** | 5 – 100 | 75 | 75 | 75 |
 | **New tyres at every stop (pit rules active)** | on / off | on | on | on |

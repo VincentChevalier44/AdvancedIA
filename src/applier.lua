@@ -68,6 +68,8 @@ local function setBrake(controls,value)
 end
 -- Appel de phares d'une IA : mêmes valeurs neutres, frein additionnel en cours conservé, impulsion d'une image.
 local function setFlash(controls,brake) setBrake(controls,brake); controls.headlightsFlash=true end
+-- 2.0.4 : IA tenue à sa place de la grille : frein et volant droit (direction imposée à zéro).
+local function setBrakeStraight(controls,value) setBrake(controls,value); controls.steer=0 end
 -- Beta 1.64 : clignotants d'une IA (value : 0 aucun, 1 gauche, 2 droite, 3 détresse), voiture cible rendue au joueur
 -- (extra : index AC du joueur, 0 sans joueur) dans le même appel, même en cas d'erreur.
 local function turnSignals(index,value,back)
@@ -82,7 +84,7 @@ local function write(name,index,value,extra)
  if name=='brake' or name=='flash' then
   local ok,controls=pcall(ac.overrideCarControls,index)
   if not ok or not controls then return false end
-  return pcall(name=='flash' and setFlash or setBrake,controls,value)
+  return pcall(name=='flash' and setFlash or extra==true and setBrakeStraight or setBrake,controls,value)
  end
  local f=physics and physics[setters[name]]
  if not callable(f) then return false end
@@ -161,8 +163,8 @@ function M.openStore(a)
   end
  end
  -- Données 1.2.0 : migration unique, sauvegardée à la première occasion.
- local migrated,upgraded,fresh,restored=pcall(C.migrate,g,profiles,a.presets)
- if migrated and upgraded then a.upgraded=upgraded; a.firstInstall=fresh==true; a.signsRestored=restored==true; a.dirty=true; a.dirtyAt=0 end
+ local migrated,upgraded,fresh,restored,provisional=pcall(C.migrate,g,profiles,a.presets)
+ if migrated and upgraded then a.upgraded=upgraded; a.firstInstall=fresh==true; a.signsRestored=restored==true; a.signsProvisional=provisional==true; a.dirty=true; a.dirtyAt=0 end
  return g,profiles
 end
 function M.savePreset(a,entry)
@@ -818,6 +820,44 @@ function M.trackLights(a,track)
  M.readFlagsHidden(a)
  return a.trackLights
 end
+-- Beta 2.0.4 (pilote, 17 novembre : départs avortés à l'entrée des stands) : entrée des stands du circuit, premier point
+-- de la trajectoire des stands (ai/pit_lane.ai de la variante, sinon du circuit : en-tête de quatre entiers, puis x, y, z
+-- en flottants de 32 bits) ramené à l'abscisse de la piste ; une fois par circuit. Inconnue (fichier absent ou
+-- illisible, fonctions de CSP absentes) : -1, rien ne change.
+local function float32(b,o)
+ local b1,b2,b3,b4=b:byte(o,o+3)
+ if not b4 then return nil end
+ local sign=b4>=128 and -1 or 1; local ex=(b4%128)*2+math.floor(b3/128); local mant=(b3%128)*65536+b2*256+b1
+ if ex==255 then return nil end
+ if ex==0 then return sign*mant*2^-149 end
+ return sign*(1+mant/8388608)*2^(ex-127)
+end
+M.float32=float32
+local function pitEntryRead(track)
+ if type(track)~='string' or not track:match('^[%w_%-%.]+$') or track:find('..',1,true) or not io or type(io.load)~='function' or not callable(ac.worldCoordinateToTrackProgress) or not vec3 then return -1 end
+ local tracks=folder('ContentTracks'); if not tracks then return -1 end
+ local okLayout,layout=pcall(ac.getTrackLayout); if not okLayout or type(layout)~='string' or not layout:match('^[%w_%-%.]*$') or layout:find('..',1,true) then layout='' end
+ local list={}
+ if layout~='' then list[#list+1]=tracks..'\\'..track..'\\'..layout..'\\ai\\pit_lane.ai' end
+ list[#list+1]=tracks..'\\'..track..'\\ai\\pit_lane.ai'
+ for _,path in ipairs(list) do
+  local ok,data=pcall(io.load,path)
+  if ok and type(data)=='string' and #data>=28 then
+   local x,y,z=float32(data,17),float32(data,21),float32(data,25)
+   if x and y and z and U.finite(x) and U.finite(y) and U.finite(z) then
+    local okP,progress=pcall(ac.worldCoordinateToTrackProgress,vec3(x,y,z))
+    if okP and type(progress)=='number' and U.finite(progress) and progress>=0 and progress<=1 then return progress%1 end
+   end
+  end
+ end
+ return -1
+end
+function M.pitEntry(a,track)
+ if a.pitEntryFor==track then return a.pitEntrySpline end
+ a.pitEntryFor=track
+ local ok,v=pcall(pitEntryRead,track); a.pitEntrySpline=ok and type(v)=='number' and v or -1
+ return a.pitEntrySpline
+end
 -- Double appel de phares visible, jamais aux stands ; rien à restituer (impulsions d'une image).
 local function flash(a,s,car,cmd,now)
  local event=cmd.flashEvent or 0
@@ -1156,7 +1196,10 @@ function M.journalWrite(a,text)
  if not a.journalPath or type(text)~='string' or text=='' then return false end
  local full=a.journalBytes+#text>K.journalMaxBytes
  if full then text='=== journal limite a '..K.journalMaxBytes..' octets pour ce lancement ===\n' end
- local ok=pcall(function() local f=io.open(a.journalPath,'a'); f:write(text); f:close() end)
+ -- Relecture 2.0.4 (F2) : le fichier est refermé même si l'écriture échoue (disque plein, fichier verrouillé).
+ local f
+ local ok=pcall(function() f=io.open(a.journalPath,'a'); f:write(text) end)
+ if f then pcall(f.close,f) end
  if ok then a.journalBytes=a.journalBytes+#text else a.journalFailures=(a.journalFailures or 0)+1 end
  if full or not ok and a.journalFailures>=K.capabilityFailures or a.journalBytes>=K.journalMaxBytes then a.journalPath=nil end
  return ok
@@ -1175,7 +1218,7 @@ function M.reportWrite(a,lines)
   if size+#row>K.sanReportMaxBytes then break end
   parts[#parts+1]=row; size=size+#row
  end
- local name=nil
+ local name,f=nil,nil
  local ok,err=pcall(function()
   if not io or type(io.open)~='function' or not ac.getFolder or not ac.FolderID or not ac.FolderID.Logs then error('fichiers indisponibles',0) end
   local root=ac.getFolder(ac.FolderID.Logs)
@@ -1185,9 +1228,11 @@ function M.reportWrite(a,lines)
    for n=K.sanReportKeep-2,1,-1 do local from=base..'.'..n..'.csv'; if io.fileExists(from) then io.move(from,base..'.'..(n+1)..'.csv',true) end end
    if io.fileExists(base..'.csv') then io.move(base..'.csv',base..'.1.csv',true) end
   end
-  local f=io.open(base..'.csv','w'); if not f then error('ouverture impossible',0) end
-  f:write(table.concat(parts)); f:close(); name=K.sanReportFile..'.csv'
+  f=io.open(base..'.csv','w'); if not f then error('ouverture impossible',0) end
+  f:write(table.concat(parts)); f:close(); f=nil; name=K.sanReportFile..'.csv'
  end)
+ -- Relecture 2.0.4 (F2) : fichier refermé si l'écriture a échoué.
+ if f then pcall(f.close,f) end
  if ok and name then return true,name end
  a.reportFailures=(a.reportFailures or 0)+1
  return false,tostring(err or 'ouverture impossible'):sub(1,80)
@@ -1391,6 +1436,13 @@ function M.apply(a,frame,commands,g,now)
   safety(a,s,car,cmd,now)
   startDelay(a,s,car,cmd)
   place(a,s,car,cmd,now)
+  -- 2.0.4 : recalage exact sur sa place de la grille (src/grid.lua, M.snap) : une écriture par grille et par voiture.
+  local snap=cmd.gridSnap
+  if snap and s.snapFor~=snap.id and car.valid and car.control and not car.player then
+   s.snapFor=snap.id
+   local h=math.sqrt(math.max(0,1-snap.ly*snap.ly))
+   Caps.call(a.caps,'position',car.index,vec3(snap.x,snap.y,snap.z),vec3(snap.lx*h,snap.ly,snap.lz*h))
+  end
   recover(a,s,car,cmd)
   hold(a,s,car,cmd,now)
   -- Départ arrêté (Beta 1.34) : extinction des feux, IA réveillées (aux stands : départ immédiat).
@@ -1407,8 +1459,11 @@ function M.apply(a,frame,commands,g,now)
    claim(a,s,car,now)
    if U.finite(cmd.offset) and g.offsetSign~=0 then
     local offset=U.clamp(cmd.offset,-1,1)*g.offsetSign
-    if math.abs(offset-s.offset)>=K.offsetEpsilon or s.reset then
-     if Caps.call(a.caps,'offset',car.index,offset,offset~=0 and g.overrideAwareness) then if U.sign(s.offset)~=U.sign(offset) then a.recoveryDirty=true end; s.offset=offset; s.reset=false; s.offsetReset=offset==0 end
+    -- 2.0.4 : chemin de la grille (src/grid.lua, cmd.gridStrict) : consigne suivie strictement (évitement natif ignoré),
+    -- même à zéro ; réécrite quand ce mode change (rendu à l'extinction).
+    local strict=offset~=0 and g.overrideAwareness or cmd.gridStrict==true
+    if math.abs(offset-s.offset)>=K.offsetEpsilon or s.reset or strict~=(s.offsetStrict or false) then
+     if Caps.call(a.caps,'offset',car.index,offset,strict) then if U.sign(s.offset)~=U.sign(offset) then a.recoveryDirty=true end; s.offset=offset; s.reset=false; s.offsetReset=offset==0 and not strict; s.offsetStrict=strict end
     end
    elseif not U.finite(cmd.offset) then a.rejected=a.rejected+1 end
    if now-s.lastWrite>=K.writePeriod then
@@ -1419,7 +1474,8 @@ function M.apply(a,frame,commands,g,now)
     local previous=s.level
     field(a,s,'level',car.index,cmd.levelOwned,level,K.levelEpsilon,s.originalLevel)
     if s.level~=previous then s.levelAt=now end
-    field(a,s,'aggression',car.index,cmd.aggressionOwned,U.number(cmd.aggression,0,K.maxAggression,car.aiAggression),K.aggrEpsilon,s.originalAggression)
+    -- 2.0.4 : chemin de la grille (cmd.gridCalm) : agressivité native nulle (aucune tentative de dépassement de l'IA d'AC).
+    field(a,s,'aggression',car.index,cmd.aggressionOwned or cmd.gridCalm==true,cmd.gridCalm==true and 0 or U.number(cmd.aggression,0,K.maxAggression,car.aiAggression),K.aggrEpsilon,s.originalAggression)
     field(a,s,'caution',car.index,cmd.cautionOwned,U.number(cmd.caution,K.minCaution,K.maxCaution,K.defaultCaution),K.cautionEpsilon,K.defaultCaution)
     local grip=K.gripBase; local gripOwned=false
     if g.useGripBoost and a.caps.levelMode=='grip' then grip=grip*(1+math.max(0,U.number(cmd.level,0,K.nativeLevelMax,1)*100-100)*g.gripPerLevelPct); gripOwned=true end
@@ -1430,7 +1486,11 @@ function M.apply(a,frame,commands,g,now)
     s.lastWrite=now
    end
    local brake=g.useBrakeAssist and U.number(cmd.brake,0,K.brakeMax,0) or 0
-   if a.caps.brake.available and (brake>0 or s.brake>0) then if Caps.call(a.caps,'brake',car.index,brake) then s.brake=brake end end
+   -- 2.0.4 : tenue à sa place de la grille (src/grid.lua) : volant droit, frein tenu ; rendu à l'extinction (frein 0,
+   -- direction d'origine).
+   local straight=g.useBrakeAssist and cmd.gridStraight==true and not car.pit
+   if straight then brake=K.brakeMax end
+   if a.caps.brake.available and (brake>0 or s.brake>0) then if Caps.call(a.caps,'brake',car.index,brake,straight or nil) then s.brake=brake end end
    local speed=U.number(limit,0,K.unlimitedSpeed,K.unlimitedSpeed)
    if speed<K.unlimitedSpeed then send(a,s,'speed',car.index,speed,K.levelEpsilon)
    elseif s.speed~=nil and Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil; a.recoveryDirty=true end
@@ -1704,7 +1764,10 @@ function M.presetFileWrite(text)
   local dir=place[1]
   if dir then
    if callable(io.createDir) then pcall(io.createDir,dir) end
-   local ok,done=pcall(io.save,presetFile(dir),text,true)
+   local path=presetFile(dir)
+   local ok,done=pcall(io.save,path,text,true)
+   -- Relecture 2.0.4 : reste <fichier>.bak d'io.replaceFile effacé, comme pour les fichiers des circuits (saveClean).
+   if presetExists(path..'.bak') and callable(io.deleteFile) then pcall(io.deleteFile,path..'.bak') end
    if ok and done==true then return place[2] end
   end
  end
@@ -1788,6 +1851,14 @@ function M.trackFileWrite(folder,key,text)
    if saveClean(path,text) then return place[2],clock and (clock()-before)*1000 or 0 end
   end
  end
+ return nil
+end
+-- Beta 2.0.4 (décision du pilote) : applications d’AC masquées (Ctrl+H, réglage du module GUI) : vrai, faux ou nil
+-- (illisible : overlay affiché comme avant).
+function M.appsHidden()
+ if not callable(ac.getUI) then return nil end
+ local ok,v=pcall(function() local s=ac.getUI(); return s and s.appsHidden end)
+ if ok and type(v)=='boolean' then return v end
  return nil
 end
 -- Beta 1.64 (overlay par bureau, src/desktops.lua) : bureau d'applications d'AC actuel, valeur brute (0 à 3) ou nil.

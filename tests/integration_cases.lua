@@ -48,7 +48,7 @@ return function(source)
    local p=e.profiles[profile]
    assert(p.configured and C.on(p,'rules') and C.on(p,'accidents') and C.ruleCategory(profile,p)=='base',profile)
   end
-  assert(HUMANAI.host.firstInstall and e.g.dataRevision==C.dataRevision and HUMANAI.host.caps.probeIndex==0 and e.g.offsetSign==0)
+  assert(HUMANAI.host.firstInstall and e.g.dataRevision==C.dataRevision and HUMANAI.host.caps.probeIndex==0 and e.g.offsetSign==-1 and e.g.signProvisional==true) -- 2.0.4 (décision du pilote du 16 novembre) : sens -1 / -1 provisoire à la première installation
  end)
  check('ouverture automatique au setup sans callback HUD ni fenêtre déjà visible',function()
   assert(not HOST.windowOpen.main)
@@ -168,6 +168,25 @@ return function(source)
  end)
  check('sonde native et calibration uniquement après activation',function()
   pause(false); H.tick(HOST,5); assert(HUMANAI.host.caps.native110 and HUMANAI.engine.g.offsetSign==1,'native='..tostring(HUMANAI.host.caps.native110)..' sign='..HUMANAI.engine.g.offsetSign..' profile='..HUMANAI.engine.profile..' guard='..HUMANAI.engine.guard..' gen='..tostring(HUMANAI.engine.p.section_general)..' state='..HUMANAI.engine.states[2].state..' active='..tostring(HUMANAI.engine.commands[2].active)..' calls='..HOST.calls..' probe='..HUMANAI.host.caps.probeIndex..' done='..tostring(HUMANAI.host.caps.probeDone))
+ end)
+ -- LOCK_REVIEW204C_3 (relecture 2.0.4, A2) : « Recalibrer » remet le sens -1 / -1 provisoire (jamais 0 / 0 : les deux
+ -- files du départ restaient perdues tant que la mesure n'aboutissait pas), puis la mesure le confirme ou le corrige.
+ -- LOCK_REVIEW204C_4 (A4) : une correction du seul second sens est dite « mesure », jamais « provisoire confirme ».
+ check('calibration uniquement apres activation, puis relecture 2.0.4 : recalibrage en sens provisoire, correction du second sens dite mesuree',function()
+  local e=HUMANAI.engine; local g=e.g
+  local function logged(text) local q=e.log; for k=1,q.limit do local r=q[k]; if r and r.message==text then return true end end return false end
+  -- Joué seul (filtre des mutations) : sections allumées et jeu en marche, comme dans la suite complète.
+  pause(false); if e.guard~='ready' then e.p.section_general=true; e.p.section_yield=true; e.p.yieldEnabled=true; e.p.configured=true; H.tick(HOST,1) end
+  local side0=g.sideSign
+  e.recalibrateRequested=true; H.tick(HOST,0.2)
+  assert(not e.recalibrateRequested and g.offsetSign==-1 and g.sideSign==-1 and g.signProvisional==true,'recalibrate: -1 / -1 provisional, sign='..g.offsetSign..'/'..g.sideSign)
+  H.tick(HOST,5); assert(g.offsetSign==1 and g.signProvisional==false,'measured again: '..g.offsetSign)
+  local Cal=package.loaded['src/calibration']; local step0=Cal.step
+  g.offsetSign=1; g.sideSign=1; g.signProvisional=true
+  Cal.step=function(self,frame,caps,gg) if gg.signProvisional then gg.signProvisional=false; self.confirmed=true; gg.sideSign=-1 end return false end
+  local ok,err=pcall(H.tick,HOST,0.1); Cal.step=step0; assert(ok,err)
+  assert(logged('sens lateral mesure: 1 / -1') and not logged('sens lateral provisoire confirme par la mesure: 1 / -1'),'side-only correction logged as measured: '..g.offsetSign..'/'..g.sideSign..' '..tostring(g.signProvisional)..' '..tostring(e.profile)..' '..tostring(e.guard))
+  g.sideSign=side0; g.signProvisional=false; H.tick(HOST,0.5)
  end)
  check('export des zones et diagnostic dans le menu',function()
   pause(true); go('diagnostic'); HOST.clip=''; press('export'); assert(HOST.clip:match('zones')); pause(false)
@@ -1330,6 +1349,20 @@ return function(source)
   desk=0; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'shown on desktop 1')
   desk=nil; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'unknown desktop: shown')
   ac.getUI=function() error('broken') end; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'unreadable: shown')
+  ac.getUI=was; HUMANAI.release()
+ end)
+ -- Beta 2.0.4 (décision du pilote) : applications d'AC masquées (Ctrl+H) : overlay masqué avec elles, moteur en marche ;
+ -- illisible : affiché comme avant.
+ check('LOCK_OVERLAY_APPS_HIDDEN_204 : overlay masque avec les applications d AC',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.space={x=1000,y=3000}; HOST.sim.raceSessionType=3; assert(loadstring(source))(); H.tick(HOST,1)
+  local was=ac.getUI; local hidden=true
+  ac.getUI=function() return {windowSize={x=1920,y=1080},currentDesktop=0,appsHidden=hidden} end
+  H.tick(HOST,0.5)
+  HOST.transparent={}; script.HUMANAI__HUD(); assert(not HOST.transparent.AdvancedIA_overlay,'apps hidden: overlay hidden')
+  local t=HUMANAI.engine.time; H.tick(HOST,0.5); assert(HUMANAI.engine.time>t,'engine still running')
+  hidden=false; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'apps shown: overlay shown')
+  hidden=nil; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'unknown: shown')
+  hidden='yes'; HOST.transparent={}; script.HUMANAI__HUD(); assert(HOST.transparent.AdvancedIA_overlay,'not a boolean: shown')
   ac.getUI=was; HUMANAI.release()
  end)
  -- Beta 1.14 : fenêtre de réglages ramenée une fois à 900 × 700 ; la taille choisie ensuite est respectée.
@@ -2999,6 +3032,14 @@ return function(source)
   assert(HOST.calls==callsAbsent,'same commands')
   HUMANAI.release()
   assert(HOST.values['AdvancedIA.session']=='v=1;closed=1','closed on unload')
+  -- LOCK_REVIEW204C_2 (relecture 2.0.4) : pont coupé par une erreur de publication : clé écrite « fermée » aussi.
+  launch(true); H.tick(HOST,3)
+  assert(HOST.values['AdvancedIA.session']~='v=1;closed=1','open again')
+  local B=require('src/bridge'); local pub0=B.publish
+  B.publish=function() error('boom') end
+  H.tick(HOST,1); B.publish=pub0
+  assert(HUMANAI.bridgePort()==nil and HOST.values['AdvancedIA.session']=='v=1;closed=1','closed after a bridge error')
+  HUMANAI.release()
   ac.connect=nil; ac.StructItem=nil
  end)
  -- Beta 1.49 (session du 5 novembre, 11:33 : « arrivee en 0 », « 0 -> 1 ») : composés du joueur lus comme ceux des IA.
@@ -3387,6 +3428,9 @@ return function(source)
   -- Relecture 1.62 : conditions du 9 novembre fixées (une seule classe, cession ordinaire à droite) : elles ne dépendent plus
   -- des réglages laissés par un cas précédent (préréglage « Journée circuit » : multi-classes, « garder sa ligne »).
   p.multiClass=false; p.yieldSide='right'; E.changed(e)
+  -- Relecture 2.0.4 (gate 3) : sens latéral à 0, comme au banc avant la 2.0.4 (installation neuve désormais à -1 provisoire) :
+  -- c'est dans ces conditions que la boucle du 9 novembre se reproduit ici (8 tentatives sans l'attente stricte).
+  e.g.offsetSign=0; e.g.sideSign=0
   local L=HOST.sim.trackLengthM
   -- Allures apprises aux tours précédents (en jeu : plusieurs tours de la Nordschleife) : l'IA 2 plus rapide partout.
   local function learnedPace() for i,v in pairs({[3]=210,[4]=180}) do local s=e.states[i]; s.paceCount=e.delta.bins; for b=1,e.delta.bins do s.pace[b]=v/3.6 end end end
@@ -3430,6 +3474,9 @@ return function(source)
   require('src/config').preset('Circuit','J',p)
   p.section_general=true; p.section_overtake=true; p.section_flash=true; p.section_yield=true; p.section_lateral=true
   p.aiFlashEnabled=true; p.pressureEnabled=false; p.section_traffic=false; E.changed(e)
+  -- Relecture 2.0.4 (gate 3) : sens latéral à 0, comme au banc avant la 2.0.4 (installation neuve désormais à -1 provisoire) :
+  -- c'est dans ces conditions que la boucle du 9 novembre se reproduit ici (8 tentatives sans l'attente stricte).
+  e.g.offsetSign=0; e.g.sideSign=0
   local L=HOST.sim.trackLengthM
   -- Allures apprises aux tours précédents (en jeu : plusieurs tours de la Nordschleife) : l'IA 2 plus rapide partout.
   local function learnedPace() for i,v in pairs({[3]=210,[4]=180}) do local s=e.states[i]; s.paceCount=e.delta.bins; for b=1,e.delta.bins do s.pace[b]=v/3.6 end end end
@@ -3463,7 +3510,9 @@ return function(source)
   HUMANAI.release(); HOST=H.create(false); HOST.space={x=1000,y=3000}; assert(loadstring(source))(); H.tick(HOST,0.5)
   local e=HUMANAI.engine; local p=e.profiles.J
   for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end
-  p.aiFlashEnabled=false; p.pressureEnabled=false; p.section_traffic=false; p.yieldEnabled=false; E.changed(e)
+  -- 2.0.4 : une seule classe (même voiture) : sans cela, l'allure scriptée (215 contre 190 km/h) ouvre deux classes et la
+  -- cible, collée par une classe plus rapide, cède (LOCK_CLASS_GLUED_YIELD_204) sans ralentir dans ce banc.
+  p.aiFlashEnabled=false; p.pressureEnabled=false; p.section_traffic=false; p.yieldEnabled=false; p.multiClass=false; E.changed(e)
   local L=HOST.sim.trackLengthM
   local z={[1]=5000,[2]=0,[3]=400}
   local function set(i,v) local c=HOST.cars[i]; z[i]=z[i]+v/3.6/60; c.position={x=0,y=0,z=z[i]%L}; c.splinePosition=(z[i]%L)/L; c.velocity={x=0,z=v/3.6}; c.speedKmh=v; c.lapCount=1+math.floor(z[i]/L) end
@@ -4451,6 +4500,32 @@ return function(source)
   HOST.space={x=1000,y=3000}; pause(true); section('overlay')
   assert(drawn('window_scale') and drawn('app_sounds'),'interface settings drawn in the Overlay section')
   press('app_sounds'); assert(g.appSounds==false,'switch toggles the setting')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ -- Relecture 2.0.4 (domaine D) : balayage de toute la fenêtre (onglets, sections, vues des règles, profils), à 100 % et à
+ -- 150 %, en course, en replay et au menu principal : aucune erreur d'interface, quel que soit l'écran affiché.
+ check('LOCK_REVIEW204D_1 : toute la fenetre dessinee sans erreur (profils, onglets, sections, regles, 100 et 150 %, replay, menu, seul)',function()
+  HUMANAI.release(); HOST=H.create(true); HOST.sim.raceSessionType=3; assert(loadstring(source))()
+  local e=HUMANAI.engine; H.tick(HOST,1); HOST.space={x=1000,y=3000}; pause(true)
+  local function any(id) HOST.clicked='##aai_'..id; main(); HOST.clicked='' end
+  local screens=0
+  for _,state in ipairs({'race','replay','menu','solo'}) do
+   HOST.sim.isReplayActive=state=='replay'; HOST.sim.isInMainMenu=state=='menu'
+   if state=='solo' then HOST.sim.carsCount=1; H.tick(HOST,0.5); pause(true) end
+   for _,scale in ipairs({1,1.5}) do
+    e.g.windowScale=scale
+    for _,profile in ipairs({'J','P','Q','C','H'}) do
+     any('profile_'..profile)
+     for _,tab in ipairs({'home','settings','rules','diagnostic'}) do
+      any('tab_'..tab); main(); screens=screens+1
+      if tab=='settings' then for _,group in ipairs(C.sections) do any('cat_'..group); screens=screens+1 end end
+      if tab=='rules' then for _,view in ipairs({'all','stops','safety'}) do any('rules_view_'..view); screens=screens+1 end end
+     end
+    end
+   end
+  end
+  HOST.sim.isReplayActive=false; HOST.sim.isInMainMenu=false; HOST.sim.carsCount=4; e.g.windowScale=1
+  assert(screens>200,'screens drawn: '..screens)
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
  C.globalDefaults.presetBySession=presetDefault

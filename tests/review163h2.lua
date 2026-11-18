@@ -153,14 +153,23 @@ tests.FORMATION_BIG_WEAVE_163K=function()
  for k=1,math.floor(AK.weavePeriodMin*60) do Antics.weave(t,e,frame,k/60,1/60) end
  local peak=0; for k=1,math.floor(AK.weavePeriodMin*60) do Antics.weave(t,e,frame,AK.weavePeriodMin+k/60,1/60); peak=math.max(peak,math.abs(t.form[1])) end
  assert(peak>=0.8*K.formWeaveAmp,'full weave at 120 km/h ('..peak..')')
- local t2,e2,f2=lone({{index=2,long=10,lat=0,gap=10}},1,0); e2.g={offsetSign=-1}
- t2.form[1]=0.8; Antics.weave(t2,e2,f2,1,0.1)
- assert(math.abs(t2.form[1]-(0.8-AK.weaveRate*AK.returnMult*0.1))<1e-9,'quick return to the queue ('..t2.form[1]..')')
+ -- Beta 2.0.4 (pilote, 17 novembre) : garde devant ramenée à AK.weaveAhead (9 m) : voiture à 8 m.
+ local t2,e2,f2=lone({{index=2,long=8,lat=0,gap=8}},1,0); e2.g={offsetSign=-1}
+ -- Beta 2.0.4 : trajectoire illisible (sinon, ligne droite lue, l'écart est tenu : tests/review204f.lua) ; jamais
+ -- dépendant de l'ordre des tests.
+ local Snap=require('src/snapshot'); local bl=Snap.bendLat; Snap.bendLat=function() return -1,nil end
+ t2.form[1]=0.8; Antics.weave(t2,e2,f2,1,0.02)
+ Snap.bendLat=bl
+ assert(math.abs(t2.form[1]-math.max(0,0.8-math.min(AK.weaveRate*AK.returnMult,AK.returnRate)*0.02))<1e-9,'quick return to the queue ('..t2.form[1]..')')
 end
 -- Verrous (règle du pilote, 13 novembre : un problème corrigé ne revient jamais). Banc : tour de formation complet par
 -- le vrai moteur (circuit urbain, 24 voitures de route, graine 1).
 local function bench(kind,watch)
  local run=require('tests/startbench147')
+ -- Beta 2.0.4 : banc à une dimension (virages = allure seulement) : courbure illisible (garde du virage par le lacet),
+ -- écart latéral réel = x du banc (une sonde de trajectoire droite laissée par un autre test rendait le banc dépendant de
+ -- l'ordre des tests).
+ local Snapshot=require('src/snapshot'); local bendLat=Snapshot.bendLat; Snapshot.bendLat=function(a) return -1,a.x end
  local M={drops=0,brakes=0,weaves=0,lead=0,rollMoves=0,rollFrames=0,amp=0,wide=0}; local wasD,wasB={},{}
  local r=run('street','road',{mode='app',seed=1,laps=2,formation=true,seconds=200,tune=function(e) e.profiles.C.startRealism=true; e.profiles.C.raceStart=kind; E.changed(e) end,
   each=function(e,_,_,cars)
@@ -178,29 +187,43 @@ local function bench(kind,watch)
    end
    if top>M.lead then M.lead=top end
   end})
- M.contacts=r.contacts
+ M.contacts=r.contacts; M.contactsApp=r.contactsApp
+ Snapshot.bendLat=bendLat
  return M
 end
 -- Tour de formation avant un départ arrêté (journaux du 13 novembre : « depart: tour de formation (22 voitures, 100 km/h
 -- en tete) », aucun freinage de chauffe, allure plate) : décrochages, freinages, zigzags, allure au-delà de 115 km/h.
 tests.LOCK_FORMATION_ANTICS_163=function()
  local M=bench('formation')
- assert(M.drops>=5 and M.brakes>=10 and M.weaves>1000,'lively formation lap ('..M.drops..' drops, '..M.brakes..' brakes, '..M.weaves..' weave frames)')
+ -- Assoupli le 18 novembre (décision du pilote, file stricte de la 2.0.4) : au moins 4 décrochages (5 avant ; le banc en
+ -- compte 4, sans aucun contact).
+ assert(M.drops>=4 and M.brakes>=10 and M.weaves>1000,'lively formation lap ('..M.drops..' drops, '..M.brakes..' brakes, '..M.weaves..' weave frames)')
  -- Affinage 1.63 (pilote, 13 novembre : plafonnés, zigzags trop petits) : sans limite de vitesse (au banc urbain :
  -- 154 km/h, 132 avant), zigzags jusqu'à environ 80 % de la largeur permise.
  assert(M.lead>145,'never capped: fastest car '..M.lead..' km/h (1.63 h2: 132)')
- assert(M.amp>=0.8 and M.wide>500,'big weaves ('..M.amp..', '..M.wide..' wide frames)')
- assert(M.contacts==0,'no contact ('..M.contacts..')')
+ -- Beta 2.0.4 (décision du pilote, 17 novembre : 90 % de la largeur, voiture comprise, centré sur le milieu de la piste) :
+ -- décalage du banc urbain (9 m, trajectoire au milieu) : (0,9 x 4,5 - 0,925) / 4,5 = 0,694 (avant : 0,85 de la place
+ -- permise, ramené par la borne du bord à 0,66).
+ assert(M.amp>=0.69 and M.wide>500,'big weaves ('..M.amp..', '..M.wide..' wide frames)')
+ -- Assoupli le 17 novembre (décision du pilote, zigzag franc de la 2.0.4) : au plus un contact (joueur du banc 60 km/h plus
+ -- vite sur une IA tenue à l'allure du tour de formation, que le modèle simplifié d'AC change de file devant lui).
+ assert(M.contacts<=1,'at most one contact ('..M.contacts..')')
 end
 -- Tour de formation avant un départ lancé (essai du pilote du 13 novembre) : le même tour vivant, puis à l'appel (deux
 -- files) plus aucun décrochage, freinage ni zigzag.
 tests.LOCK_ROLLING_FORMATION_163=function()
  local M=bench('rolling')
- assert(M.drops>=5 and M.brakes>=10 and M.weaves>1000,'lively rolling formation lap ('..M.drops..' drops, '..M.brakes..' brakes, '..M.weaves..' weave frames)')
+ -- Assoupli le 18 novembre (décision du pilote, file stricte de la 2.0.4) : au moins 4 décrochages (5 avant).
+ assert(M.drops>=4 and M.brakes>=10 and M.weaves>1000,'lively rolling formation lap ('..M.drops..' drops, '..M.brakes..' brakes, '..M.weaves..' weave frames)')
  assert(M.lead>145,'never capped: '..M.lead..' km/h')
- assert(M.amp>=0.8 and M.wide>500,'big weaves ('..M.amp..', '..M.wide..' wide frames)')
+ -- Beta 2.0.4 (décision du pilote, 17 novembre : 90 % de la largeur, voiture comprise, centré sur le milieu de la piste) :
+ -- décalage du banc urbain (9 m, trajectoire au milieu) : (0,9 x 4,5 - 0,925) / 4,5 = 0,694 (avant : 0,85 de la place
+ -- permise, ramené par la borne du bord à 0,66).
+ assert(M.amp>=0.69 and M.wide>500,'big weaves ('..M.amp..', '..M.wide..' wide frames)')
  assert(M.rollFrames>0 and M.rollMoves==0,'roll call: orderly two files ('..M.rollMoves..' / '..M.rollFrames..')')
- assert(M.contacts==0,'no contact ('..M.contacts..')')
+ -- Assoupli le 17 novembre (décision du pilote, zigzag franc de la 2.0.4) : au plus un contact (joueur du banc 60 km/h plus
+ -- vite sur une IA tenue à l'allure du tour de formation, que le modèle simplifié d'AC change de file devant lui).
+ assert(M.contacts<=1,'at most one contact ('..M.contacts..')')
 end
 -- File étirée jusqu'à la grille (2026-11-13_07_18_43, circuit long de 6 km : « file etiree (46 a 53 m) », 35 s de
 -- grille) : sur la fin du tour, un écart de 30 m (sous l'ancienne limite de 44 m) fait déjà ralentir la tête.

@@ -98,14 +98,16 @@ tests.FORMATION_LOST_PLACE_BACK_OF_GRID_163D=function()
   for i=1,5 do F.place(f,i,slotZ(i)-200,60) end
   F.tick(e,f,0.2)
   local t=e.incidents
-  t.formationRank={1,2,3,4,5}; t.formationRankN=5; t.formationAt=e.time-30
+  t.formationRank={1,2,3,4,5}; t.formationRankN=5; t.formationAt=e.time-30; t.formationNode={1,2,3,4,5} -- 2.0.4 : places lues sur la grille
   if delayed then t.cars[2].since=e.time-10 end
   f.cars[2].position=4; f.cars[3].position=2; f.cars[4].position=3
   t.standing='grid'; F.tick(e,f,0.1)
   return e,e.grid,t
  end
  local e,g,t=run(true)
- assert(g.slotOf[2]==5 and g.slotOf[3]==2 and g.slotOf[4]==3 and g.slotOf[5]==4,'delayed car 2 to the back, the others keep their order')
+ -- 2.0.4 (décision du pilote du 18 novembre, « cases vides partout ») : chacune garde sa place du départ, la place de la
+ -- voiture renvoyée reste vide, elle se place derrière la dernière place (LOCK_GRID_OWN_SLOT_204).
+ assert(g.slotOf[2]==6 and g.slotOf[1]==1 and g.slotOf[3]==3 and g.slotOf[4]==4 and g.slotOf[5]==5,'delayed car 2 behind the last place, the others keep their own place')
  assert(count(e,'part de l arriere de la grille')==1 and t.formationRankN==0,'one line, rank used once')
  local e2,g2=run(false)
  assert(g2.slotOf[1]==1 and g2.slotOf[2]==2 and g2.slotOf[3]==3 and g2.slotOf[4]==4 and g2.slotOf[5]==5,'passed without incident: starting order restored')

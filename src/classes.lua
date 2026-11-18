@@ -40,6 +40,29 @@ function M.update(self,cars,states,count,p,now)
   end
  end
 end
+-- 2.0.4 (iwouldsayhello, 18 novembre : classe rapide jamais reconnue en qualifications ?) : carte des classes
+-- reconnues, pour une ligne de journal à chaque changement (src/engine.lua). Retourne la signature (classe par voiture
+-- classée) et le texte : par classe, le nombre de voitures, la plus rapide et l'allure moyenne (km/h) ; motif manuel
+-- signalé. nil, nil sans voiture classée.
+function M.summary(cars,states,count)
+ local sig,n,cls={},0,{}
+ for i=1,count do
+  local s=states[i]; local a=cars[i]
+  if a.valid and not a.safetyCar and s.classified then
+   n=n+1; sig[n]=i..':'..(s.class or 0)
+   local k=s.class or 0; local c=cls[k]
+   if not c then c={count=0,best=nil,mean=0,manual=false}; cls[k]=c end
+   c.count=c.count+1; c.manual=c.manual or s.manualClass==true
+   if not c.best or (s.classMean or 0)>c.mean then c.best=a.name; c.mean=s.classMean or 0 end
+  end
+ end
+ if n==0 then return nil,nil end
+ local parts={}
+ for k=1,K.classMax do local c=cls[k]
+  if c then parts[#parts+1]=string.format('%d = %d voiture(s), la plus rapide %s (%.0f km/h)%s',k,c.count,c.best or '?',c.mean*3.6,c.manual and ', motif' or '') end
+ end
+ return table.concat(sig,','),table.concat(parts,' ; ')
+end
 -- BoP émulée : dans chaque classe, le niveau des IA converge lentement vers l'allure médiane de la classe,
 -- correction bornée ; le lest et la bride des voitures ne sont jamais modifiés.
 function M.balance(self,cars,states,count,p,now)

@@ -150,6 +150,14 @@ return function(trackName,setName,opts)
    if not binding and not inCorner then vp=vp*(1+0.012*math.sin(t*0.9+c.phase)) end
    if t<c.react then vp=0 end
    if opts.formation and k==1 and e.incidents.neutral then vp=min(vp,(e.incidents.formation and e.incidents.formationKmh or e.p.fcySpeedKmh)/3.6) end
+   -- 2.0.4 (18 novembre, file stricte) : pendant le tour de formation, le joueur du banc tient sa place comme un pilote :
+   -- jamais plus vite que la voiture qui le précède sur la piste quand il arrive à moins de 15 m d'elle (avant, il
+   -- traversait la file à allure fixe dès qu'elle se regroupait).
+   if opts.formation and k==1 and e.incidents.formation then
+    local near,nv=math.huge,nil
+    for q=2,n+1 do local d=cars[q].z-c.z; if d>0 and d<near and not cars[q].spun then near=d; nv=cars[q].v end end
+    if nv and near<15+c.v*0.5 then vp=min(vp,max(0,nv-(15-min(15,near))*0.5)) end
+   end
    local vpOwn=vp
    -- Référence sans l'app : prudence 1, agressivité de l'IA d'AC, ni limite ni frein (attribution « prudence »).
    local vpBase=vp

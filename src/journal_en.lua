@@ -129,6 +129,8 @@ M.rules={
  {'depart: grille annulee apres le tour de formation, la course est lancee','start: grid cancelled after the formation lap, the race is on'},
  -- Beta 1.61 D : départs réalistes (réglage startRealism : src/antics.lua, src/formation.lua, src/grid.lua, moteur).
  {'depart: reactions {} a {} s, {} depart(s) manque(s) ({p})','start: reactions {1} to {2} s, {3} poor start(s) ({4})'},
+ {'tour de formation: depart par rangees, zigzags {p}, deux files a {} m de la ligne, entree des stands a {} m','formation lap: getaway by rows, weaving {1}, two files {2} m before the line, pit entry at {3} m'},
+ {'tour de formation: depart par rangees, zigzags {p}, deux files a {} m de la ligne, entree des stands inconnue','formation lap: getaway by rows, weaving {1}, two files {2} m before the line, pit entry unknown'},
  {'tour de formation: depart par rangees, zigzags {p}, deux files a {} m de la ligne','formation lap: getaway by rows, weaving {1}, two files {2} m before the line'},
  {'depart lance: {n} lance le depart a {} m de la ligne','rolling start: {1} starts the race {2} m before the line'},
  {'faux depart du joueur: {p} ({} m, {} km/h, {} s avant l extinction)','player jump start: {1} ({2} m, {3} km/h, {4} s before lights out)'},
@@ -186,6 +188,9 @@ M.rules={
  {'niveau au-dessus de 100 %: mode {p} (mode demande {}, bonus de grip {p})','level above 100%: mode {1} (requested mode {2}, grip bonus {3})'},
  {'niveau au-dessus de 100 %: {n} relu {} apres {} ecrit (lecture ecretee) -> {p} (mode demande {}, bonus de grip {p})','level above 100%: {1} read back {2} after {3} written (read-back capped) -> {4} (requested mode {5}, grip bonus {6})'},
  {'sens lateral mesure: {} / {}','lateral direction measured: {1} / {2}'},
+ -- 2.0.4 : sens provisoire (installation neuve)
+ {'sens lateral provisoire confirme par la mesure: {} / {}','provisional lateral direction confirmed by the measurement: {1} / {2}'},
+ {'sens lateral: {} / {} provisoire (installation neuve ou jamais mesure), confirme par la mesure','lateral direction: {1} / {2} provisional (new installation or never measured), confirmed by the measurement'},
  {'sens lateral: {} / {} (en attente de mesure, aucun deplacement lateral)','lateral direction: {1} / {2} (waiting for the measurement, no lateral move)'},
  {'sens lateral: {} / {}','lateral direction: {1} / {2}'},
  {'mise a jour: module illisible, app chargee sans mise a jour ({})','update: module unreadable, app loaded without updates ({1})'},
@@ -366,6 +371,7 @@ M.rules={
  {'DRS joueur: indisponible (AC)','player DRS: unavailable (AC)'},
  {'session: indice {}, type CSP {}, type race.ini {} (Track Day), circuit {}, voitures {}, longueur {} m','session: index {1}, CSP type {2}, race.ini type {3} (Track Day), track {4}, cars {5}, length {6} m'},
  {'session: indice {}, type CSP {}, type race.ini {}, circuit {}, voitures {}, longueur {} m','session: index {1}, CSP type {2}, race.ini type {3}, track {4}, cars {5}, length {6} m'},
+ {'voitures au-dela de {} ignorees par l app: {} sur {}','cars beyond {1} ignored by the app: {2} of {3}'},
  {'profil: {} (automatique)','profile: {1} (automatic)'},
  {'profil: {} (manuel)','profile: {1} (manual)'},
  {'preset_session: aucun (profil {}, preset personnel garde)','preset_session: none (profile {1}, personal preset kept)'},
@@ -543,6 +549,27 @@ M.rules={
  {'arret obligatoire par defaut selon la distance: desactive ({} km au plus sans arret)','mandatory stop by default from the race distance: off (no stop for {1} km or less)'},
  {'arret obligatoire par defaut selon la distance: active ({} km au plus sans arret)','mandatory stop by default from the race distance: on (no stop for {1} km or less)'},
  {'tours du leader indisponibles, avancement d apres les voitures','leader laps unavailable, race progress taken from the cars'},
+ {'arret obligatoire non effectue: stands fermes a la fermeture de la fenetre, pas de penalite','mandatory stop not made: pits closed when the window closed, no penalty'},
+ {'arret demande ignore par le jeu: {n}, {} tours sans entrer aux stands, demande abandonnee','pit request ignored by the game: {1}, {2} laps without entering the pits, request dropped'},
+ -- Beta 2.0.4 (17 novembre) : entrée des stands, départ maintenu, mesure du zigzag
+ {'depart lance: vert retenu, peloton pas encore groupe ({} m entre deux voitures)','rolling start: green held, pack not grouped yet ({1} m between two cars)'},
+ {'tour de formation: {n} burnout et gros freinage avant la grille','formation lap: {1} burnout and hard braking before the grid'},
+ -- 2.0.4 : tour de formation en file stricte
+ {'tour de formation: file stricte, {} rapprochement(s) a moins de {} m de la voiture de devant, plus petit ecart {} m','formation lap: strict single file, {1} time(s) closer than {2} m to the car ahead, smallest gap {3} m'},
+ {'appel des files: {}','roll call of the files: {1}'},
+ -- 2.0.4 : grille du départ arrêté (places, recalage)
+ {'grille: places relevees sur la grille : {}','grid: places read on the grid: {1}'},
+ {'grille: places dans l ordre : {}','grid: places in order: {1}'},
+ {'grille aux feux: {} IA reposees exactement (deplacees de {} m en moyenne, ecart restant au plus {} m, {} correction(s), {} pas a leur pose ; sens {}, decalage {} m) ; ecarts long/lat (m) {}','grid at the lights: {1} AI set exactly on their place (moved by {2} m on average, remaining gap at most {3} m, {4} correction(s), {5} not on their pose; direction {6}, offset {7} m) ; long/lat gaps (m) {8}'},
+ {'grille: {n} part de l arriere de la grille (plus a sa place dans la file a la fin du tour de formation)','grid: {1} starts from the back of the grid (no longer in its place in the queue at the end of the formation lap)'},
+ {'grille: {n} part de l arriere de la grille (plus avec le peloton a la fin du tour de formation), sans etre attendue','grid: {1} starts from the back of the grid (no longer with the pack at the end of the formation lap), not waited for'},
+ -- 2.0.4 : carte des classes reconnues (iwouldsayhello)
+ {'classes reconnues: {p}','classes recognised: {1}'},
+ -- 2.0.4 : dépassement sous drapeau à rendre (Racer63)
+ {'place a rendre: le joueur a double {n} sous drapeau jaune ({p}), {} s pour la rendre ({} km/h, elle {} km/h)','place to give back: the player passed {1} under yellow ({2}), {3} s to give it back ({4} km/h, that car {5} km/h)'},
+ {'depart maintenu: incident de {n} dans la voie des stands','start kept: incident of {1} in the pit lane'},
+ {'depart maintenu: incident de {n} a l entree des stands ({} m avant la ligne)','start kept: incident of {1} at the pit entry ({2} m before the line)'},
+ {'zigzag mesure: {} IA, ampleur {} % de la largeur en moyenne ({} a {} %), zigzag permis {} % du temps','weave measured: {1} AI, swing {2} % of the width on average ({3} to {4} %), weaving allowed {5} % of the time'},
  {'fenetre d arret ajustee a la longueur de la course: {} a {} % (reglee {} a {} %), fermee avant le dernier tour','pit window adjusted to the race length: {1} to {2} % (set {3} to {4} %), closed before the last lap'},
  {'fenetre d arret ouverte (CSP)','pit window open (CSP)'},
  {'fenetre d arret ouverte: {} a {} % de la course','pit window open: {1} to {2}% of the race'},
@@ -794,6 +821,7 @@ M.exact={
  ['inconnue, allure de la classe']='unknown, class pace',['priorite au virage (nez derriere)']='corner priority (nose behind)',
  -- Beta 1.59 (export/import) : raisons d'un import refusé.
  ['aucun fichier trouve']='no file found',['fichier illisible ou abime']='unreadable or damaged file',['fichier trop gros']='file too large',['rien a importer']='nothing to import',
+ ['jaune simple']='single yellow',['double jaune']='double yellow',['debut du drapeau']='start of the flag', -- 2.0.4 (place a rendre)
 }
 -- Expressions remplacées dans un morceau (mots entiers, la plus longue d'abord) : listes, résumés, détails composés.
 -- Une entrée { motif, remplacement } est un motif Lua écrit à la main (ordre des mots différent en anglais).
@@ -807,6 +835,7 @@ M.generic={
  {'modele par defaut porte par (%d+) voitures','default model used by %1 cars'},
  {'delta negatif %(([^,]+), ([%d%.%-]+) s au mini%-secteur%)','negative delta (%1, %2 s at the mini-sector)'},
  {'depassement sous drapeau jaune %((.*)%)','overtake under yellow (%1)'},
+ {' voiture%(s%), la plus rapide ',' car(s), fastest '},{'km/h%), motif','km/h), pattern'}, -- 2.0.4 (classes reconnues)
  'voitures en difficulte sous drapeau','cars in trouble under a flag','departs de depassement refuses :','pass starts refused:','premier tour attentif','careful first lap','zone interdite','no-pass zone','sous drapeau','under a flag','phase de depart','start phase','autre raison','other reason','pas de place','no room','ligne droite trop courte','straight too short','paire suspendue','pair suspended','virage ou freinage','corner or braking','budget de direction','direction budget','cote occupe','side occupied','couloir occupe','corridor occupied','rapprochement insuffisant','not closing enough','avance insuffisante','not enough advantage','departs du cote qui s ouvre','starts on the side that opens','drapeaux bleus entre IA : cedes','blue flags between AI: yielded','sans cession','not yielded','voitures lentes ecartees','slow cars moved aside','passages francs','frank passes','levers de pied francs','frank lifts','tours de chauffe','warm-up laps','regles des sessions :','session rules:','attaquant libre','attacker free','fin de tour gardee','lap-end hold','tours refaits','laps redone','ecart de sortie','out-lap gap','chauffes en journee circuit','track-day warm-ups','refroidissements en journee circuit','track-day cool-downs','file de formation etiree','formation queue strung out','penalites drapeaux bleus','blue-flag penalties','ralentissements adoucis','slowings softened','voiture collee derriere','car close behind','conscience arriere :','rear awareness:','lignes gardees','lines kept','cessions anticipees','early yields','defenses non lancees','defences not started','depassements engages','committed passes','lignes tenues','lines held','depassements rejuges','passes judged again','tentatives sans place','attempts without room',
  'zones : attaques attendues','zones: attacks awaited','lignes alternatives','alternative lines','zones apprises','zones learnt','oubliees','forgotten',
  'memoire : allure d avant utilisee par','memory: earlier pace used by','meteo en direct : adherence moyenne','live weather: average grip','arrets anticipes','early stops','paris','gambles','en mauvais pneus','on the wrong tyres',

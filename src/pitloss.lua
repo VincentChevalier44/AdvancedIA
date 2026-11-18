@@ -104,7 +104,8 @@ function M.import(t,record)
  local lane,frac,samples=record.laneTime,record.frac,record.samples
  if type(lane)~='number' or type(frac)~='number' or type(samples)~='number' then return false end
  if not (lane>=K.pitLossMin and lane<=K.pitLossMax and frac>0 and frac<1 and samples>=1) then return false end
- t.laneTime=lane; t.frac=frac; t.samples=math.floor(samples); t.known=true
+ -- Relecture 2.0.4 (B3) : nombre de passages borné comme à l'export (fichier abîmé : un infini rendait la moyenne NaN).
+ t.laneTime=lane; t.frac=frac; t.samples=math.floor(math.min(samples,100000)); t.known=true
  return true
 end
 -- Texte de la clé publiée pour SpotterEnginer (AdvancedIA.strategy, contrat v1) : refait au plus une fois par

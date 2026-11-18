@@ -69,7 +69,7 @@ tests.REVIEW152D_MIGRATION_22_PERSONAL_MARK=function()
  local customs={[3]={name='Mon Q',profile='Q'},[5]={name='Autre',profile='C'}}
  assert(C.sessionPreset(g,'Q')=='Qualifications','before: the session preset would replace it')
  local upgraded=C.migrate(g,profiles(),customs)
- assert(g.dataRevision==C.dataRevision and C.dataRevision==22,'revision 22')
+ assert(g.dataRevision==C.dataRevision and C.dataRevision>=22,'revision 22') -- 2.0.4 : révision 23 (sens provisoire)
  assert(C.mark(g,'Q')==C.personalMark and C.sessionPreset(g,'Q')==nil,'personal mark set: never replaced by the session')
  assert(C.mark(g,'C')=='' and C.sessionPreset(g,'C')=='Course','other profiles untouched')
  local listed=false; for _,x in ipairs(upgraded) do if x:find('Q:',1,true)==1 then listed=true end end

@@ -115,6 +115,8 @@ end
 -- Recalage de l'horloge (src/engine.lua, M.rebase) : heures des champs partagés.
 function M.rebase(s,amount)
  if s.commitAt then s.commitAt=s.commitAt-amount end
+ -- Relecture 2.0.4 (E1) : dernière vue de l'engagement du joueur (src/director.lua, ps.commitSeen) décalée aussi.
+ if s.commitSeen then s.commitSeen=s.commitSeen-amount end
  if s.heldUntil and s.heldUntil>0 then s.heldUntil=s.heldUntil-amount end
  if s.duelRec1 then s.duelRec1.at=s.duelRec1.at-amount; s.duelRec2.at=s.duelRec2.at-amount end
 end

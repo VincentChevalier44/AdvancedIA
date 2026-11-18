@@ -10,6 +10,8 @@ local L=require('src/lang')
 local P=require('src/perception')
 local Classes=require('src/classes')
 local Nuance=require('src/nuance')
+-- Relecture 2.0.4 (B2) : tours du meneur avec le repli de la 2.0.3 (src/pits.lua).
+local Pits=require('src/pits')
 local K=C.K
 -- Beta 1.63 (rapport public : drapeau blanc « dernier tour » montré dès l'extinction des feux et jamais effacé) :
 -- whiteTimeLeft : course au temps, blanc natif d'AC retenu seulement sous ce temps restant (s) ; whiteShow : durée
@@ -70,11 +72,11 @@ local function native(panel,frame,now)
   local laps=(frame.sessionLaps or 0)>0 and not frame.timedRace and frame.sessionLaps or 0
   local left=frame.left or 0
   -- Format inconnu (ni tours ni course au temps déclarés) : retenu comme avant, la durée d'affichage reste bornée.
-  local ok=frame.started==true and (laps>0 and (frame.leaderLaps or 0)+1>=laps or frame.timedRace==true and left<=WK.whiteTimeLeft or laps==0 and frame.timedRace~=true)
+  local ok=frame.started==true and (laps>0 and Pits.leaderLaps(frame)+1>=laps or frame.timedRace==true and left<=WK.whiteTimeLeft or laps==0 and frame.timedRace~=true)
   local wkey=tostring(frame.session)..(ok and '+' or '-')
   if panel.whiteSession~=wkey then
    panel.whiteSession=wkey
-   panel.whiteMsg=string.format('drapeau natif dernier tour: %s (tours %d, tour du leader %d, temps restant %.0f s)',ok and 'retenu' or 'ignore',laps,frame.leaderLaps or 0,left)
+   panel.whiteMsg=string.format('drapeau natif dernier tour: %s (tours %d, tour du leader %d, temps restant %.0f s)',ok and 'retenu' or 'ignore',laps,Pits.leaderLaps(frame),left)
   end
   if ok then return 'white',0 end
  end
@@ -111,7 +113,7 @@ local function pitTexts(panel,t,extra,value,plain)
  local fitted=tyre~='' and tyre or '?'
  local planSame=string.format(H.planSame,fitted)
  local planSameDetail=#others>0 and string.format(H.planSameDetail,fitted,joinOr(others,H.orWord)) or string.format(H.planSameDetailAny,fitted)
- if extra==1 then short=L.flagShort.pitCompound; detail=string.format(L.flagDetails.pitCompound,value)
+ if extra==1 then short=L.flagShort.pitCompound; detail=L.flagDetails.pitCompound
  elseif extra==2 then
   if t.playerPlan=='same' then short=planSame; detail=planSameDetail
   elseif t.playerPlan=='ok' and (t.playerPlanned or '')~='' then short=string.format(H.planOk,t.playerPlanned); detail=short
@@ -340,6 +342,9 @@ function M.update(panel,t,frame,p,profile,now,lights,e)
  elseif t.standing=='lights' then kind='lights'; value=t.gridLit or 0
  elseif t.standing=='go' then kind='go'
  elseif now<(t.jumpUntil or -math.huge) then kind='jump'
+ -- 2.0.4 (Racer63) : place à rendre dans la zone jaune elle-même : affichée avant le jaune (délai court) ; à
+ -- l'approche, le drapeau d'abord, comme avant.
+ elseif panel.giveBackDue and t.playerZone and t.playerInside then kind='giveBack'
  elseif t.playerZone then
   -- Double jaune : incident en piste (delta de zone) ; simple jaune : incident hors piste.
   double=t.playerZoneDouble==true

@@ -96,7 +96,10 @@ function M.rebase(t,amount)
   c.outAt=c.outAt-amount; c.lastStrikeAt=c.lastStrikeAt-amount; c.owedUntil=c.owedUntil-amount; c.owedAt=c.owedAt-amount; c.watchUntil=c.watchUntil-amount
   if c.boxAt>=0 then c.boxAt=c.boxAt-amount end
   c.noOutUntil=c.noOutUntil-amount; c.rejoinAt=c.rejoinAt-amount
+  -- Relecture 2.0.4 (B1) : coupe et contact du joueur en attente de confirmation décalés aussi.
+  c.cutAt=c.cutAt-amount; c.contactAt=c.contactAt-amount
  end
+ if t.playerDoneAt then t.playerDoneAt=t.playerDoneAt-amount end
 end
 -- App à l'arrêt un moment (pause du moteur, panique, aucun onglet) : états passagers oubliés (sortie en cours, rampe
 -- de l'accélérateur, place à rendre, contresens, passage dans la voie des stands) ; pénalités et classement gardés.

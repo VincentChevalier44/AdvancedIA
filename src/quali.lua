@@ -45,6 +45,8 @@ function M.rebase(t,amount)
   if U.finite(c.coolAt) then c.coolAt=c.coolAt-amount end
   if U.finite(c.coolEnd) then c.coolEnd=c.coolEnd-amount end
   if U.finite(c.outEnd) then c.outEnd=c.outEnd-amount end
+  -- Relecture 2.0.4 (B1) : début de la rampe du tour de sortie décalé aussi.
+  if c.outFrom and U.finite(c.outFrom) then c.outFrom=c.outFrom-amount end
   if U.finite(c.candAt) then c.candAt=c.candAt-amount end
   if U.finite(c.jExitAt) then c.jExitAt=c.jExitAt-amount end
   if U.finite(c.jEnd) then c.jEnd=c.jEnd-amount end

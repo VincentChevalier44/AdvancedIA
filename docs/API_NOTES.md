@@ -332,20 +332,20 @@ No CSP getter exists for the current offset, the extra grip, the caution or a to
 ## Companion-app bridge
 
 - **`ac.connect(layout)`** (`common/ac_extras_connect.lua`) creates a structure shared between the session's Lua scripts. Both sides must pass exactly the same layout.
-  - The layout lives in `src/bridge_layout.lua`, byte-identical in AdvancedIA and SpotterEnginer.
+  - The layout lives in `src/bridge_layout.lua`, byte-identical in AdvancedIA and SpotterEngineer (formerly SpotterEnginer; code compared without comments).
   - A `key` field holds `ac.StructItem.key(...)` to avoid collisions.
   - Types used: `boolean`, `int32`, `uint32`, `float`, `double`, `string(capacity)` and `array(struct(...), 61)` for the cars.
-- **When it opens.** `Applier.bridgeOpen` runs only if `Applier.companionInstalled('SpotterEnginer')` finds `ACAppsLua/SpotterEnginer/manifest.ini` (via `io.fileExists`). The check runs once at launch, inside `pcall`. Without the companion app, `ac.connect` is never called.
+- **When it opens.** `Applier.bridgeOpen` runs only if `Applier.companionInstalled` finds `ACAppsLua/<name>/manifest.ini` for one of `K.companionNames` (`SpotterEngineer` first, then the former `SpotterEnginer`; also SetupLab and SuperHUD) (via `io.fileExists`). The check runs once at launch, inside `pcall`. Without the companion app, `ac.connect` is never called.
 - **Publishing** (`src/bridge.lua`) is pure Lua and reads only.
   - It runs once per frame after the engine update, inside `pcall`. An error closes the bridge only.
   - Strings are written only when they change, cut at their capacity on a UTF-8 boundary.
-- **`SpotterEnginer.update`** (read since Beta 1.52) is a session-memory key that SpotterEnginer writes itself.
-  - AdvancedIA reads it with `ac.load` every `K.companionUpdatePeriod` (10 s), only when SpotterEnginer is installed.
+- **`SpotterEngineer.update`** (read since Beta 1.52; read under the new name first, then under the former `SpotterEnginer.update`) is a session-memory key that the companion writes itself.
+  - AdvancedIA reads it with `ac.load` every `K.companionUpdatePeriod` (10 s), only when the companion is installed.
   - Contract v1: `v=1;installed=…;latest=…;state=…[;needs=…]`, at most 200 bytes, with unknown fields ignored.
     - `state` is one of `available`, `uptodate`, `checking`, `error` or `incompatible`.
     - Versions are at most 32 bytes and use letters, digits, `.`, `-`, `?` and spaces.
   - Anything else counts as absent.
-  - AdvancedIA only shows the state and opens SpotterEnginer's window. It never downloads or installs anything for it.
+  - AdvancedIA only shows the state and opens the companion's window. It never downloads or installs anything for it.
 
 ## Pitfalls observed in game
 

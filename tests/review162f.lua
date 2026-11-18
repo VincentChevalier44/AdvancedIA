@@ -35,8 +35,11 @@ tests.FORMATION_WEAVE_SPEED_162F=function()
  t.form[2]=0.3; f.cars[2].yawRate=(K.weaveLatAccel+1)/(150/3.6)
  local mayWeave=Antics.mayWeave
  Antics.mayWeave=function(ee,ff,i,lap,skip) return skip==true end
- Antics.weave(t,e,f,e.time,1/60)
- Antics.mayWeave=mayWeave
+ -- Beta 2.0.4 : garde d'avant (lacet) seulement quand la trajectoire n'est pas lue (tests/review204f.lua : trajectoire
+ -- lue, jamais figé par le lacet du zigzag).
+ local Snapshot=require('src/snapshot'); local bendLat=Snapshot.bendLat; Snapshot.bendLat=function() return -1,nil end
+ local ok,err=pcall(Antics.weave,t,e,f,e.time,1/60)
+ Antics.mayWeave=mayWeave; Snapshot.bendLat=bendLat; assert(ok,err)
  assert(math.abs(t.form[2]-0.3)<1e-9,'own lateral acceleration: target held, no snap back ('..t.form[2]..')')
 end
 -- S9 : défense et ses réglages masqués hors course ; un « non » du joueur gardé en course ; hors course, coupée (ne

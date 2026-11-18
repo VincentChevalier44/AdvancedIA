@@ -75,7 +75,7 @@ function M.reset(s,now,keepOffset,preserveErrors)
  s.blockedYield=0; s.radarBrake=0; s.speedWindowStart=now; s.speedWindow=0
  s.trafficReference=0; s.trafficApplied=false; s.yellow=false; s.overtakeArmed=false; s.overtakeSpline=-1; s.yieldClass=false
  if not keepOffset then s.offset=0 end
- s.lane=0; s.laneActive=false; s.laneLatched=false; s.laneMeters=0; s.laneLogged=false; s.filesOn=false; s.filesDone=false
+ s.lane=0; s.laneActive=false; s.laneLatched=false; s.laneMeters=0; s.laneLogged=false; s.filesOn=false; s.filesDone=false; s.filesArmed=false
  -- Beta 1.52 : refus comptés (tours lancés, premier tour attentif) oubliés.
  s.qualiHeldFor=nil; s.flPassHeldFor=nil
  s.towing=false; s.towDone=false; s.dirty=0; s.dirtyBefore=false; s.urgency=0
@@ -509,7 +509,9 @@ function M.reachable(s,a,p,g,desired)
  if g.offsetSign==0 or not a.splineValid or not (a.leftWidth>0 and a.rightWidth>0) then return 0 end
  local toRight=desired*g.offsetSign>0
  local bound=widthBound(s,a,p,toRight,(s.state=='DRIVE' or s.state=='IDLE') and not s.edgePin)
- if s.formWeave and (s.state=='DRIVE' or s.state=='IDLE') then local w=weaveBound(a,toRight); if w and w>bound then bound=min(w,p.maxSideOffset,s.zone.maxOffset) end end
+ -- Affinage 2.0.4 : zigzag et files du tour de formation bornés par le bord (weaveBound), jamais par le décalage maximal
+ -- des manœuvres (0,8 en course : le zigzag centré sur le milieu de la piste était coupé du côté large).
+ if (s.formWeave or s.formFiles) and (s.state=='DRIVE' or s.state=='IDLE') then local w=weaveBound(a,toRight); if w and w>bound then bound=min(w,s.zone.maxOffset) end end
  return U.clamp(desired,-bound,bound)
 end
 -- Place (m) que la borne laisse vers un côté de la piste (gauche ou droite réelles), dans l'échelle de ce côté ; ne
@@ -578,8 +580,24 @@ local function laneTarget(s,a,row,g)
  if width<=0 then return 0 end
  -- Borne du côté de la voiture : elle y est déjà ; la borne symétrique la ramènerait vers la trajectoire.
  -- Beta 1.25 : au plus K.laneMaxOffset du demi-côté (échelle mètres-décalage encore jamais vérifiée en jeu).
- local bound=min(s.zone.maxOffset,K.laneMaxOffset,max(0,width-a.width*0.5)/width)
+ local bound=min(s.zone and s.zone.maxOffset or K.laneMaxOffset,K.laneMaxOffset,max(0,width-a.width*0.5)/width)
  return U.clamp(meters/width,-bound,bound)
+end
+-- 2.0.4 (retours de joueurs : départ lancé, les deux files tombaient toutes au drapeau vert) : files relevées de nouveau à
+-- chaque départ donné par l'app (drapeau vert du départ lancé, extinction de la grille après le tour de formation) :
+-- écart réel à la trajectoire à cet instant (file du tour de formation, place de la grille), tenu comme au départ arrêté.
+function M.relatchLanes(e,frame,now)
+ local g=e.runtimeG or e.g
+ if not K.startRelatch or not g or g.offsetSign==0 then return end
+ for i=1,frame.count do
+  local a,s=frame.cars[i],e.states[i]
+  if s and a.valid and a.control and not a.player and not a.safetyCar and not a.pit then
+   s.laneLatched=true; s.laneLogged=false; s.filesDone=false; s.filesArmed=false; s.laneSeen=now
+   s.laneMeters=a.splineLatValid and abs(a.splineLat or 0)>=K.laneMin and a.splineLat or 0
+   s.lane=s.laneMeters~=0 and (a.leftWidth or 0)>0 and (a.rightWidth or 0)>0 and laneTarget(s,a,{},g) or 0
+   if s.lane==0 then s.laneMeters=0 end
+  end
+ end
 end
 local function laneHold(e,s,a,row,g,frame,now,i)
  if not frame.started then
@@ -595,7 +613,15 @@ local function laneHold(e,s,a,row,g,frame,now,i)
  s.laneActive=true
  if not s.laneLogged then
   s.laneLogged=true; s.laneAt=now
-  U.log(e.log,now,'INFO',string.format('maintien de ligne: %s a %+.1f m de la trajectoire (decalage %+.2f)',a.name,s.laneMeters,s.lane),i)
+  -- Relecture 2.0.4 (H1) : au plus K.laneLogMax lignes par départ (toutes les voitures tenues à la même image : la rafale
+  -- remplissait la limite de K.logRate lignes par seconde et chassait les autres lignes de la seconde du départ) ; le
+  -- total reste dans la ligne « depart: maintien de ligne ... maintenues ».
+  local key=(e.startedAt or 0)+(e.launchAt or 0)
+  if e.laneLogKey~=key then e.laneLogKey=key; e.laneLogCount=0 end
+  if not K.laneLogMax or e.laneLogCount<K.laneLogMax then
+   e.laneLogCount=e.laneLogCount+1
+   U.log(e.log,now,'INFO',string.format('maintien de ligne: %s a %+.1f m de la trajectoire (decalage %+.2f)',a.name,s.laneMeters,s.lane),i)
+  end
  end
  if s.alongside then s.laneSeen=now end
  -- Affinage 2.0.2 (départ en deux files) : place de la grille tenue jusqu'au premier freinage de la voiture elle-même
@@ -619,8 +645,11 @@ local function laneHold(e,s,a,row,g,frame,now,i)
    end
    if hole then s.filesDone=true; s.laneSeen=now-K.laneRelease end
   end
+  -- 2.0.4 : pédale encore enfoncée sur la grille au feu vert : le premier freinage ne compte qu'après un lâcher du frein
+  -- depuis le vert, ou au-delà de K.startFilesBrakeKmh (avant : files rendues au bout de K.laneRelease s, 1 s).
+  if a.brake<=K.ruleBrake or a.kmh>=K.startFilesBrakeKmh then s.filesArmed=true end
   if s.filesDone then
-  elseif a.brake>K.ruleBrake and a.brake>(s.appBrake or 0)+K.brakeEcho then s.filesDone=true; s.laneSeen=now
+  elseif s.filesArmed and a.brake>K.ruleBrake and a.brake>(s.appBrake or 0)+K.brakeEcho then s.filesDone=true; s.laneSeen=now
   else local target=laneTarget(s,a,row,g); if target~=0 then s.lane=target end; return s.lane end
  end
  if now-s.laneSeen<K.laneRelease or a.brake>K.ruleBrake then
@@ -664,9 +693,14 @@ function M.lateral(s,desired,row,a,p,g,dt,now)
  -- Beta 1.47 : cession au drapeau bleu ni retenue ni comptée (céder au plus rapide passe avant le plafond).
  if maneuver and not directionAllowed(s,emergency and desired or intended,now,p,emergency or s.state=='CALM' or s.state=='AVOID' or s.yieldBlue and yieldStates[s.state],intended,frozen) then s.velocity=0; s.filtered=s.offset; return s.offset end
  local rate=p.rampSpeed*U.clamp(K.lateralSpeedBase/max(a.kmh,K.lateralSpeedFloor),K.lateralRateMin,K.lateralRateMax)*factor
+ -- Affinage 2.0.4 (pilote, 17 novembre : « plein de petits coups de volant », un droite franc puis un gauche franc) :
+ -- zigzag du tour de formation : vitesse, montée et lissage propres (K.formWeaveSpeed, K.formWeaveAccel,
+ -- K.formWeaveTau), jamais les réglages latéraux du profil (0,45 et 2 en course : le zigzag n'atteignait jamais sa cible).
+ local accel,tau=p.rampAccel,p.lowPassTau
+ if s.formWeave and not s.laneActive and K.formWeaveSpeed then rate=max(rate,K.formWeaveSpeed); accel=max(accel,K.formWeaveAccel); tau=min(tau,K.formWeaveTau) end
  local velocity=U.sign(delta)*rate
- s.velocity=U.approach(s.velocity,velocity,p.rampAccel*dt)
- s.filtered=U.ema(s.filtered,desired,dt,p.lowPassTau)
+ s.velocity=U.approach(s.velocity,velocity,accel*dt)
+ s.filtered=U.ema(s.filtered,desired,dt,tau)
  local candidate=U.approach(s.offset,s.filtered,abs(s.velocity)*dt)
  local nextOffset=U.clamp(candidate,min(s.offset,desired),max(s.offset,desired))
  -- Dernière barrière, valable aussi pour les retours au centre et les dépassements annulés.
@@ -794,6 +828,12 @@ local function yieldTrigger(e,s,a,row,p,profile,now,dt,rest)
  if not blue and not slowSelf and s.abnormal==true and back.gap<=K.slowGlueGap and back.sa>=-K.blueSlack then slowSelf=true end
  if slowSelf then blue=true end
  local classYield=upper and back.sa>=p.classYieldMargin and (back.sa>=K.classFightSpeed or row.front==0 or row.neighbors[row.front].gap>K.followRange)
+ -- 2.0.4 (iwouldsayhello, 18 novembre : classe rapide collée derrière une classe lente, à la même allure, jamais
+ -- passée, en qualifications) : comme le drapeau bleu à vitesse égale, une voiture d'une classe plus rapide collée
+ -- derrière (K.classGlueGap m, pas plus lente de K.blueSlack km/h) est laissée passer, quel que soit le profil et même
+ -- avec une voiture devant ; jamais par une IA en tour lancé pour une voiture qui ne l'est pas.
+ if not classYield and upper and back.gap<=K.classGlueGap and back.sa>=-K.blueSlack
+  and not (e.quali and e.quali.active and e.quali.push[a.slot] and not e.quali.push[back.index]) then classYield=true end
  -- Beta 1.61 (classNuance) : classe lente : la voiture rapide est déjà décalée (K.classSideLat m), elle a choisi son
  -- côté : la ligne est tenue. Une ligne au plus toutes les K.nuanceLogGap s.
  if p.classNuance and classYield and not blue and Nuance.classHold(back.lat) then
@@ -1089,7 +1129,7 @@ end
 -- Beta 1.59 (course de 10 tours du 10 novembre) : derniers tours concernés au plus K.finalLapsShare de la course
 -- (au moins 1) quand le nombre de tours est connu ; course chronométrée : finalLaps tel quel.
 local function finalLapsFor(p,frame,race)
- local total=frame.sessionLaps>0 and not frame.timedRace and frame.sessionLaps or race and race.known and (frame.leaderLaps or 0)+race.lapsLeft or 0
+ local total=frame.sessionLaps>0 and not frame.timedRace and frame.sessionLaps or race and race.known and (race.leaderLaps or frame.leaderLaps or 0)+race.lapsLeft or 0
  if total>0 then return min(p.finalLaps,max(1,math.floor(K.finalLapsShare*total+0.5))) end
  return p.finalLaps
 end
@@ -1534,7 +1574,10 @@ function M.step(e,i,dt,now)
  -- Sous drapeau (zone jaune et son approche, neutralisation, drapeau rouge) : en file derrière la voiture de devant,
  -- sans la rattraper au-delà d'un léger rapprochement ; jamais derrière une voiture accidentée, arrêtée ou très lente,
  -- qu'il est permis de doubler. Évite qu'une IA rattrape et double celle qui freine la première pour la zone.
- if (yellow or e.incidents.neutral or e.incidents.red) and row.front>0 and row.neighbors[row.front].gap<K.scQueueGap then
+ -- Affinage 2.0.4 (banc du départ lancé : les places impaires tenues à 17 m derrière la voiture de l'autre file, prise pour
+ -- « la voiture de devant ») : appel des deux files (paires du directeur, plus bas) : cette file ordinaire n'est pas jouée.
+ local pairCall=K.rollPairs and e.incidents.formation and e.incidents.rollCall and s.formLat~=nil and (s.rollPlace or 0)>=2
+ if not pairCall and (yellow or e.incidents.neutral or e.incidents.red) and row.front>0 and row.neighbors[row.front].gap<K.scQueueGap then
   local front=row.neighbors[row.front]; local j=front.index
   -- Voiture qui doit rendre la place à celle-ci (IA ou joueur), qui purge une sanction, ou dont celle-ci reprend la
   -- place : jamais de file derrière elle.
@@ -1552,7 +1595,34 @@ function M.step(e,i,dt,now)
  local hardQueue=false
  if e.incidents.neutral and not e.incidents.red and a.splineValid and frame.length>0 and not a.pit then
   local best,bj=K.scWatch,0
-  for j=1,frame.count do
+  -- Beta 2.0.4 (décision du pilote, 17 novembre : départ lancé « les unes à côté des autres, en quinconce ») : aux deux
+  -- files du tour de formation, une place paire se cale sur sa voisine de rangée (place d'avant, autre file) avec
+  -- K.rollStagger longueur de retard, dès que les deux files sont écartées (largeurs et K.rollPairLatMin m, écarts réels
+  -- mesurés : s.formLat, src/antics.lua) ; une place impaire suit la voiture de sa file (deux places devant). Sinon (files
+  -- pas encore écartées, voisine accidentée ou absente) : file d'avant, derrière la voiture la plus proche.
+  local paired=false
+  -- Affinage 2.0.4 : places comptées parmi les voitures en piste (s.rollPlace, src/antics.lua), sinon le classement.
+  local pos=s.rollPlace or a.position or 0
+  if K.rollPairs and e.incidents.formation and e.incidents.rollCall and pos>=2 and s.formLat~=nil then
+   local even=pos%2==0; local want=even and pos-1 or pos-2
+   for j=1,frame.count do
+    local b=frame.cars[j]
+    if j~=i and (e.states[j].rollPlace or b.position)==want then
+     if b.valid and not b.pit and b.splineValid and not (e.incidents.cars[j] and e.incidents.cars[j].incident) then
+      local c=U.spline(b.spline-a.spline)*frame.length
+      if even then
+       local lj=e.states[j] and e.states[j].formLat
+       -- Affinage 2.0.4 (pilote, 17 novembre : « beaucoup trop d'espace entre elles ») : écart compté depuis la place
+       -- voulue (K.queueKeep ajouté : la file d'avant gardait 15 m de plus que la place).
+       if lj~=nil and abs(s.formLat-lj)>=((a.width or K.width)+(b.width or K.width))*0.5+K.rollPairLatMin then best=K.queueKeep+c-K.rollStagger*(b.length or K.length); bj=j; paired=true end
+      else best=K.queueKeep+c-((a.length or K.length)+(b.length or K.length))*0.5-K.rollRowGap; bj=j; paired=true end
+     end
+     break
+    end
+   end
+  end
+  s.rollPaired=paired or nil
+  for j=1,paired and 0 or frame.count do
    local b=frame.cars[j]
    if j~=i and b.valid and not b.pit and b.splineValid and not (e.incidents.cars[j] and e.incidents.cars[j].incident) then
     local d=U.spline(b.spline-a.spline)*frame.length-((a.length or K.length)+(b.length or K.length))*0.5
@@ -1577,9 +1647,15 @@ function M.step(e,i,dt,now)
    bj=0
   end
   if bj>0 then
-   cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh+max(0,best-K.queueKeep)*K.queueClose))
+   -- Affinage 2.0.4 (Monza, 17 h 06 : paires formées mais 20 à 30 m entre les rangées, +8 km/h pour recoller) : paire du
+   -- départ lancé, rapprochement K.rollCloseRate km/h par mètre de trop (au plus K.rollCatchMax km/h).
+   if paired then cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh+min(K.rollCatchMax,max(0,best-K.queueKeep)*K.rollCloseRate)))
+   else cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh+max(0,best-K.queueKeep)*K.queueClose)) end
    -- À sa hauteur (recouvrement) : K.scOverlapDrop km/h de moins qu'elle, pour revenir derrière.
-   if best<0 then cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh-K.scOverlapDrop)) end
+   -- Beta 2.0.4 : paire du départ lancé un peu trop avancée : recul en proportion de l'avance (jamais le saut de
+   -- K.scOverlapDrop km/h pour quelques centimètres).
+   if paired then local err=best-K.queueKeep; if err<0 then cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh-min(K.scOverlapDrop,-err*K.rollCloseRate))) end
+   elseif best<0 then cap=min(cap,max(K.trafficMinSpeed,frame.cars[bj].kmh-K.scOverlapDrop)) end
    hardQueue=best<2*K.queueKeep; s.neutralQueue=bj
   else s.neutralQueue=0 end
  else s.neutralQueue=0 end
@@ -1686,7 +1762,11 @@ function M.step(e,i,dt,now)
  -- Premier tour 1.63 (Spa du 13 novembre, « prudents mais très rapides, aucun ralentissement ») : la phase de départ
  -- (dépassements, défense, prudence de départ) ne dure que le lancement, K.startWindowMax s au plus après l'attente.
  local startWin=p.startDelay+min(p.startRelax,K.startWindowMax)
- local startPhase=profile=='C' and elapsed<startWin
+ -- 2.0.4 (pilote, Monza, 18 novembre 09:45 : sur le chemin de la grille après le tour de formation, dépassements,
+ -- défenses et « voiture lente devant » : une IA arrêtée 2 m à côté de sa place, encore décalée par son dépassement) :
+ -- formation de la grille et feux d'un départ arrêté comptés dans la phase de départ (rien de tout cela avant l'extinction).
+ local gridPhase=e.incidents.standing=='grid' or e.incidents.standing=='lights'
+ local startPhase=profile=='C' and (elapsed<startWin or gridPhase)
  -- Beta 1.42 AERO : air sale (sillage en virage) et urgence des derniers tours (agressivité, défense).
  -- Beta 1.47 : premier tour attentif (src/firstlap.lua, poids s.flW) : ni air sale, ni urgence, ni aspiration cassée,
  -- ni défense ; dépassement en vraie ligne droite seulement, évitement d'une voiture arrêtée ou très lente seulement.
@@ -2339,7 +2419,7 @@ function M.step(e,i,dt,now)
       s.base=s.base+(math.sin(t/s.persona.jitterPeriod*math.pi*2+s.persona.phase)+0.5*math.sin(t/s.persona.jitterPeriod2*math.pi*2-s.persona.phase))/1.5*s.dirty*max(K.dirtyJitterAmp,p.personalLineJitter*K.dirtyJitterGain)
      end
      s.base=s.base+(s.zone.lineOffset or 0)+(s.formOffset or 0) -- Beta 1.61 : ligne de la zone (src/zones.lua), file du tour de formation (src/antics.lua)
-     local baseMax=s.formWeave and K.formWeaveMax or K.baseMax -- Correctif 1.61 : zigzag du tour de formation
+     local baseMax=(s.formWeave or s.formFiles) and K.formWeaveMax or K.baseMax -- Correctif 1.61 : zigzag du tour de formation (2.0.4 : et les deux files du départ lancé)
      s.base=U.clamp(s.base,-baseMax,baseMax); desired=s.base
      local defend=false
      -- Défense : jamais au freinage, quel que soit l'onglet Règles.
@@ -3158,7 +3238,9 @@ function M.step(e,i,dt,now)
   for j=1,row.count do local r=row.neighbors[j]; if r.alongside then s.cornerPair[r.index]=true end end
  elseif not entering and s.cornerOut>K.cornerPhaseGap then s.cornerPhase=false end
  local giveTo=0
- if entering then
+ -- 2.0.4 (pilote, Monza, 18 novembre 11:47 : « priorite au virage » entre voitures qui rejoignent leur place) : jamais
+ -- pendant la formation de la grille ni les feux d'un départ arrêté (les places décident).
+ if entering and not (e.incidents.standing=='grid' or e.incidents.standing=='lights') then
   -- Beta 1.64, lot 1 (référentiel des comportements pilotes ; décision du pilote du 13 novembre) : la priorité suit le
   -- duel partagé (src/priority.lua, M.duel : repères F1, essieu avant et rétroviseur ; règle du nez quand la géométrie
   -- ou le sens du virage sont inconnus). Sens du virage lu une fois par épisode sur la piste devant ; duel enregistré
@@ -3334,6 +3416,10 @@ function M.step(e,i,dt,now)
   end
  end
  if s.closeIn then caution=min(caution,K.closeInCaution); aggression=max(aggression,s.baseAggression or aggression) end
+ -- Affinage 2.0.4 (pilote : rangées à 2 ou 3 m au départ lancé ; l'IA d'AC garde d'elle-même un écart de suivi qui
+ -- grandit avec la prudence) : paire formée pendant l'appel des files : prudence K.rollCaution au plus, agressivité
+ -- K.rollAggression au moins (allure toujours bornée par la file de l'app).
+ if s.rollPaired and e.incidents.rollCall and K.rollCaution then caution=min(caution,K.rollCaution); aggression=max(aggression,K.rollAggression) end
  -- Affinage 1.64 n1 : cession au gros freinage : prudence relevée (freine plus tôt et se range derrière).
  if now<(s.duelConcedeUntil or 0) then caution=max(caution,(s.baseCaution or caution)*K.duelConcedeCaution) end
  local tau=s.state=='CALM' or s.state=='AVOID'
@@ -3536,4 +3622,19 @@ function M.step(e,i,dt,now)
  if front then s.gap=front.gap; s.sa=front.sa; s.ttc=front.ttc end
 end
 M.pace=pace
+-- Relecture 2.0.4 (A1) : horloges du directeur absentes de C.timerFields / C.optionalTimerFields (fenêtres « jusqu'à » et
+-- dernières heures), recalées aussi au retour de l'horloge du moteur (K.timeWrap, 24 h de temps du moteur : course de
+-- 24 heures). Avant : une fenêtre restait ouverte ou fermée 24 h (exitCornerAt : sortie de virage toujours « récente »).
+local extraTimers={'aidPairUntil','brakeWaitAt','ciT','classHoldLogAt','classWaitAt','closeInBlockUntil','closeInLogAt','closeInOffAt',
+ 'coverLogAt','duelConcedeUntil','duelKeepRoom','exitCAt','exitCornerAt','exitPassLog','exitPassUntil','frankAt','frankTraceAt','govLogAt',
+ 'lappedHoldUntil','lastPullLog','ovyBlockUntil','ovyLogAt','passIgnoreAt','passReopened','pushAt','pushPairUntil','radarLatFrame',
+ 'rearLeftUntil','rearLogAt','rearRightUntil','relapUntil','seekLatch','seekLogAt','unlapLogAt','wakeHoldLog','yellowEaseLogAt','yellowFollowLogAt'}
+M.extraTimers=extraTimers
+function M.rebase(e,amount)
+ for i=1,K.maxCars do
+  local s=e.states[i]
+  if s then for _,key in ipairs(extraTimers) do local v=s[key]; if type(v)=='number' and U.finite(v) then s[key]=v-amount end end end
+ end
+ local cd=e.coverDiag; if cd and U.finite(cd.at) then cd.at=cd.at-amount end
+end
 return M

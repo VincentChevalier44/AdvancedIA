@@ -1678,6 +1678,12 @@ local function homeTab(v,e,host)
  if host.oldSettings then addWarning(v,L.oldSettings) end
  -- Beta 1.56 : vos limites de piste gérées par l'app, pénalités d'AC encore actives (double sanction possible).
  if e.acPenaltyWarned then addWarning(v,L.acPenaltiesOn,'acpenalties') end
+ -- Beta 2.0.4 : demandes d'arrêt ignorées par le jeu (src/pits.lua, M.ignored).
+ local ignored=e.pits and e.pits.ignoredCount or 0
+ if ignored>0 then
+  if v.pitIgnoredFor~=ignored then v.pitIgnoredFor=ignored; v.pitIgnoredText=string.format(L.pitIgnored,ignored) end
+  addWarning(v,v.pitIgnoredText)
+ end
  if host.upgraded and #host.upgraded>0 then
   if v.upgradedFor~=host.upgraded or v.upgradedCount~=#host.upgraded then v.upgradedFor=host.upgraded; v.upgradedCount=#host.upgraded; v.upgradedList=table.concat(host.upgraded,', ') end
   addWarning(v,fmt(v,'upgraded','%s%s',L.upgraded,v.upgradedList))
@@ -3218,6 +3224,8 @@ function M.hud(v)
  local hidden=not frame or frame.replay and g.overlayHideReplay or g.overlayHidePits and player~=nil and player.pit
  -- Beta 1.64 : bureau d'applications d'AC où l'overlay est masqué : rien n'est dessiné (le moteur continue).
     or not D.desk.visible(g,desk)
+    -- Beta 2.0.4 (décision du pilote) : applications d’AC masquées (Ctrl+H) : overlay masqué avec elles.
+    or Adapter.appsHidden()==true
  local unlocked=not g.overlayLocked
  local p=not hidden and M.overlayParts(v,unlocked) or nil
  nativeBox(v,not hidden and g.overlayEnabled~=false and g.overlayNativeBox and g.overlaySession and D.desk.shown(g,desk,'line'))

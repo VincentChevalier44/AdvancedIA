@@ -2718,12 +2718,16 @@ tests.AI_DRS=function()
  b.yawRate=0; e.drsRule.restart=true; F.tick(e,f,0.1); assert(e.commands[2].drsBlock and e.commands[2].drsWant==nil,'forbidden by the rules: never opened')
  e.profiles.C.rulesDrsLaps=0; e.profiles.C.aiDrs=false; E.changed(e); F.tick(e,f,0.1); assert(e.commands[2].drsWant==nil,'option off: nothing')
 end
--- Zone jaune signalée depuis longtemps : un dépassement est sanctionné aussitôt, sans attente.
+-- Zone jaune signalée depuis longtemps : un dépassement est sanctionné, sans place rendue.
+-- 2.0.4 (décision du pilote du 18 novembre, retour de Racer63) : en zone jaune locale, au moins K.giveBackMin s pour
+-- rendre la place d'abord (avant : sanction aussitôt) ; sous neutralisation, aussitôt comme avant (LOCK_YELLOW_GIVE_BACK_FIRST_204).
 tests.PLAYER_PENALTY_PASS_LATE=function()
  local e,f=F.scene('C',3); F.place(f,3,5000,0); F.place(f,2,4850,60); F.place(f,1,4800,45); F.tick(e,f,3+C.K.passGiveBack)
  F.place(f,2,4850,40)
  for step=1,10 do F.place(f,1,4800+step*10,45); F.tick(e,f,0.1) end
- assert(e.penalties.count==1 and e.penalties.reason=='pass','pass long after the flag: immediate penalty')
+ assert(e.penalties.count==0 and e.penalties.giveBack==2,'pass long after the flag, local zone: place to give back first')
+ F.tick(e,f,C.K.giveBackMin+0.5)
+ assert(e.penalties.count==1 and e.penalties.reason=='pass','place kept: penalty at the deadline')
 end
 -- Beta 1.3 : livrée de la voiture de sécurité. Parmi les voitures du modèle (grille tirée au sort), celle qui porte la
 -- livrée « safety » est la voiture de sécurité ; sinon la première, à habiller.
@@ -3800,6 +3804,8 @@ tests.PLAYER_RETAKE_ALWAYS=function()
   frame(0,20,0)
   for now=1,11 do frame(now,20,0) end
   frame(12,20,30); frame(13,20,30); frame(14,40,30)
+  -- 2.0.4 : en zone jaune locale la sanction ne tombe qu'à l'échéance (K.giveBackMin s) : reprise suivie au-delà.
+  for now=15,17+math.ceil(C.K.giveBackMin) do frame(now,40,30) end
   return t
  end
  assert(run(function() end).count==0,'baseline: no penalty for the retake')
@@ -4809,11 +4815,13 @@ tests.SIGNS_RESTORED=function()
  local function weekend() local out={}; for _,x in ipairs(C.profiles) do out[x]=C.validate(x,C.defaults(x)) end; return out end
  local g=C.validateGlobals({schemaVersion=3,dataRevision=13,presetsUsed=true,offsetSign=0,sideSign=0})
  local _,_,restored=C.migrate(g,weekend())
- assert(restored and g.offsetSign==-1 and g.sideSign==-1,'lost signs restored')
+ assert(restored and g.offsetSign==-1 and g.sideSign==-1 and not g.signProvisional,'lost signs restored') -- 2.0.4 : rétabli (révision 14), pas provisoire (révision 23)
  local known=C.validateGlobals({schemaVersion=3,dataRevision=13,presetsUsed=true,offsetSign=1,sideSign=1})
  local _,_,again=C.migrate(known,weekend()); assert(not again and known.offsetSign==1,'a known sign is never changed')
- local fresh=C.validateGlobals({}); local _,isFresh,firstRestored=C.migrate(fresh,weekend())
- assert(isFresh and not firstRestored and fresh.offsetSign==0,'first install: measured, never assumed')
+ -- 2.0.4 (décision du pilote du 16 novembre, départs de 60 IA) : première installation : jamais « rétabli », mais -1 / -1
+ -- provisoire, toujours mesuré (src/calibration.lua) ; avant : 0 / 0, aucun déplacement latéral avant la mesure.
+ local fresh=C.validateGlobals({}); local _,isFresh,firstRestored,provisional=C.migrate(fresh,weekend())
+ assert(isFresh and not firstRestored and provisional and fresh.offsetSign==-1 and fresh.signProvisional==true,'first install: provisional, still measured')
  local Calibration=require('src/calibration')
  local cal=Calibration.new(); cal.attempted=true; cal.retryAt=100
  local f={online=false,replay=false,paused=false,count=0,cars={}}
@@ -5686,7 +5694,10 @@ tests.GRID_STANDING_START_134=function()
  assert(g.phase=='grid' and g.slotOf[2]==1 and g.slotOf[3]==2 and g.slotOf[1]==3 and g.slotOf[4]==4 and g.slotOf[5]==5,'slots in race order, player included')
  local cmd=e.commands[2]; local d=U.spline(g.slots[1].spline-f.cars[2].spline)*f.length
  local cap=U.clamp(math.sqrt(2*K.gridApproachDecel*(d-K.gridHoldDistance))*3.6,K.gridCrawlKmh,K.gridApproachKmh)
- assert(cmd.speedLimit<=cap+1e-6 and cmd.offset==-K.gridColumn and not cmd.stopHold,'approach: speed cap from the distance, column of the slot')
+ assert(cmd.speedLimit<=cap+1e-6 and not cmd.stopHold,'approach: speed cap from the distance')
+ -- 2.0.4 (LOCK_GRID_COLUMN_RAMP_204) : colonne de la place rejointe progressivement.
+ for _=1,4*60 do F.place(f,2,slotZ(1)-150,60); F.tick(e,f,1/60) end
+ assert(math.abs(e.commands[2].offset-(-K.gridColumn))<1e-6,'approach: column of the slot ('..e.commands[2].offset..')')
  -- Derniers mètres : freinage d'appoint, puis retenue à la place ; place dépassée : retenue sur place.
  F.place(f,2,slotZ(1)-10,40); F.tick(e,f,1/60)
  assert(e.commands[2].brake>0 and not e.commands[2].stopHold,'assist brake in the last metres')
@@ -6162,6 +6173,16 @@ tests.AI_NO_SANCTION_DURING_FORMATION_135=function()
  local t=Pe.new(); step(t,0,20,'grid'); assert(not step(t,30,20,'grid') and not t.ai.count[2] and not t.ai.owe[2],'formation: passing to reach the slot, no sanction, no place to give back')
  -- Correctif 1.63 : sous un régime de relance, la place se rend d'abord (owe), sanction seulement si elle est gardée.
  local t2=Pe.new(); step(t2,0,20,'none'); local ev=step(t2,30,20,'none'); assert(ev or t2.ai.owe[2]==3,'restart regime outside the formation: place to give back (or sanctioned)')
+ -- 2.0.4 : hors drapeau rouge, rien n'est plus jugé sur le chemin de la grille (LOCK_GRID_NO_AI_GIVEBACK_204) ; sous
+ -- drapeau rouge établi, le dépassement reste jugé mais la formation de la grille ne fait jamais rendre une place.
+ local function red(t,za,zb)
+  F.place(f,2,za,100); F.place(f,3,zb,100); F.place(f,4,5000,100)
+  e.incidents.cars[2].restart=true; e.incidents.cars[3].restart=true
+  e.states[2].nextPerception=0; F.tick(e,f,1/60); e.incidents.standing='grid'; e.incidents.red=true
+  local out=Pe.ai(t,f,e.run,'C',e.incidents,st,e.perception.rows,e.time); e.incidents.red=false; return out
+ end
+ local t3=Pe.new(); for _=1,60*(C.K.passGiveBack+2) do red(t3,0,20) end; red(t3,30,20)
+ assert(not t3.ai.owe[2],'grid under an established red flag: never a place to give back')
 end
 -- Beta 1.36 (3e relecture) : faux départ jamais sanctionné à l'arrêt sur la grille, même après un calage de 30 s.
 tests.GRID_JUMP_STALL_136=function()
@@ -6385,6 +6406,18 @@ for name,test in pairs(require('tests/review202g')) do assert(tests[name]==nil,n
 for name,test in pairs(require('tests/review202i')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.2 i (retours des joueurs : abandon des seules IA cassées, formation arrêtée gardée)
 for name,test in pairs(require('tests/review203a')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.3 a (arrêt obligatoire par défaut selon la distance, tours du leader indisponibles)
 for name,test in pairs(require('tests/review203k')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.3 k (clé AdvancedIA.tyres pour SpotterEngineer)
+for name,test in pairs(require('tests/review204a')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.4 a (départs : sens provisoire, frein de la grille, files du départ lancé)
+for name,test in pairs(require('tests/review204rA')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, domaine A (conduite)
+for name,test in pairs(require('tests/review204rC')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, domaine C (moteur, liaisons, fichiers)
+for name,test in pairs(require('tests/review204rB')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, domaine B
+for name,test in pairs(require('tests/review204rH')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 3 (H)
+for name,test in pairs(require('tests/review204s')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.4, décisions du pilote (S)
+for name,test in pairs(require('tests/review204f')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.4, tour de formation (F)
+for name,test in pairs(require('tests/review204g')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.4, retours des joueurs du 18 novembre (G)
+for name,test in pairs(require('tests/review204h')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.4, essai du pilote du 18 novembre 11:47 (H)
+for name,test in pairs(require('tests/review204rE')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 2 (E)
+for name,test in pairs(require('tests/review204rF')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 2 (F)
+for name,test in pairs(require('tests/review204rG')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 2 (G)
 for name,test in pairs(require('tests/review202h')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 h (joueur hors piste ou lent : doublé)
 for name,test in pairs(require('tests/review164i1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 i1 (fenêtre ouverte en jeu)
 for name,test in pairs(require('tests/review164h1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 h1 (overlay par bureau)

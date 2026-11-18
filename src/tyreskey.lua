@@ -9,7 +9,8 @@
 --         8 caractères au plus, « ; » « = » « , » remplacés par _, séparés par des virgules ; « - » si aucun ;
 --   stamp temps du moteur (s) à l'écriture.
 -- Lecture seule du moteur et de l'image : aucune commande, rien d'écrit ailleurs que cette clé.
-local K=require('src/config').K
+local C=require('src/config')
+local K=C.K
 local M={}
 local TK={period=0.5,refresh=5,bytes=160,nameChars=8}
 M.K=TK
@@ -23,19 +24,24 @@ function M.clean(name)
  return (tostring(name or ''):sub(1,TK.nameChars):gsub('[;=,]','_'))
 end
 
+-- Relecture 2.0.4 (B8, signalé par la session de SpotterEngineer) : vraie session de course (type de session d'AC ou de
+-- race.ini, comme le choix automatique du profil) ; un profil Course choisi à la main en essais ou en qualifications ne
+-- publie jamais rule=1 ni de composés roulés (contrat v1 : 0 hors course).
+local function raceSession(frame) return frame~=nil and C.autoProfile(frame)=='C' end
+M.raceSession=raceSession
 -- La règle des deux composés secs s'applique-t-elle au joueur dans cette course ?
-function M.rule(e)
+function M.rule(e,frame)
  local p=e.run or EMPTY
  local pits=e.pits or EMPTY
- return e.profile=='C' and p.pitCompoundChange==true and (p.mandatoryStops or 0)>0 and pits.waived~=true
+ return e.profile=='C' and raceSession(frame) and p.pitCompoundChange==true and (p.mandatoryStops or 0)>0 and pits.waived~=true
 end
 
 -- Corps de la clé sans horodatage (comparé d'une écriture à l'autre).
 function M.body(e,frame)
  local slot=frame.player or 0
- local rule=M.rule(e)
+ local rule=M.rule(e,frame)
  local names={}
- if e.profile=='C' and slot>0 then
+ if e.profile=='C' and raceSession(frame) and slot>0 then
   local own=((e.pits or EMPTY).cars or EMPTY)[slot] or EMPTY
   local a=(frame.cars or EMPTY)[slot] or EMPTY
   local used=own.usedDry or EMPTY

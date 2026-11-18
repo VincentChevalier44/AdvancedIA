@@ -425,7 +425,7 @@ function M.update(t,e,frame,now,_dt)
  -- gardent leur place (un appel retiré bloque l'entrée des stands un instant), les nouvelles attendent.
  local requested=0
  -- Relecture 1.52 : appel d'une IA lente et endommagée (engine.lua, cmd.slowCalled, image précédente) compté aussi.
- for i=1,frame.count do local a=frame.cars[i]; local c=t.cars[i]; if not a.pit and (e.commands[i].rulePit or c.called and c.wanted or e.commands[i].sanCalled or e.commands[i].slowCalled) then requested=requested+1 end end
+ for i=1,frame.count do local a=frame.cars[i]; local c=t.cars[i]; if not a.pit and not e.pits.cars[i].requestIgnored and (e.commands[i].rulePit or c.called and c.wanted or e.commands[i].sanCalled or e.commands[i].slowCalled) then requested=requested+1 end end
  for i=1,frame.count do
   local a=frame.cars[i]; local c=t.cars[i]; local cmd=e.commands[i]; local s=e.states[i]
   local identity=a.identity or a.id or ''

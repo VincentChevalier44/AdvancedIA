@@ -142,7 +142,9 @@ tests.LOCK_START_ABORT_BACK_OF_GRID_164=function()
   free(f,3)
   toLights(e,f)
   local g=e.grid
-  assert(g.slotOf[2]==1 and g.slotOf[1]==2 and g.slotOf[4]==3 and g.slotOf[3]==4,'car 3 from the back of the grid ('..g.slotOf[2]..g.slotOf[1]..g.slotOf[4]..g.slotOf[3]..')')
+  -- 2.0.4 (décision du pilote du 18 novembre, « cases vides partout ») : chacune garde sa place, la fautive derrière la
+  -- dernière place, sa place laissée vide (LOCK_GRID_OWN_SLOT_204).
+  assert(g.slotOf[2]==1 and g.slotOf[1]==3 and g.slotOf[4]==4 and g.slotOf[3]==5,'car 3 from the back of the grid ('..g.slotOf[2]..g.slotOf[1]..g.slotOf[4]..g.slotOf[3]..')')
   assert(count(e,'grille: Driver_3 part de l arriere de la grille (depart avorte)')==1 and count(e,'place perdue pendant le tour de formation')==0,'logged as an aborted start')
   assert(t.abortMarks==0 and not t.cars[3].abortMark,'marks used once')
   assert(count(e,'depart: depart arrete (SS) apres le tour de formation')==2,'second grid')
@@ -168,7 +170,8 @@ tests.LOCK_START_ABORT_BACK_OF_GRID_164=function()
   F.tick(q,fq,1/60); free(fq,3); free(fq,4)
   toLights(q,fq)
   local gq=q.grid
-  assert(gq.slotOf[2]==1 and gq.slotOf[1]==2 and gq.slotOf[5]==3 and gq.slotOf[3]==4 and gq.slotOf[4]==5,'car 3 then car 4 at the back')
+  -- 2.0.4 (« cases vides partout ») : 2, joueur et 5 gardent leur place ; 3 puis 4 derrière la dernière place.
+  assert(gq.slotOf[2]==1 and gq.slotOf[1]==3 and gq.slotOf[5]==5 and gq.slotOf[3]==6 and gq.slotOf[4]==7,'car 3 then car 4 at the back ('..gq.slotOf[2]..gq.slotOf[1]..gq.slotOf[5]..gq.slotOf[3]..gq.slotOf[4]..')')
   assert(count(q,'(depart avorte)')==2,'two lines')
  end)
 end
@@ -477,7 +480,8 @@ tests.LOCK_START_ABORT_PLAYER_PASSES_164=function()
   assert(not t.cars[4].abortHold and count(e,'(peloton passe)')==1,'released once the player has passed')
   free(f,4)
   toLights(e,f)
-  assert(e.grid.slotOf[2]==1 and e.grid.slotOf[3]==2 and e.grid.slotOf[1]==3 and e.grid.slotOf[4]==4,'car 4 from the back ('..e.grid.slotOf[1]..e.grid.slotOf[4]..')')
+  -- 2.0.4 (décision du pilote du 18 novembre, « cases vides partout ») : le joueur garde sa place (4), la fautive derrière.
+  assert(e.grid.slotOf[2]==1 and e.grid.slotOf[3]==2 and e.grid.slotOf[1]==4 and e.grid.slotOf[4]==5,'car 4 from the back ('..e.grid.slotOf[1]..e.grid.slotOf[4]..')')
   assert(count(e,'grille: Driver_4 part de l arriere de la grille (depart avorte)')==1,'logged')
  end)
 end

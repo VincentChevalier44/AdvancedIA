@@ -3,6 +3,8 @@ local U=require('src/util')
 local K=require('src/config').K
 local Delta=require('src/delta')
 local Grid=require('src/grid')
+-- Relecture 2.0.4 (B2) : tours du meneur avec le repli de la 2.0.3 (src/pits.lua) : même compteur partout.
+local Pits=require('src/pits')
 local min,max=math.min,math.max
 local M={}
 -- Beta 1.63 (course du pilote à Suzuka : 70 incidents au même virage, point difficile armé mais IA toujours trop
@@ -32,7 +34,7 @@ M.SK=SK
 -- (quitte un mur en marche arrière) est dans le bon sens. Utilisé ici et par src/sanctions.lua (drapeau noir).
 function M.noseFirst(a,lastX,lastZ) return (a.x-lastX)*a.lx+(a.z-lastZ)*a.lz>0 end
 local function clearCar(c)
- c.incident=false; c.dismissed=false; c.since=0; c.spline=0; c.onTrack=false; c.clearedAt=-math.huge; c.wrong=0; c.spin=0; c.contact=false; c.lastSpline=-1; c.calm=0
+ c.incident=false; c.dismissed=false; c.parked=false; c.since=0; c.spline=0; c.onTrack=false; c.clearedAt=-math.huge; c.wrong=0; c.spin=0; c.contact=false; c.lastSpline=-1; c.calm=0
  c.still=0; c.halt=0; c.moved=false; c.fresh=true; c.slow=0; c.counted=false; c.lastCrash=-math.huge; c.window=0; c.windowStart=-math.huge; c.crashAt=-math.huge; c.holding=false; c.holdUntil=0; c.holdMax=0; c.announced=false
  c.restart=false; c.restartLast=0; c.stuckFor=0; c.anchorX=math.huge; c.anchorZ=math.huge
  -- Beta 1.63 : redémarrage d'une IA accidentée qui peut encore rouler (rejoin).
@@ -149,9 +151,16 @@ function M.rebase(t,amount)
  if U.finite(t.scCrossAt) then t.scCrossAt=t.scCrossAt-amount end
  if U.finite(t.scFlagAt) then t.scFlagAt=t.scFlagAt-amount end
  if U.finite(t.leadLapAt) then t.leadLapAt=t.leadLapAt-amount end
+ -- Relecture 2.0.4 (E3) : classement du tour de formation (comparé aux heures since des voitures, décalées) aussi.
+ if U.finite(t.formationAt) then t.formationAt=t.formationAt-amount end
+ -- Relecture 2.0.4 (B1) : sortie de la voiture de sécurité et journal de sa sortie décalés aussi (24 h de course).
+ if U.finite(t.scOutAt) then t.scOutAt=t.scOutAt-amount end
+ if U.finite(t.exitLogAt) then t.exitLogAt=t.exitLogAt-amount end
  for i=1,K.maxCars do
   local c=t.cars[i]
-  for _,key in ipairs({'since','clearedAt','windowStart','crashAt','wreckAt','holdUntil','holdMax','lastCrash','holdStart','abortHoldAt'}) do if U.finite(c[key]) then c[key]=c[key]-amount end end
+  -- Relecture 2.0.4 (B1) : reprise d'une IA accidentée (prochain essai, début), place derrière la voiture de sécurité et
+  -- ouverture de la zone jaune décalées aussi : sans cela, après K.timeWrap s, une IA en cours de reprise attendait 24 h.
+  for _,key in ipairs({'since','clearedAt','windowStart','crashAt','wreckAt','holdUntil','holdMax','lastCrash','holdStart','abortHoldAt','rejoinNext','rejoinSince','scPassedAt','zoneOpenAt'}) do if U.finite(c[key]) then c[key]=c[key]-amount end end
   if U.finite(t.releaseAt[i]) then t.releaseAt[i]=t.releaseAt[i]-amount end
   if U.finite(t.gateSince[i]) then t.gateSince[i]=t.gateSince[i]-amount end
   if U.finite(t.openedAt[i]) then t.openedAt[i]=t.openedAt[i]-amount end
@@ -286,7 +295,14 @@ local function leaderLap(t,frame,now)
  -- Beta 1.60 (tranche E) : distance de la tête à la ligne (appel du départ lancé) ; vert du départ lancé à
  -- K.rollGreenBefore m de la ligne, grille formée à K.gridFormFrom m comme avant.
  t.relaunchToLine=((-a.spline)%1)*frame.length
- return t.relaunchTravel>=K.relaunchTravel and ((-a.spline)%1)*frame.length<=(t.formation and t.formationKind~='formation' and (t.rollGreenAt or K.rollGreenBefore) or K.gridFormFrom)
+ local toLine=((-a.spline)%1)*frame.length
+ -- Affinage 2.0.4 (pilote, 17 h 40 : « tout le monde rassemblé avant de lancer le drapeau vert ») : départ lancé, vert
+ -- seulement peloton groupé (t.rollCompact), au plus tard à K.rollGreenLast m de la ligne.
+ if t.formation and t.formationKind~='formation' and t.rollCompact==false and toLine>K.rollGreenLast then
+  if t.relaunchTravel>=K.relaunchTravel and toLine<=(t.rollGreenAt or K.rollGreenBefore) and not t.rollWaitLogged then t.rollWaitLogged=true; note(t,'INFO',string.format('depart lance: vert retenu, peloton pas encore groupe (%.0f m entre deux voitures)',t.rollSpread or 0),-1) end
+  return false
+ end
+ return t.relaunchTravel>=K.relaunchTravel and toLine<=(t.formation and t.formationKind~='formation' and (t.rollGreenAt or K.rollGreenBefore) or K.gridFormFrom)
 end
 -- Sortie des stands après un drapeau rouge : ordre figé au drapeau rouge (Beta 1.48, joueur compris ; sinon ordre du
 -- classement), une IA toutes les deux secondes après un court délai, chacune seulement quand la voiture qui la précède
@@ -705,7 +721,7 @@ local function zoneOnTrack(t) for k=1,t.zoneCount do if t.zones[k].onTrack then 
 -- Relecture 164e (A1, A10) : tours restants du meneur ; course au temps : temps restant en tours de voiture de sécurité,
 -- plus le tour supplémentaire de la session ; format inconnu : nil.
 local function lapsLeft(frame)
- if (frame.sessionLaps or 0)>0 and not frame.timedRace then return frame.sessionLaps-(frame.leaderLaps or 0) end
+ if (frame.sessionLaps or 0)>0 and not frame.timedRace then return frame.sessionLaps-Pits.leaderLaps(frame) end
  if frame.timedRace==true and frame.length>0 then return (frame.left or 0)/(frame.length/(K.scNominalKmh/3.6))+(frame.extraLap==true and 1 or 0) end
  return nil
 end
@@ -825,14 +841,14 @@ end
 -- le passage du meneur après le temps écoulé (t.zeroLaps : ses tours au temps écoulé), jamais le tour où le temps
 -- s'écoule (la voiture de sécurité rentrait un tour trop tôt).
 local function lastLap(t,frame)
- if (frame.sessionLaps or 0)>0 and not frame.timedRace then return (frame.leaderLaps or 0)+1>=frame.sessionLaps end
- return frame.timedRace==true and (frame.left or 1)<=0 and (frame.extraLap~=true or (frame.leaderLaps or 0)>t.zeroLaps)
+ if (frame.sessionLaps or 0)>0 and not frame.timedRace then return Pits.leaderLaps(frame)+1>=frame.sessionLaps end
+ return frame.timedRace==true and (frame.left or 1)<=0 and (frame.extraLap~=true or Pits.leaderLaps(frame)>t.zeroLaps)
 end
 -- Beta 1.64, lot 5 : arrivée neutralisée. Dernier tour sous voiture de sécurité (course) : elle rentre sans relance
 -- (appelée, elle ne sort pas), la file franchit le damier dans l'ordre, sans dépassement. Durée du tour du meneur
 -- mesurée à chaque image (borne lointaine). Levée par un drapeau rouge ou la fin de la neutralisation.
 local function finalLatch(t,frame,now,p,profile)
- local laps=frame.leaderLaps or 0
+ local laps=Pits.leaderLaps(frame)
  if laps~=t.leadLaps then
   if t.leadLaps>=0 and U.finite(t.leadLapAt) then t.leadLapDur=now-t.leadLapAt end
   t.leadLaps=laps; t.leadLapAt=now
@@ -869,11 +885,11 @@ local function finalStep(t,frame,now,p)
  end
  if not frame.finished then
   local why=nil
-  if (frame.leaderLaps or 0)>t.scFinalLaps then
+  if Pits.leaderLaps(frame)>t.scFinalLaps then
    if not U.finite(t.scCrossAt) then t.scCrossAt=now; t.scCrossLeft=frame.left or 0 end
    if now-t.scCrossAt>=SK.finalCross then
     if frame.timedRace==true and t.scCrossLeft<=0 and not t.scExtra then
-     t.scExtra=true; t.scFinalLaps=frame.leaderLaps or 0; t.scCrossAt=-math.huge
+     t.scExtra=true; t.scFinalLaps=Pits.leaderLaps(frame); t.scCrossAt=-math.huge
      note(t,'INFO','arrivee neutralisee: tour de plus apres la fin du temps, neutralisation tenue',-1)
     else why='pas de drapeau a damier au passage du meneur' end
    end
@@ -956,6 +972,9 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
    t.suppressed[reason]=t.suppressed[reason]+1
   end
   local raw=eligible and (c.halt>=K.obstacleTime or c.spun or c.wrong>=K.wrongWayTime)
+  -- Affinage 2.0.4 (Monza, 17 h 36 : une IA renvoyée à l'arrière de la grille après ses burnouts, les suivantes changeant
+  -- de colonne) : burnout ou gros freinage voulu par l'app (c.burnUntil, src/antics.lua) : jamais un incident.
+  if raw and c.burnUntil and now<c.burnUntil and not c.spun then raw=false end
   if raw then c.calm=0 else c.calm=c.calm+dt end
   -- Fin confirmée après quelques secondes de conduite normale : une glissade qui se stabilise reste un seul incident,
   -- et le délai d'incident majeur n'est pas remis à zéro.
@@ -965,6 +984,10 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   -- de la lecture hors piste) ; levé quand elle repart ou revient en piste plus de K.offClearBack s.
   if a.offtrack then c.backOn=0 else c.backOn=(c.backOn or 0)+dt end
   if not incident or c.still==0 or (c.backOn or 0)>K.offClearBack then c.dismissed=false end
+  -- 2.0.4 (Lincoln Silva, 18 novembre) : voiture écartée garée hors piste (c.parked) : dépannée comme bloquée
+  -- (src/engine.lua) tant qu'elle ne s'éloigne pas de K.stuckRadius m (patiner sur place dans le bac à sable ne compte
+  -- pas), ne revient pas en piste et ne rentre pas aux stands.
+  if c.stuckFor==0 or (c.backOn or 0)>K.offClearBack or a.pit or not a.valid then c.parked=false end
   if c.still==0 then c.hotspotFed=false; c.dangerFed=false end
   if incident and not c.incident then
    c.since=now; c.announced=false
@@ -991,7 +1014,7 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
   local clear=incident and not c.dismissed and a.offtrack and beyond and c.still>=K.offClearTime and lat~=nil and lat>K.offClearLat
   if incident and (c.dismissed or clear or a.offtrack and now-c.since>K.incidentMaxAge) then
    if not c.dismissed then note(t,'INFO',clear and 'incident ecarte: arretee hors piste, loin de la trajectoire depuis '..K.offClearTime..' s' or 'incident ecarte: hors piste depuis plus de '..K.incidentMaxAge..' s',i) end
-   c.dismissed=true; incident=false
+   c.dismissed=true; c.parked=true; incident=false
   end
   if incident then
    c.spline=a.spline; c.onTrack=not a.offtrack; t.activeCount=t.activeCount+1
@@ -1100,7 +1123,8 @@ function M.update(t,frame,p,profile,now,dt,ready,seed)
  local lapDone=formLap and leaderLap(t,frame,now)
  if t.formation then
   local roll=t.formationKind~='formation'
-  t.rollCall=roll and t.relaunchTravel>=K.relaunchTravel and t.relaunchToLine<=K.rollCallDistance
+  -- Beta 2.0.4 (décision du pilote, 17 novembre : deux files dès le regroupement) : appel à K.rollPairFrom m de la ligne.
+  t.rollCall=roll and t.relaunchTravel>=K.relaunchTravel and t.relaunchToLine<=(K.rollPairs and K.rollPairFrom or K.rollCallDistance)
   -- Départ lancé : aucun vert avec un incident juste après la ligne ; un tour de plus (K.formationExtraLaps au plus).
   if lapDone and roll and t.formationExtra<K.formationExtraLaps then
    local near=math.huge
@@ -1724,6 +1748,20 @@ function M.cap(t,frame,i,p,d,states,margin)
     -- devant l'écart, part de tour jusqu'à la tête), jamais par tours + abscisse (ligne franchie ou non).
     if t.formationSlowFrom and ((a.spline or 0)-t.formationSlowFrom)%1<=(t.formationSlowSpan or 0)+1e-6 then kmh=t.formationSlowKmh or kmh end
     target=kmh*(1-(margin or 0))
+    -- Affinage 2.0.4 (pilote, 17 novembre : file trop espacée avant le départ) : regroupement de fin de tour
+    -- (K.formCatchFrom m de la ligne au plus) : toute voiture sauf la tête peut rouler K.formCatchPct % plus vite pour
+    -- recoller ; la file du directeur (enveloppe derrière la voiture de devant, paires du départ lancé) l'arrête à sa place.
+    if (t.relaunchTravel or 0)>=K.relaunchTravel and (t.relaunchToLine or math.huge)<=K.formCatchFrom and i~=(t.relaunchLeader or 0) and not (t.rollCall and i==(t.rollFirst or 0)) then
+     -- Affinage 2.0.4 (Monza, 17 h 06 : toutes les voitures tenues à l'allure de la tête ralentie, 20 à 30 m entre les
+     -- rangées jusqu'au drapeau vert) : rattrapage sur l'allure du tour, jamais sur l'allure abaissée de la tête.
+     target=max(kmh,t.formationKmh or kmh)*(1+K.formCatchPct/100)
+    end
+    -- Affinage 2.0.4 (pilote, 17 h 40 : « le premier était beaucoup trop loin devant ») : appel des deux files, peloton
+    -- pas encore groupé (t.rollCompact faux, src/antics.lua) : la tête (meneur du tour, ou première place des files)
+    -- attend à K.rollWaitPct % de l'allure du tour, jamais sous K.rollWaitMinKmh km/h.
+    if t.rollCall and t.rollCompact==false and (i==(t.relaunchLeader or 0) or i==(t.rollFirst or 0)) then
+     target=min(target,max(K.rollWaitMinKmh,(t.formationKmh or kmh)*K.rollWaitPct/100))
+    end
    end
    if merging then target=min(target,K.scNominalKmh-K.scMergeMargin) end
   end

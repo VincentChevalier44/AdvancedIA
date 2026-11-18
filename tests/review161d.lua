@@ -335,6 +335,9 @@ tests.ROLLING_TWO_FILES_161D=function()
  local sign=e.g.offsetSign<0 and -1 or 1
  for i=2,6 do
   local want=(i%2==1 and -1 or 1)*K.gridColumn*sign
+  -- Beta 2.0.4 (décision du pilote, 17 novembre) : files au quart de la largeur, de part et d'autre du milieu de la piste.
+  local a=f.cars[i]; local lw,rw=a.leftWidth,a.rightWidth
+  if K.rollPairs and lw>0 and rw>0 then local pos=(rw-lw)*0.5+(i%2==1 and -1 or 1)*(lw+rw)*0.25; want=sign*(pos>=0 and pos/rw or pos/lw) end
   assert(math.abs((e.states[i].formOffset or 0)-want)<1e-9,'two files: odd places on the pole side '..i..' '..tostring(e.states[i].formOffset))
  end
  assert(e.states[1].formOffset==nil,'never the player')
@@ -350,7 +353,7 @@ tests.FORMATION_ROWS_161D=function()
  local e,f=formRace(6,true,'formation'); acStart(e,f)
  local t=e.antics; local inc=e.incidents
  assert(inc.formation and t.kind=='form','formation lap drawn as a getaway by rows')
- assert(count(e,'tour de formation: depart par rangees, zigzags oui, deux files a 0 m de la ligne')==1 and count(e,'depart: reactions')==0,'its own line')
+ assert(count(e,'tour de formation: depart par rangees, zigzags oui, deux files a 0 m de la ligne, entree des stands inconnue')==1 and count(e,'depart: reactions')==0,'its own line')
  for i=2,6 do assert(math.abs(t.rowDelay[i]-(math.floor((i+1)/2)-1)*K.formLaunchGap)<1e-9,'row delay '..i) end
  for i=1,6 do e.commands[i].throttleLimit=1 end
  Antics.launch(t,e,f,t.at+K.formLaunchGap*0.5)

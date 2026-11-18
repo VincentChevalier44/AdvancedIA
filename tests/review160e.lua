@@ -91,7 +91,7 @@ tests.FORMATION_ROLLING_160E=function()
  assert(t.formationKind=='rolling' and count(e,'puis depart lance')==1,'rolling start chosen')
  F.tick(e,f,0.2); assert(e.panel.kind=='rolling' and e.panel.short==string.format(L.flagShort.formationRoll,100),'panel: formation lap, then a rolling start')
  assert(roll(e,f,60,function() return t.rollCall end),'roll call when the leader nears the line')
- assert(t.formation and t.neutral and t.relaunchToLine<=K.rollCallDistance and t.relaunchToLine>K.rollGreenBefore,'called K.rollCallDistance m before the line, no green yet')
+ assert(t.formation and t.neutral and t.relaunchToLine<=(K.rollPairs and K.rollPairFrom or K.rollCallDistance) and t.relaunchToLine>K.rollGreenBefore,'called K.rollPairFrom m before the line (2.0.4 : regroupement), no green yet')
  F.tick(e,f,1/60)
  assert(t.messageKind=='rollStart' and t.messageValue==3 and t.messageExtra==2,'announcement: P3, behind the car in P2 (AC index 2)')
  assert(published(e,f).standing=='roll','bridge: standing=roll, got '..tostring(published(e,f).standing))
@@ -230,6 +230,10 @@ end
 -- premier tour de course : tout le monde boucle ses deux tours, aucun contact au premier virage, aucun abandon.
 tests.START_BENCH_ROLLING_160E=function()
  local run=require('tests/startbench147')
+ -- Beta 2.0.4 : courbure illisible, écart latéral réel = x du banc (paires du départ lancé ; jamais dépendant de l'ordre
+ -- des tests).
+ local Snapshot=require('src/snapshot'); local bendLat=Snapshot.bendLat; Snapshot.bendLat=function(a) return -1,a.x end
+ local ok,err=pcall(function()
  for _,sc in ipairs({{'short','gt3'},{'monza','f1'}}) do
   -- Premier tour 1.63 : journal du banc agrandi (les lignes de dépassement, plus nombreuses, chassaient celles du départ
   -- du tampon de 200 lignes).
@@ -239,9 +243,13 @@ tests.START_BENCH_ROLLING_160E=function()
   assert(n('depart: tour de formation (')==1 and n('depart lance: drapeau vert')==1 and n('abandonne')==0 and n('un tour de plus')==0,scene..': one formation lap, one green')
   assert(r.finished==24,scene..': formation lap and first racing lap completed by every AI ('..r.finished..')')
   assert(r.contactsFirst==0 and r.contacts<=2,scene..': no contact into the first corner ('..r.contactsFirst..', '..r.contacts..' in all)')
-  assert(r.radarStraight-(r.radarLast or 0)<=5,scene..': no braking wave on the straights ('..r.radarStraight..')')
+  -- Affinage 2.0.4 (demande du pilote du 17 novembre : rangées à 2 ou 3 m, peloton serré jusqu'à la ligne) : un freinage du
+  -- radar de plus au banc de Monza (6) avec le peloton serré.
+  assert(r.radarStraight-(r.radarLast or 0)<=6,scene..': no braking wave on the straights ('..r.radarStraight..', last '..tostring(r.radarLast)..')')
   assert(n('premier tour: mode attentif pour 24 IA (depart lance)')==1,scene..': careful first lap armed at the green')
  end
+ end)
+ Snapshot.bendLat=bendLat; assert(ok,err)
 end
 
 -- Contrat du pont avec SpotterEnginer (il juge sur les fronts), image par image : « form » puis « roll » ne sont publiés

@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 2.0.3',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 2.0.4',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -993,7 +993,7 @@ function M.upgradeObstacles(p) if p.section_start==true and not p.section_accide
 -- _preset : vrai pour un préréglage personnel (src/presets.lua) ; plus lu depuis la Beta 1.52, gardé pour ses appels.
 -- Clés de règles apparues après les révisions qui jugent un jeu de règles : ignorées par ces révisions.
 local keys18={safetyCarEscalation=true}
-M.dataRevision=22
+M.dataRevision=23
 function M.migrateProfile(profile,p,from,_preset,out)
  out=out or {}
  if from<5 and equal(p.deltaTolerance,0.1) then p.deltaTolerance=M.defaults(profile).deltaTolerance; out[#out+1]=profile..':delta' end
@@ -1113,8 +1113,14 @@ function M.migrate(g,profiles,customs)
  -- Révision 22 (Beta 1.52, relecture) : préréglage personnel chargé avant la Beta 1.51 (aucune marque « Perso ») : marqué
  -- une seule fois dans son profil, que le préréglage de la session ne le remplace pas.
  if g.dataRevision<22 and customs then local profile=M.markPersonal(g,customs); if profile then upgraded[#upgraded+1]=profile..':preset personnel garde' end end
+ -- Révision 23 (2.0.4, pilote, 16 novembre : départs de 60 IA, installation neuve : sens latéral 0 / 0, aucune file tenue,
+ -- les IA plongeaient toutes vers la trajectoire) : sens latéral encore inconnu (installation neuve, ou jamais mesuré
+ -- depuis) : convention d'AC -1 / -1, provisoire ; la mesure (src/calibration.lua) tourne quand même et le confirme ou le
+ -- corrige.
+ local provisional=false
+ if g.dataRevision<23 and M.K.signProvisional and g.offsetSign==0 and g.sideSign==0 then g.offsetSign=-1; g.sideSign=-1; g.signProvisional=true; provisional=true end
  g.dataRevision=M.dataRevision
- return upgraded,fresh,restored
+ return upgraded,fresh,restored,provisional
 end
 -- Règles d'une catégorie, appliquées ensemble aux profils Essais, Qualifications et Course : clés de l'onglet
 -- Règles de course (hors préférences du pilote) et réglages de double jaune propres à une catégorie (delta de zone,
@@ -1543,7 +1549,7 @@ for key,value in pairs(k161) do assert(M.K[key]==nil,key); M.K[key]=value end
 local k161c={blueCatchTime=5,blueBrakeTime=2,blueZoneTime=4,blueFastSa=20,blueSlowMin=0.02,nuanceBattleTime=1,blueTruceAfter=2,unlapMargin=1.3,relapHold=10,relapSa=8,
  classSideLat=1.5,classNoDiveTime=2,classAmCorridor=1.2,classTrainTime=2,bluePlayerOrderTime=2,blueStartGrace=30,blueTrainRange=200,trafficKeyBytes=160,nuanceLogGap=20,classAmStyle=0.6}
 for key,value in pairs(k161c) do assert(M.K[key]==nil,key); M.K[key]=value end
--- Beta 1.61 (tranche A) : zones par circuit (src/zones.lua, src/zonelearn.lua). Fichier au format zoneFormat, note
+-- Beta 1.61 (tranche A) : zones par circuit (src/zones.lua, src/zonelearn.lua). Fichier au format trackFileFormat, note
 -- d'au plus zoneNote caractères, au plus zoneLearntMax zones apprises, zoneBrakeMax points de freinage, attackMax zones
 -- d'attaque. Zone apprise : appliquée après zoneConfirmSessions sessions, oubliée après zoneForgetSessions sessions
 -- sans confirmation. Point de freinage : brakeLearnHits freinages de brakeLearnCars voitures au moins dans la session.
@@ -1553,12 +1559,12 @@ for key,value in pairs(k161c) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- attackMergeMeters m, longue de attackMinMeters à attackMaxMeters m. Ligne d'une zone : prise par lineShareDefault
 -- des IA (tirage lineSalt), installée en lineRamp s. Enregistrement des zones apprises : au plus toutes les
 -- zoneSavePeriod s.
-local k161a={zoneFormat=1,zoneLearntMax=64,zoneNote=64,zoneConfirmSessions=2,zoneForgetSessions=10,brakeLearnHits=5,brakeLearnCars=2,zoneBrakeMax=48,
+local k161a={zoneLearntMax=64,zoneNote=64,zoneConfirmSessions=2,zoneForgetSessions=10,brakeLearnHits=5,brakeLearnCars=2,zoneBrakeMax=48,
  attackMargin=0.8,attackWaitTime=6,attackNoWaitSa=20,attackStuckTime=8,attackLearnPasses=4,attackMergeMeters=150,attackMaxMeters=600,attackMinMeters=120,attackMax=8,
  lineRamp=1.5,lineShareDefault=0.5,lineSalt=1613,zoneSavePeriod=300,lineWet=0.1}
 for key,value in pairs(k161a) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- Beta 1.61, tranche B (mémoire du circuit, src/pacemap.lua ; réglage global trackMemory). Fichier d'allure : format
--- paceMapFormat, au plus paceMapMaxBytes octets et paceMapModels modèles (nom d'au plus paceMapNameMax caractères),
+-- trackFileFormat, au plus paceMapMaxBytes octets et paceMapModels modèles (nom d'au plus paceMapNameMax caractères),
 -- compteurs d'au plus paceMapSerialMax ; vitesse d'au plus paceMapMaxSpeed dixièmes de m/s ; valeur isolée (écart de plus
 -- de paceMapSpike à la médiane de ses voisins) écartée ; modèle gardé s'il connaît paceMapMinShare du tour.
 -- Fusion : paceMapAlpha par session, valeur de session sous paceMapLow × gardé ignorée, bornée à paceMapHigh × gardé ;
@@ -1566,7 +1572,7 @@ for key,value in pairs(k161a) do assert(M.K[key]==nil,key); M.K[key]=value end
 -- plus (écriture de plus de paceMapSlowMs ms : fin de session seulement) ; note du départ après paceMapStartNote s.
 -- A priori : donné au directeur après priorRatioMin endroits appris, rythme borné de priorRatioLow à priorRatioHigh
 -- (lissage priorRatioAlpha) ; jamais au-dessus de priorWetMax d'humidité.
-local k161b={paceMapFormat=1,paceMapMaxBytes=262144,paceMapModels=32,paceMapNameMax=64,paceMapSerialMax=100000,paceMapAlpha=0.3,paceMapLow=0.7,paceMapHigh=1.15,
+local k161b={paceMapMaxBytes=262144,paceMapModels=32,paceMapNameMax=64,paceMapSerialMax=100000,paceMapAlpha=0.3,paceMapLow=0.7,paceMapHigh=1.15,
  paceMapMinShare=0.5,paceMapWetShare=0.1,paceMapMaxSpeed=1200,paceMapSpike=0.4,paceMapSavePeriod=300,paceMapSlowMs=30,paceMapStartNote=5,
  priorRatioMin=10,priorRatioLow=0.8,priorRatioHigh=1.2,priorRatioAlpha=0.1,priorWetMax=0.1}
 for key,value in pairs(k161b) do assert(M.K[key]==nil,key); M.K[key]=value end
@@ -1982,4 +1988,48 @@ do
   return done
  end
 end
+-- 2.0.4 (pilote, 16 novembre, retours de joueurs : au départ, les IA quittent leur file et plongent vers la trajectoire) :
+-- signProvisional : sens latéral -1 / -1 posé sans mesure (révision 23) ; la mesure tourne tant qu'il est vrai.
+-- startFilesBrakeKmh : départ en deux files, premier freinage compté seulement après un lâcher du frein depuis le vert
+-- ou au-delà de cette vitesse (la pédale encore enfoncée sur la grille rendait les files au bout de 1 s).
+-- startRelatch : files relevées de nouveau à chaque départ donné par l'app (drapeau vert du départ lancé, extinction de
+-- la grille après le tour de formation).
+for key,value in pairs({signProvisional=true,startFilesBrakeKmh=30,startRelatch=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
+assert(M.globalDefaults.signProvisional==nil); M.globalDefaults.signProvisional=false
+-- Relecture 2.0.4 (H1) : laneLogMax : lignes « maintien de ligne » au plus par départ (la rafale de toutes les voitures à la
+-- même image chassait les autres lignes de la seconde du départ, limite K.logRate).
+-- Relecture 2.0.4 (H2) : leaderFallbackWarnLaps : avertissement « tours du leader indisponibles » seulement après ce nombre
+-- de tours bouclés par une voiture (le repli lui-même reste immédiat).
+for key,value in pairs({laneLogMax=12,leaderFallbackWarnLaps=2}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 2.0.4 (décision du pilote, journaux d'un joueur : demandes d'arrêt jamais suivies par le jeu) : pitIgnoredLaps :
+-- tours bouclés par une IA appelée aux stands sans y entrer avant que la demande soit dite ignorée et abandonnée.
+for key,value in pairs({pitIgnoredLaps=5}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Beta 2.0.4 (décisions du pilote, 17 novembre, essais du tour de formation : départs avortés à l'entrée des stands,
+-- départ lancé en file indienne, zigzags minuscules) :
+-- pitEntryBefore / pitEntryAfter : zone de l'entrée des stands (début de pit_lane.ai, lu par l'applicateur) : aucun
+-- décalage du tour de formation (zigzag, deux files) de pitEntryBefore m avant à pitEntryAfter m après ;
+-- (grille : un incident dans cette zone, ou d'une voiture dans la voie des stands, n'annule plus le départ) ;
+-- rollPairs : départ lancé en paires côte à côte (quinconce légère : rollStagger fois une longueur d'avance pour la file
+-- de la pole), appel des deux files rollPairFrom m avant la ligne (regroupement), voiture paire calée sur sa voisine
+-- seulement quand les deux files sont écartées d'au moins rollPairLatMin m de plus que la largeur d'une voiture ;
+-- formWeaveShare : zigzag centré sur le milieu de la piste, sur formWeaveShare de la largeur (voiture comprise) ;
+-- formWeaveBend : courbure de la piste (1/m, lue sur la trajectoire, devant et ici) au-delà de laquelle le zigzag rentre ;
+-- formWeaveLook : secondes d'anticipation de ce virage ; formWeaveProbe : pas (m) des points lus ;
+-- formWeaveMeasure : période (s) de la mesure latérale réelle de chaque voiture (ligne « zigzag mesure » à la fin du
+-- tour de formation).
+for key,value in pairs({pitEntryBefore=250,pitEntryAfter=150,rollPairs=true,rollStagger=0.5,rollPairFrom=1600,
+ rollPairLatMin=0.8,rollRowGap=2.5,rollCloseRate=2,rollCatchMax=30,rollCaution=0.5,rollAggression=0.8,rollCompactMax=10,rollCompactOff=14,rollCompactHold=2,rollWaitPct=70,rollWaitMinKmh=50,rollGreenLast=40,formCatchFrom=1600,formCatchPct=30,formWeaveSpeed=4,formWeaveAccel=30,formWeaveTau=0.02,formWeaveFlat=3,gridSteerFreeze=10,gridFreezeKmh=25,gridFreezeTol=0.4,gridColumnEarly=350,burnFrom=1600,burnTo=700,burnSlowKmh=30,burnGap=45,burnSlowMax=7,burnGoMax=4,burnGoGap=12,burnBrake=1,burnBrakeTime=1.2,burnIncidentGrace=2,burnClearBehind=25,burnClearTime=1.5,burnBrakeDrop=45,burnRest=1.5,rollLogPeriod=4,rollLogCars=8,formWeaveShare=0.9,formWeaveBend=0.004,formWeaveLook=1.5,formWeaveProbe=15,formWeaveMeasure=0.2}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- Affinage du 17 novembre (essais du pilote à Monza, replays analysés) : rollRowGap (m entre deux rangées du départ
+-- lancé), rollCloseRate (km/h de recul par mètre d'avance d'une paire) ; formCatchFrom / formCatchPct : regroupement de
+-- fin de tour, les voitures derrière la tête peuvent rouler formCatchPct % plus vite ; formWeaveSpeed / formWeaveAccel /
+-- formWeaveTau : vitesse, montée et lissage latéraux propres au zigzag ; formWeaveFlat : vague en trapèze (sinus x
+-- formWeaveFlat, borné à 1) ; gridColumnEarly : colonne de la grille prise dès ce nombre de mètres de la place ;
+-- gridSteerFreeze / gridFreezeKmh : derniers mètres de l'approche, au pas, décalage tenu à l'écart réel ; burn* :
+-- burnouts et gros freinages avant la grille (src/antics.lua, burn).
+-- Zigzag : borne relevée (la borne du bord, demi-voiture et K.formWeaveEdge m, reste la vraie limite) ; marge au bord
+-- ramenée de 0,6 à 0,3 m (90 % de la largeur laisse 0,45 m de chaque côté sur une piste de 9 m).
+M.K.formWeaveMax=0.97; M.K.formWeaveEdge=0.3
+-- 2.0.4 (iwouldsayhello) : écart (m) en deçà duquel une voiture d'une classe plus rapide, collée derrière à la même
+-- allure, est laissée passer (src/director.lua).
+for key,value in pairs({classGlueGap=15}) do assert(M.K[key]==nil,key); M.K[key]=value end
 return M

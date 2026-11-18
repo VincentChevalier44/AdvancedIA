@@ -2,6 +2,72 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 2.0.4 — November 2026
+
+Better starts, especially with big grids. Thanks a lot for your reports, they made it easy to find!
+
+### Starts
+- **The two files now hold on a fresh install.** On a new installation the app did not know yet which side is left and
+  which is right (it only learns it from a car alone at speed, never in a pack), so no file was held at the start and
+  every AI headed for the racing line, with spins and pile-ups in big grids. The app now starts from Assetto Corsa's usual
+  convention and keeps measuring to confirm it.
+- **Standing start: the files no longer split after one second.** The brake pedal still pressed on the grid at the green
+  was taken as the first braking, so the cars left their file almost at once. Only a real braking now ends the files.
+- **Rolling start: the files are kept at the green flag.** Each car's file is taken again at the green flag of a rolling
+  start (and when the lights go out on the grid after a formation lap), instead of every car aiming at the racing line at
+  the same moment.
+
+### Overlay and rules
+- **The overlay hides with AC's apps.** Hiding the apps with Ctrl+H now hides the overlay too; it comes back with them.
+- **No penalty when the pits were closed.** If the mandatory-stop window closes while the pits are closed (neutralisation),
+  you could not stop any more, so the missed stop is no longer penalised.
+- **The app now tells you when the game ignores its pit requests.** On some setups the AI never enter the pits even
+  though the app keeps asking them to. After 5 laps without entering, the app writes it in the journal, shows it in
+  **HOME › TO CHECK** and stops asking that AI (no penalty). Trying a newer CSP version is the first thing to check.
+
+### Formation lap
+- **Strict single file.** During the formation lap an AI now never gets closer than 6 m to the car ahead of it, wherever
+  that car is across the track. Before, a car catching the queue at speed could end up level with a weaving car, with
+  contacts and spins. A queue closing up under braking no longer grinds to a halt. The grid order is kept all lap, so the pack reaches the grid in order. Weaving, warm-up braking
+  and burnouts are unchanged; a weaving car also freezes its lateral position while another car is level with it.
+- **A car that lost the pack starts from the back.** A car that is no longer with the pack at the end of the formation
+  lap (after an off, for instance) lines up behind the last slot, and the lights do not wait for it.
+- **No more extra formation laps for an incident at the pit entry.** A car that stopped or spun near the pit entry, or a
+  car that went into the pit lane, could cancel the standing start and add a formation lap. The start now goes ahead;
+  only an incident elsewhere cancels it, as before.
+- **Wider, sharper weaves.** On the formation lap the AI now weave over about 90 % of the track width, centred on the
+  middle of the track: a decisive move to one side, then to the other, without small steering corrections. They still
+  straighten up in corners and at the pit entry.
+- **Burnouts and hard braking before the grid.** Near the end of the formation lap before a standing start, each AI
+  slows down, launches flat out and brakes hard, one to three times, to warm its tyres.
+- **Straight on the grid.** The AI line up with their slot earlier and no longer stop at an angle.
+- **Everyone back to their own slot, exactly.** After the formation lap each car takes its own starting slot again, read
+  on the grid itself at the start. The slot of a car in the pit lane stays empty (before, every AI behind it moved up one
+  slot, into the other column), and a car sent to the back lines up behind the last slot. Each AI drives right up to its slot; once stopped, each
+  AI is set exactly where the game placed it for the start, same position and same heading, wheels straight; the app
+  then checks the result on the car itself and corrects it if needed.
+- **No more swerving on the way to the grid.** The AI move to their column gently and never aim outside it (a small
+  error in the grid data could send a car several metres sideways at speed).
+- **No racing on the way to the grid.** No overtakes, defences or yields between the end of the formation lap and lights
+  out, so no AI reaches its slot still offset by a pass. An AI creeping to its slot is no longer held a few metres short.
+- **Rolling start side by side.** The two files form during the regroup at the end of the formation lap, and the cars
+  now run in tight pairs, side by side with a slight stagger, instead of one behind the other; the pack closes up
+  before the green flag.
+
+### Race
+- **AI parked off track are towed again.** An AI stopped off track, away from the racing line, closes its yellow zone
+  after 15 s, but the app then forgot it: it could stay at the edge until the game dealt with it. It is now towed to its
+  pit box after 30 s without moving away (also when it only spins its wheels on the spot), repaired and back in the race.
+- **Give the place back first.** In a local yellow zone, an overtake now always leaves you at least 5 s to give the
+  place back before any penalty, and the panel shows it inside the zone. The single-yellow message now says « no
+  overtaking ». Under a neutralisation or a red flag nothing changes.
+- **A faster class glued behind is let through.** With multi-class on, a car of a faster class sitting right behind a
+  slower one at the same pace (15 m or less) is now let through, in every session; a car on a flying lap still never
+  yields to one on its out-lap. The journal also writes the classes the app recognised (`classes reconnues: …`).
+
+### Verification
+1552 unit checks, 193 integration cases, 3332 of 3332 mutations detected, endurance run with 0 errors, and the in-game update replayed with the updater of 2.0.3, 2.0.2, 2.0.1, 2.0.0, 1.62, 1.59.1 and 1.58 (package accepted, every file in place, fonts held open as in the game). The starts and the formation lap were also checked in game, on replays and logs.
+
 ## Beta 2.0.3 — November 2026
 
 A small follow-up to 2.0.2, built on your reports. Thanks a lot!

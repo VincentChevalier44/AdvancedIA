@@ -38,7 +38,35 @@ local GK={stillMax=10,lightsMargin=0.5,creepZone=25,creepKmh=5,creepSpread=25,st
  -- à 500 m de la ligne quand la grille commence (K.gridFormFrom), rejoint ses places sans traîner.
  approachKmh=120,approachDecel=2.5,
  -- Arrêt de la progression : aucune arrivée ET aucune IA attendue au-dessus de movingKmh depuis stallGuarded s.
- movingKmh=3}
+ movingKmh=3,
+ -- 2.0.4 : arrêt avant la place (plus de K.gridHoldDistance m) tenu en place après shortStill s immobile seulement.
+ shortStill=1.5,
+ -- 2.0.4 : vitesse au plus du décalage de colonne (fraction de la demi-largeur par seconde, environ 1 m/s).
+ columnRate=0.15,
+ -- 2.0.4 (décision du pilote du 18 novembre : « recaler ») : IA arrêtée à sa place depuis snapStill s (moins de snapKmh
+ -- km/h), à moins de snapMax m et snapAngle degrés de la pose relevée au feu vert, aucune autre voiture à moins de
+ -- snapClear m de cette pose : reposée exactement sur sa place (une fois par grille, avant les feux).
+ -- Essai du pilote du 18 novembre à 13:05 : 20 IA reposées à 2 cm près ; la dernière, arrêtée à 3,3 m de sa place (un
+ -- écart sur le côté dans les derniers mètres), n'était pas reposée (snapMax valait 2,5 m) : snapMax porté à 4 m.
+ snapStill=0.5,snapKmh=0.5,snapMax=4,snapAngle=25,snapClear=3.5,
+ -- 2.0.4 (pilote, Monza, 18 novembre 11:47 : 17 IA reposées à l'envers, 0,46 m devant leur place : la fonction de CSP
+ -- attend la direction opposée au cap lu, et pose un point de la voiture 0,465 m devant la position lue) : pose vérifiée
+ -- snapCheck s après chaque écriture (cap et position relus sur la voiture) ; à l'envers, ou à plus de snapTol m : sens
+ -- et décalage corrigés d'après l'écart mesuré, nouvelle écriture (snapTries au plus par voiture). Les feux attendent la
+ -- fin des vérifications, snapWait s au plus. snapDir et snapFwd : convention de départ ; décalage appris en jeu le
+ -- 18 novembre à 13:05 (-0,49 m après une correction sur la première voiture, écart restant 0,02 m au plus).
+ snapCheck=0.4,snapTol=0.05,snapTries=3,snapWait=4,snapDir=-1,snapFwd=-0.49,
+ -- 2.0.4 (décision du pilote du 18 novembre) : voiture à plus de lateGap m du peloton quand la grille se forme : elle
+ -- perd sa place (arrière de la grille) et n'est pas attendue.
+ lateGap=500,
+ -- 2.0.4 (pilote, Monza, 18 novembre 13:33 : « elles arrivent mal positionnées et on les repositionne après, ça ne
+ -- fait pas réel » ; replay : toutes arrêtées 1 à 1,5 m avant leur place, six tournées de 10 à 17 degrés dans les 10
+ -- derniers mètres) : avec la pose relevée au feu vert, l'IA roule jusqu'à sa pose : distance mesurée le long du cap de
+ -- la pose (si elle s'accorde à poseTrust m près avec celle de la piste), tenue en place à poseStop m (la distance
+ -- qu'elle parcourt encore en s'arrêtant du pas).
+ poseStop=0.3,poseTrust=5,
+ -- 2.0.4 : distance (m, le long de la piste) au nœud AC_START au-delà de laquelle une voiture n'est sur aucune place.
+ nodeRadius=3}
 M.GK=GK
 -- Affinage 1.63 (Bakou, 13 novembre : les cinq premières IA « ramenee aux stands par AC (a l arret depuis 5 a 7 s) »,
 -- feux allumés avec 9 / 22 IA en place) : le compteur d'AC part dès l'approche au pas, bien avant l'arrêt. Toute IA de la
@@ -64,9 +92,12 @@ function M.new()
   -- à la main (départ avorté traité comme avant).
   from='',
   -- Relecture 1.64 (lot 2) : IA tenue à sa place et heurtée pendant la grille ou les feux (victime, jamais marquée).
-  hit={}}
+  hit={},
+  -- Beta 2.0.4 : incident hors de la grille déjà noté (heure de l'incident), départ maintenu ; décalage tenu à l'arrivée
+  -- sur la place (écart réel, la voiture ne braque plus).
+  kept={},frozen={},shortAt={}}
 end
-local function clearCars(g) for i=1,K.maxCars do g.slotOf[i]=0; g.held[i]=false; g.pit[i]=false; g.aiRef[i]=nil; g.aiJumpAt[i]=nil; g.aiRelease[i]=nil; g.aiReleased[i]=nil; g.heldAt[i]=nil; g.lost[i]=nil; g.burstDone[i]=nil; g.burstUntil[i]=nil end; g.firstHeldAt=nil; g.lastHeldAt=nil; g.aiReadyAt=nil end
+local function clearCars(g) g.frozen=g.frozen or {}; g.shortAt=g.shortAt or {}; g.ramp=g.ramp or {}; g.snapped=g.snapped or {}; g.stillAt=g.stillAt or {}; g.snapAt=g.snapAt or {}; g.snapTry=g.snapTry or {}; g.snapOff=g.snapOff or {}; g.late=g.late or {}; for i=1,K.maxCars do g.ramp[i]=nil; g.snapped[i]=nil; g.stillAt[i]=nil; g.snapAt[i]=nil; g.snapTry[i]=nil; g.late[i]=nil end; g.snapN=0; g.snapSum=0; g.snapMoves=0; g.snapMaxD=0; g.snapMaxA=0; g.snapFixes=0; g.snapLeft=0; g.snapBusy=false; for i=1,K.maxCars do g.frozen[i]=nil; g.shortAt[i]=nil; g.slotOf[i]=0; g.held[i]=false; g.pit[i]=false; g.aiRef[i]=nil; g.aiJumpAt[i]=nil; g.aiRelease[i]=nil; g.aiReleased[i]=nil; g.heldAt[i]=nil; g.lost[i]=nil; g.burstDone[i]=nil; g.burstUntil[i]=nil end; g.firstHeldAt=nil; g.lastHeldAt=nil; g.aiReadyAt=nil end
 local function clearPlayer(t) t.gridPlaced=false; t.gridPassed=false end
 function M.reset(g)
  g.guardLogged=false; g.phase='none'; g.source=''; g.since=0; g.lightsAt=0; g.outAt=0; g.goUntil=-math.huge; g.ref=0; g.refSet=false; g.jump=false
@@ -188,13 +219,143 @@ local function redBack(t,back,nb)
  for m=1,nb do local i=back[m]; if t.redRank[i] then k=k+1; t.redOrder[k]=i end end
  for r=1,k do t.redRank[t.redOrder[r]]=r end
 end
+-- 2.0.4 (pilote, Monza, 18 novembre 09:45 : joueur dans la voie des stands à la fin du tour de formation, les 9 IA
+-- placées derrière lui avancées d'une place, chacune dans l'autre colonne, certaines pas arrivées aux feux) ; décision du
+-- pilote du 18 novembre (« cases vides partout ») : après un tour de formation, chaque voiture reprend SA place (node[i] :
+-- nœud AC_START relevé au feu vert du tour, M.nodeRanks) ; la place d'une voiture partie dans la voie des stands reste
+-- vide ; une voiture qui a perdu sa place (toBack) se place derrière la dernière place occupée au départ. Renvoie le
+-- nombre de places à préparer, ou nil (place absente ou en double, pas assez de nœuds AC_START) : places dans l'ordre,
+-- comme avant.
+function M.fixedSlots(g,order,n,node,back)
+ if type(node)~='table' then return nil end
+ local keep=n-(back or 0); local top=0; local used=g.used or {}; g.used=used
+ for k in pairs(used) do used[k]=nil end
+ for _,r in pairs(node) do if type(r)=='number' and r>top then top=r end end
+ for k=1,keep do
+  local r=node[order[k]]
+  if type(r)~='number' or r<1 or r~=math.floor(r) or used[r] then return nil end
+  used[r]=true
+ end
+ local total=top+(back or 0)
+ if total<n or type(g.nodes)=='table' and #g.nodes<total and #g.nodes>=n then return nil end
+ local slotOf=g.fixed or {}; g.fixed=slotOf
+ for k=1,keep do slotOf[k]=node[order[k]] end
+ for m=1,(back or 0) do slotOf[keep+m]=top+m end
+ for k=#slotOf,n+1,-1 do slotOf[k]=nil end
+ return total
+end
+-- 2.0.4 (pilote, Monza, 18 novembre 10:34 : le classement d'AC au feu vert du tour de formation compte une voiture de plus
+-- que la grille : toutes les IA une place derrière la leur) : place de chaque voiture classée (rank) lue sur la grille :
+-- nœud AC_START le plus proche le long de la piste (à moins de GK.nodeRadius m), entre deux nœuds côte à côte (moins de
+-- K.gridSideBySide m d'écart) celui du côté de la voiture. Renvoie node (rempli) ou nil : nœuds absents, voiture sur
+-- aucun nœud, deux voitures sur le même nœud.
+function M.nodeRanks(nodes,frame,rank,offsetSign,out)
+ if type(nodes)~='table' or #nodes==0 or not frame or not U.finite(frame.length) or frame.length<=0 or type(rank)~='table' then return nil end
+ out=out or {}; for k in pairs(out) do out[k]=nil end
+ local taken={}; local any=false
+ for i in pairs(rank) do
+  local a=frame.cars[i]
+  if not a or not a.splineValid then return nil end
+  local best,bestD=nil,math.huge
+  for k=1,#nodes do
+   local d=math.abs(U.spline(a.spline-nodes[k].spline))*frame.length
+   if d<bestD-K.gridSideBySide then best=k; bestD=d
+   elseif d<bestD+K.gridSideBySide and best then
+    -- Côte à côte : le nœud du côté de la voiture (repère du SDK, +1 à droite).
+    local w=(a.splineLat or 0)*(offsetSign or 0)>0 and (a.rightWidth or 0) or (a.leftWidth or 0)
+    local lat=w>0 and (a.splineLat or 0)/w or 0; if (offsetSign or 0)<0 then lat=-lat end
+    if math.abs(nodes[k].lateral-lat)<math.abs(nodes[best].lateral-lat) then best=k; bestD=math.min(bestD,d) end
+   end
+  end
+  if not best or bestD>GK.nodeRadius or taken[best] then return nil end
+  taken[best]=true; out[i]=best; any=true
+ end
+ return any and out or nil
+end
+-- 2.0.4 (pilote, Monza, 18 novembre 11:47 : une IA sortie de piste, dépannée et repartie des stands roulait seule à
+-- 125 km/h pendant que la grille se formait ; la grille l'attendait, sa place au milieu des voitures arrêtées) ; décision
+-- du pilote du 18 novembre : voiture à plus de GK.lateGap m du peloton quand la grille se forme : arrière de la grille
+-- (derrière la dernière place, dans l'ordre), jamais attendue (g.late). Le peloton : la voiture qui a le plus de
+-- voitures à moins de GK.lateGap m d'elle. Après toBack : order = gardées, puis renvoyées (g.backN).
+function M.lateCars(g,frame,order,n,now,log)
+ local L=frame.length or 0
+ if n<3 or L<=0 then return 0 end
+ local best,bestCount=nil,-1
+ for k=1,n do
+  local a=frame.cars[order[k]]; local count=0
+  for m=1,n do local b=frame.cars[order[m]]; if math.abs(U.spline(b.spline-a.spline))*L<=GK.lateGap then count=count+1 end end
+  if count>bestCount then best=a; bestCount=count end
+ end
+ local keep=n-(g.backN or 0); local late=g.lateBuf or {}; g.lateBuf=late; local nl=0; local at=0
+ for k=1,keep do
+  local i=order[k]; local a=frame.cars[i]
+  if not a.player and math.abs(U.spline(a.spline-best.spline))*L>GK.lateGap then nl=nl+1; late[nl]=i else at=at+1; order[at]=i end
+ end
+ if nl==0 then return 0 end
+ -- Renvoyées (toBack) décalées vers l'avant de la liste, retardataires tout au bout.
+ for m=1,(g.backN or 0) do order[at+m]=order[keep+m] end
+ for m=1,nl do
+  local i=late[m]; order[at+(g.backN or 0)+m]=i; g.late[i]=true
+  U.log(log,now,'INFO',string.format('grille: %s part de l arriere de la grille (plus avec le peloton a la fin du tour de formation), sans etre attendue',frame.cars[i].name),i)
+ end
+ for k=#late,nl+1,-1 do late[k]=nil end
+ g.backN=(g.backN or 0)+nl
+ return nl
+end
+-- 2.0.4 (audit du 18 novembre : sur le chemin de la grille, une voiture dont la place est plus loin, arrivée derrière une
+-- voiture de SA COLONNE déjà arrêtée, ne peut la rejoindre sans la doubler ; deux voitures de colonnes différentes ne se
+-- gênent pas) : dans chaque colonne (places impaires, places paires), les voitures gardées doivent arriver dans l'ordre
+-- de leurs places. Ordre réel sur la piste (de la tête à la queue du peloton) comparé à l'ordre des places : la plus
+-- longue suite de voitures déjà dans l'ordre garde ses places ; les autres (jamais le joueur) partent de l'arrière de la
+-- grille, dans l'ordre où elles roulent. order = gardées, renvoyées (toBack), retardataires (nl dernières) ; node : place
+-- de chaque voiture (M.nodeRanks), sinon son rang.
+function M.orderCars(g,frame,order,n,nl,now,log,node)
+ local L=frame.length or 0
+ local back=(g.backN or 0)-(nl or 0); local keep=n-(g.backN or 0)
+ if keep<3 or L<4*GK.lateGap then return 0 end
+ local list=g.seqBuf or {}; g.seqBuf=list; local m=0
+ local ref=frame.cars[order[1]].spline
+ for k=1,keep do
+  local i=order[k]
+  if not frame.cars[i].player then m=m+1; list[m]={i=i,slot=type(node)=='table' and type(node[i])=='number' and node[i] or k,at=U.spline(frame.cars[i].spline-ref)} end
+ end
+ for k=#list,m+1,-1 do list[k]=nil end
+ table.sort(list,function(x,y) if x.at~=y.at then return x.at>y.at end return x.slot<y.slot end)
+ -- Par colonne : plus longue suite croissante des places.
+ local inSeq={}; local kept=0
+ for parity=0,1 do
+  local col={}; for a=1,m do if list[a].slot%2==parity then col[#col+1]=list[a] end end
+  local len,prev={},{}; local bestEnd,bestLen=0,0
+  for a=1,#col do
+   len[a]=1; prev[a]=0
+   for b=1,a-1 do if col[b].slot<col[a].slot and len[b]+1>len[a] then len[a]=len[b]+1; prev[a]=b end end
+   if len[a]>bestLen then bestLen=len[a]; bestEnd=a end
+  end
+  local a=bestEnd
+  while a>0 do inSeq[col[a].i]=true; kept=kept+1; a=prev[a] end
+ end
+ if kept==m then return 0 end
+ -- Reconstruction : gardées (ordre des places), renvoyées d'avant, déplacées (ordre de la piste), retardataires.
+ local out=g.outBuf or {}; g.outBuf=out; local at=0
+ for k=1,keep do local i=order[k]; if frame.cars[i].player or inSeq[i] then at=at+1; out[at]=i end end
+ for k=1,back do at=at+1; out[at]=order[keep+k] end
+ local moved=0
+ for x=1,m do local i=list[x].i; if not inSeq[i] then
+  at=at+1; out[at]=i; moved=moved+1
+  U.log(log,now,'INFO',string.format('grille: %s part de l arriere de la grille (plus a sa place dans la file a la fin du tour de formation)',frame.cars[i].name),i)
+ end end
+ for k=1,(nl or 0) do at=at+1; out[at]=order[keep+back+k] end
+ for k=1,n do order[k]=out[k] end
+ g.backN=(g.backN or 0)+moved
+ return moved
+end
 -- Formation : places attribuées dans l'ordre du classement aux voitures en piste (voiture de sécurité et voitures
 -- arrivées exclues) ; les voitures aux stands partent de la voie des stands.
 function M.start(g,t,frame,now,log)
  clearCars(g); clearPlayer(t)
  local from=t.startAbortFrom; t.startAbortFrom=nil
  if g.hit then for i=1,K.maxCars do g.hit[i]=nil end end
- local order=g.order; local n=0
+ local order=g.order; local n=0; local fixed=nil
  for i=1,frame.count do
   local a=frame.cars[i]
   if a.valid and not a.finished and not a.safetyCar and (a.control or a.player) then
@@ -212,17 +373,27 @@ function M.start(g,t,frame,now,log)
   -- Relecture 1.63 (N2) : seulement une voiture retardée (incident pendant le tour : tête-à-queue, arrêt) ; une voiture
   -- simplement doublée reprend sa place d'origine, celle qui l'a doublée aussi (ordre du départ rétabli).
   M.sortByRank(order,n,frame.cars,t.formationRank)
+  g.backN=0
   toBack(g,t,frame,order,n,t.formationRank,true,now,log)
+  local nl=M.lateCars(g,frame,order,n,now,log)
+  M.orderCars(g,frame,order,n,nl,now,log,t.formationNode)
   t.formationRankN=0
+  fixed=M.fixedSlots(g,order,n,t.formationNode,g.backN); t.formationNode=nil
  else M.sortByPosition(order,n,frame.cars) end
  -- Beta 1.64 (lot 2) : marques d'un départ avorté : servent une seule fois (cette grille). Le choc qui a fait avorter le
  -- départ est oublié (fenêtre K.crashWindow) : la fautive arrêtée à sa nouvelle place n'est pas un nouvel incident.
  if (t.abortMarks or 0)>0 and t.cars then for i=1,#t.cars do local c=t.cars[i]; if c.abortMark then c.lastCrash=-math.huge end; c.abortMark=false; c.abortHold=false end; t.abortMarks=0; t.abortHolds=0 end
- local slots,source,why=M.resolve(g.nodes,frame.length,n,g.slots)
+ local slots,source,why=M.resolve(g.nodes,frame.length,fixed or n,g.slots)
  if not slots then return false end
  g.slots=slots; g.source=source
- for k=1,n do g.slotOf[order[k]]=k end
- g.phase='grid'; g.since=now; g.count=n; g.heldCount=0; g.jump=false; g.refSet=false; g.timedOut=false
+ for k=1,n do g.slotOf[order[k]]=fixed and g.fixed[k] or k end
+ g.phase='grid'; g.since=now; g.count=n; g.heldCount=0; g.jump=false; g.refSet=false; g.timedOut=false; g.gridId=(g.gridId or 0)+1
+ -- 2.0.4 : une ligne : place de chaque voiture et d'où elle vient (relevée sur la grille au feu vert, ou dans l'ordre).
+ if log then
+  local parts={}
+  for k=1,n do local i=order[k]; parts[k]=string.format('%d:%s',g.slotOf[i],frame.cars[i].name or '?') end
+  U.log(log,now,'INFO',string.format('grille: places %s : %s',fixed and 'relevees sur la grille' or 'dans l ordre',table.concat(parts,', ')),-1)
+ end
  g.jumpGrade=nil; g.jumpMoved=0; g.jumpKmh=0; g.jumpLead=0; g.jumpSlot=0; g.jumpLaunchAt=nil
  t.standing='grid'
  g.from=from or ''
@@ -243,26 +414,111 @@ M.gap=gap
 -- Commandes d'une IA pendant la formation et les feux : plafond d'allure (racine de 2·décélération·distance),
 -- freinage d'appoint sur les derniers mètres, colonne de sa place à l'approche, retenue une fois en place (ou juste
 -- au-delà de sa place : jamais de marche arrière).
+-- Beta 2.0.4 : écart latéral (repère des places) de la colonne de la place k, d m avant elle : droite passant par la place k
+-- et la place de la même colonne la plus proche (k+2 derrière, sinon k-2 devant) ; bornée comme les places.
+function M.columnLateral(g,k,d,length)
+ local s=g.slots[k]; if not s then return 0 end
+ if not length or length<=0 or not U.finite(d) or d<=0 then return s.lateral end
+ -- 2.0.4 (pilote, Monza, 18 novembre 10:53 : tête-à-queue à 80 km/h, 230 m avant la grille, décalage +0.61 pour une
+ -- place sur la trajectoire) : la droite par la place k et la place k+2 (16 m) prolongée jusqu'à 350 m multipliait par
+ -- 20 le moindre écart des nœuds. Désormais la colonne suit les places réelles de la même colonne derrière la place k
+ -- (k+2, k+4…), par segments, sans jamais aller au-delà de la dernière : la cible reste toujours entre les places.
+ local j=k; local prev=0; local lat=s.lateral
+ while true do
+  local o=g.slots[j+2]
+  if not o then return lat end
+  local dist=U.spline(s.spline-o.spline)*length -- positif : la place j+2 est derrière la place k
+  if dist<=prev+0.5 then return lat end
+  if d<=dist then return U.clamp(lat+(o.lateral-lat)*((d-prev)/(dist-prev)),-K.gridLatClamp,K.gridLatClamp) end
+  j=j+2; prev=dist; lat=o.lateral
+ end
+end
 local function approach(g,frame,i,cmd,offsetSign,still,now)
  local a=frame.cars[i]; local d=gap(g,frame,i)
- if not g.held[i] and (still or d<=K.gridHoldDistance or a.kmh<K.gridStillKmh and d<=K.gridSlotRadius) then
+ local hold=K.gridHoldDistance
+ local pose=g.pose and g.source=='AC_START' and g.pose[g.slotOf[i]] or nil
+ if pose and U.finite(a.x) and U.finite(a.z) then
+  local dp=(pose.x-a.x)*pose.lx+(pose.z-a.z)*pose.lz
+  if math.abs(dp-d)<=GK.poseTrust then d=dp; hold=GK.poseStop end
+ end
+ -- 2.0.4 (pilote, Monza, 18 novembre 09:45 : une IA retenue 2,5 m avant sa place, sa vitesse passée sous le seuil un
+ -- instant pendant qu'elle avançait au pas) : arrêtée plus loin que K.gridHoldDistance m de sa place, elle n'est tenue
+ -- en place qu'après GK.shortStill s immobile (sinon elle continue d'avancer jusqu'à sa place).
+ local short=a.kmh<K.gridStillKmh and d<=K.gridSlotRadius
+ if short then g.shortAt[i]=g.shortAt[i] or now or 0 else g.shortAt[i]=nil end
+ if not g.held[i] and (still or d<=hold or short and (now==nil or now-g.shortAt[i]>=GK.shortStill)) then
   g.held[i]=true; g.heldCount=g.heldCount+1; g.heldAt[i]=now; if now and not g.firstHeldAt then g.firstHeldAt=now end; if now then g.lastHeldAt=now end
  end
  cmd.noRetire=true
- local cap=M.retireGuard and U.clamp(math.sqrt(2*GK.approachDecel*math.max(0,d-K.gridHoldDistance))*3.6,K.gridCrawlKmh,GK.approachKmh)
-  or U.clamp(math.sqrt(2*K.gridApproachDecel*math.max(0,d-K.gridHoldDistance))*3.6,K.gridCrawlKmh,K.gridApproachKmh)
+ local cap=M.retireGuard and U.clamp(math.sqrt(2*GK.approachDecel*math.max(0,d-hold))*3.6,K.gridCrawlKmh,GK.approachKmh)
+  or U.clamp(math.sqrt(2*K.gridApproachDecel*math.max(0,d-hold))*3.6,K.gridCrawlKmh,K.gridApproachKmh)
  -- Correctif 1.61 (départs réalistes, demande du pilote) : coup d'accélérateur juste avant la place (« burnout »), une
  -- fois par départ, entre K.formBurstFrom et K.formBurstTo m de la place : plafond relevé de K.formBurstKmh km/h pendant
  -- K.formBurstTime s, jamais au-dessus de l'allure qui s'arrête encore à la place en K.formBurstDecel m/s².
  if g.realism and now and not g.held[i] and not g.burstDone[i] and d<=K.formBurstFrom and d>=K.formBurstTo then g.burstDone[i]=true; g.burstUntil[i]=now+K.formBurstTime end
- if g.realism and now and now<(g.burstUntil[i] or -math.huge) and not g.held[i] then cap=math.min(cap+K.formBurstKmh,math.sqrt(2*K.formBurstDecel*math.max(0,d-K.gridHoldDistance))*3.6) end
+ if g.realism and now and now<(g.burstUntil[i] or -math.huge) and not g.held[i] then cap=math.min(cap+K.formBurstKmh,math.sqrt(2*K.formBurstDecel*math.max(0,d-hold))*3.6) end
  -- Correctif 1.63 : approche au pas tant que d'autres voitures sont encore loin de leur place (jamais immobile trop tôt).
- if g.creep and not g.held[i] and d<=GK.creepZone and d>K.gridHoldDistance then cap=math.min(cap,GK.creepKmh) end
+ if g.creep and not g.held[i] and d<=GK.creepZone and d>hold then cap=math.min(cap,GK.creepKmh) end
  cmd.speedLimit=math.min(cmd.speedLimit or K.unlimitedSpeed,g.held[i] and K.gridCrawlKmh or cap)
- if g.held[i] then cmd.stopHold=true
+ -- 2.0.4 (pilote, Monza, 18 novembre 13:05 : « les roues avant ne sont pas droites, le volant est tourné ») : IA tenue à
+ -- sa place : volant droit imposé (src/applier.lua, commande du frein avec la direction à zéro) jusqu'à l'extinction.
+ -- 2.0.4 (même essai : une IA partie d'elle-même de l'autre côté de la piste en rattrapant la file, « agressivité
+ -- 109 % ») : sur le chemin de sa place et à sa place, la consigne latérale est suivie strictement (évitement natif de
+ -- l'IA ignoré : la file stricte tient les distances) et son agressivité native est nulle (src/applier.lua).
+ cmd.gridStrict=true; cmd.gridCalm=true
+ if g.held[i] then cmd.stopHold=true; cmd.gridStraight=true
  elseif d<K.gridBrakeFrom and a.kmh>cmd.speedLimit+K.gridBrakeMargin then cmd.brake=math.max(cmd.brake or 0,U.clamp((a.kmh-cmd.speedLimit)/K.gridBrakeScale,K.gridBrakeMin,K.brakeMax)) end
  -- Colonne de la place (repère du SDK, +1 à droite) dans le repère latéral interne calibré.
- if d<K.gridColumnFrom then local lat=g.slots[g.slotOf[i]].lateral; cmd.offset=offsetSign<0 and -lat or lat end
+ -- Affinage 2.0.4 (pilote, 17 novembre, capture de la grille de Monza : voitures de travers sur leur place ; replay :
+ -- l'écart restant, corrigé au pas dans les derniers mètres, tournait la voiture de 11 à 15 degrés) : colonne prise dès
+ -- K.gridColumnEarly m (hors de la zone de l'entrée des stands), et dans les K.gridSteerFreeze derniers mètres, au pas,
+ -- décalage tenu à l'écart réel de la voiture (elle s'aligne, ne braque plus) ; le même écart est gardé à l'extinction.
+ local entry=g.pitEntry or -1
+ local de=entry>=0 and a.splineValid and frame.length>0 and U.spline(a.spline-entry)*frame.length or nil
+ local atEntry=de~=nil and de>=-K.pitEntryBefore and de<=K.pitEntryAfter
+ local from=K.gridColumnEarly and math.max(K.gridColumnFrom,K.gridColumnEarly) or K.gridColumnFrom
+ g.frozen=g.frozen or {}
+ -- Affinage 2.0.4 (Monza, 16 h 24 : une IA arrivée de l'autre colonne, figée à mi-chemin, 2 m à côté de sa place et de
+ -- travers) : figée seulement déjà dans sa colonne (à moins de K.gridFreezeTol m de la place) ; sinon elle finit de s'y
+ -- ranger.
+ -- Affinage 2.0.4 (Monza, 16 h 59 : voitures arrêtées droites par rapport à la trajectoire, mais la trajectoire traverse
+ -- la ligne droite de la grille en biais : toutes tournées vers la droite) : la colonne suit la ligne des places de la même
+ -- colonne (place k et la place k+2, ou k-2 pour la dernière), jamais un écart fixe à la trajectoire : la voiture arrive
+ -- parallèle aux places.
+ local k=g.slotOf[i]; local lat=M.columnLateral(g,k,d,frame.length); local want=offsetSign<0 and -lat or lat
+ -- 2.0.4 (pilote, Monza, 18 novembre 10:53) : la commande de colonne remplaçait d'un coup le décalage progressif du
+ -- pilotage (à 125 km/h, un écart de plusieurs mètres demandé en une image : l'IA d'AC donne un grand coup de volant,
+ -- dépasse sa cible et part en tête-à-queue) : décalage mené de l'écart réel de la voiture vers sa colonne à
+ -- GK.columnRate par seconde au plus (M.columnRamp).
+ -- 2.0.4 (pilote, Monza, 18 novembre 13:33 ; replay : six IA bien alignées à 8 m de leur place tournées de 10 à 17
+ -- degrés dans les derniers mètres) : la consigne de colonne n'est plus jamais remplacée par l'écart mesuré de la voiture
+ -- (les deux ne coïncident pas : un coup de volant à chaque fois) : elle est suivie jusqu'à la place et encore une fois la
+ -- voiture tenue (une voiture posée d'emblée sur sa place finit de la rejoindre : à l'extinction, le pilotage repart de
+ -- la colonne de la place).
+ if g.frozen[i] then cmd.offset=g.frozen[i]
+ elseif d<from and not atEntry then
+  cmd.offset=M.columnRamp(g,i,a,want)
+ else g.ramp[i]=nil end
+end
+-- Décalage de colonne mené progressivement (2.0.4) : départ de l'écart réel de la voiture (repère interne, comme la
+-- retenue des derniers mètres), puis au plus GK.columnRate par seconde (g.dt, durée de l'image de la grille).
+function M.columnRamp(g,i,a,want)
+ g.ramp=g.ramp or {}
+ local cur=g.ramp[i]
+ if cur==nil then
+  -- Repère interne : écart / largeur du côté (le signe du repère est porté par la commande, comme pour la retenue).
+  if a.splineLatValid and (a.leftWidth or 0)>0 and (a.rightWidth or 0)>0 then
+   local w=(a.splineLat*(g.offsetSign or 0)>0) and a.rightWidth or a.leftWidth
+   cur=U.clamp(a.splineLat/w,-K.gridLatClamp,K.gridLatClamp)
+  else
+   -- Écart réel pas lu : départ du dernier décalage du pilotage (commande continue, jamais de saut).
+   local st=g.states and g.states[i]
+   cur=st and U.finite(st.offset) and st.offset or want
+  end
+ end
+ cur=U.approach(cur,want,GK.columnRate*(g.dt or 0))
+ g.ramp[i]=cur
+ return cur
 end
 -- Départ depuis la voie des stands : aucune commande aux stands ; sortie de la voie des stands pendant la formation (ou
 -- les feux), retenue là où elle rejoint la piste, au pas, jusqu'à l'extinction (jamais lancée sur la grille arrêtée).
@@ -281,7 +537,7 @@ local function release(g,frame,commands,offsetSign,states)
   -- Beta 1.36 : seulement une IA retenue près de sa place (jamais une voiture lâchée par le délai loin de sa place, ni
   -- une voiture aux stands) : aucun saut latéral au départ ni à la sortie des stands.
   if k>0 and s and not frame.cars[i].player and g.slots[k] and g.held[i] and not frame.cars[i].pit and gap(g,frame,i)<K.gridColumnFrom then
-   local lat=g.slots[k].lateral; local o=offsetSign<0 and -lat or lat
+   local lat=g.slots[k].lateral; local o=g.frozen and g.frozen[i] or (offsetSign<0 and -lat or lat)
    s.offset=o; s.filtered=o; s.velocity=0; commands[i].offset=o
   end
  end
@@ -294,7 +550,7 @@ local function expected(g,frame,dq)
  for i=1,frame.count do
   if g.slotOf[i]>0 then
    local a=frame.cars[i]
-   if not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) then n=n+1; if g.held[i] then held=held+1 end end
+   if not a.player and a.valid and not a.pit and not g.lost[i] and not g.late[i] and not (dq and dq[i]) then n=n+1; if g.held[i] then held=held+1 end end
   end
  end
  return n,held
@@ -342,7 +598,7 @@ local function farthest(g,frame,dq)
  local far=0
  for i=1,frame.count do
   local a=frame.cars[i]
-  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) then local d=gap(g,frame,i); if d>far then far=d end end
+  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not g.late[i] and not (dq and dq[i]) then local d=gap(g,frame,i); if d>far then far=d end end
  end
  return far
 end
@@ -350,7 +606,7 @@ end
 function M.rolling(g,frame,dq)
  for i=1,frame.count do
   local a=frame.cars[i]
-  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) and (a.kmh or 0)>GK.movingKmh then return true end
+  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not g.late[i] and not (dq and dq[i]) and (a.kmh or 0)>GK.movingKmh then return true end
  end
  return false
 end
@@ -360,7 +616,7 @@ function M.missing(g,frame,now,log,dq)
  local m=0; local total=0
  for i=1,frame.count do
   local a=frame.cars[i]
-  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not (dq and dq[i]) then
+  if g.slotOf[i]>0 and not g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] and not g.late[i] and not (dq and dq[i]) then
    total=total+1
    if m<GK.missMax then m=m+1; missBuf[m]=string.format('%s (place %d, %.0f m, %.0f km/h)',a.name,g.slotOf[i],gap(g,frame,i),a.kmh or 0) end
   end
@@ -430,7 +686,124 @@ function M.holdBack(g,t,frame,commands,now,log)
 end
 -- À chaque image tant qu'un départ arrêté est en cours. Renvoie 'go' à l'extinction des feux ('jump' s'il y a eu faux
 -- départ du joueur : à sanctionner par le moteur, une fois le joueur passé la ligne).
+-- 2.0.4 (décision du pilote du 18 novembre : « recaler ») : pose exacte de chaque place, relevée au feu vert du tour
+-- de formation sur la voiture qui s'y trouve (immobile seulement) : position et cap où AC l'a posée pour un départ
+-- arrêté. node : place de chaque voiture (M.nodeRanks) ; sans place relevée, aucune pose.
+function M.recordPoses(g,frame,node)
+ local pose=g.pose or {}; g.pose=pose
+ for k in pairs(pose) do pose[k]=nil end
+ if type(node)~='table' then return 0 end
+ local n=0
+ for i,k in pairs(node) do
+  local a=frame.cars[i]
+  if a and a.valid and (a.kmh or 99)<1 and U.finite(a.x) and U.finite(a.z) and U.finite(a.lx) and U.finite(a.lz) then
+   pose[k]={x=a.x,y=a.y or 0,z=a.z,lx=a.lx,ly=a.ly or 0,lz=a.lz}; n=n+1
+  end
+ end
+ return n
+end
+-- Recalage (avant les feux) : IA tenue à sa place, immobile depuis GK.snapStill s, près de la pose relevée (GK.snapMax m,
+-- GK.snapAngle degrés), personne à moins de GK.snapClear m de cette pose : commande gridSnap (écrite par l'applicateur).
+-- Vérifié GK.snapCheck s plus tard sur la voiture elle-même (M.snapVerify) : la convention de CSP (g.conv : sens de la
+-- direction, décalage du point posé) est apprise de l'écart mesuré et gardée pour les voitures suivantes ; la référence du
+-- faux départ est reprise après chaque écriture, le décalage retenu devient celui de la place.
+local function conv(g)
+ local c=g.conv
+ if not c then c={dir=GK.snapDir,fwd=GK.snapFwd,lat=0}; g.conv=c end
+ return c
+end
+local function snapClear(frame,i,pose)
+ for j=1,frame.count do
+  local b=frame.cars[j]
+  if j~=i and b.valid and not b.pit and U.finite(b.x) and (b.x-pose.x)^2+(b.z-pose.z)^2<GK.snapClear^2 then return false end
+ end
+ return true
+end
+local function snapWrite(g,commands,i,pose,now,offsetSign)
+ local c=conv(g)
+ g.snapSeq=(g.snapSeq or 0)+1
+ -- Repère de la pose : avant (lx, lz), droite (-lz, lx).
+ commands[i].gridSnap={id=g.snapSeq,x=pose.x+c.fwd*pose.lx-c.lat*pose.lz,y=pose.y,z=pose.z+c.fwd*pose.lz+c.lat*pose.lx,
+  lx=c.dir*pose.lx,ly=c.dir*pose.ly,lz=c.dir*pose.lz}
+ local o=g.snapOff[i] or {}; g.snapOff[i]=o; o.fwd=c.fwd; o.lat=c.lat
+ g.snapAt[i]=now; g.snapTry[i]=(g.snapTry[i] or 0)+1; g.aiRef[i]=nil
+ local k=g.slotOf[i]; local s=g.slots[k]; if s then g.frozen[i]=offsetSign<0 and -s.lateral or s.lateral end
+end
+-- Écart mesuré après une écriture : (avant, droite) dans le repère de la pose, et cap inversé ou non.
+function M.snapResidual(a,pose)
+ local dx,dz=a.x-pose.x,a.z-pose.z
+ return dx*pose.lx+dz*pose.lz,dx*(-pose.lz)+dz*pose.lx,a.lx*pose.lx+a.lz*pose.lz<0
+end
+-- Vérification d'une écriture : à l'envers, le sens est inversé et le décalage vaut l'écart moins le décalage écrit ; à
+-- l'endroit, le décalage écrit moins l'écart. Renvoie vrai si la pose est bonne (rien à réécrire).
+function M.snapVerify(g,i,a,pose)
+ local c=conv(g); local o=g.snapOff[i] or {fwd=0,lat=0}
+ local rf,rl,flipped=M.snapResidual(a,pose)
+ if flipped then c.dir=-c.dir; c.fwd=rf-o.fwd; c.lat=rl-o.lat; return false,rf,rl,true end
+ if math.sqrt(rf*rf+rl*rl)<=GK.snapTol then return true,rf,rl,false end
+ c.fwd=o.fwd-rf; c.lat=o.lat-rl
+ return false,rf,rl,false
+end
+function M.snap(g,frame,commands,now,offsetSign)
+ g.snapBusy=false
+ if (g.phase~='grid' and g.phase~='lights') or g.source~='AC_START' or not g.pose then return end
+ for i=1,frame.count do
+  local a=frame.cars[i]; local k=g.slotOf[i]; local pose=k>0 and g.pose[k] or nil
+  if pose and g.held[i] and not a.player and a.valid and not a.pit and not g.lost[i] then
+   if g.snapAt[i] then
+    -- Écriture en attente de vérification (pendant les feux aussi).
+    if now-g.snapAt[i]>=GK.snapCheck then
+     local ok,rf,rl,flipped=M.snapVerify(g,i,a,pose)
+     if ok or g.snapTry[i]>=GK.snapTries or not snapClear(frame,i,pose) then
+      g.snapAt[i]=nil; g.snapped[i]=true
+      local d=math.sqrt(rf*rf+rl*rl)
+      if ok then g.snapN=(g.snapN or 0)+1 else g.snapLeft=(g.snapLeft or 0)+1 end
+      g.snapMaxD=math.max(g.snapMaxD or 0,d); if flipped then g.snapMaxA=180 end
+     else
+      g.snapFixes=(g.snapFixes or 0)+1
+      snapWrite(g,commands,i,pose,now,offsetSign); g.snapBusy=true
+     end
+    else g.snapBusy=true end
+   elseif not g.snapped[i] and g.phase=='grid' then
+    if (a.kmh or 99)<GK.snapKmh then g.stillAt[i]=g.stillAt[i] or now else g.stillAt[i]=nil end
+    local dx,dz=a.x-pose.x,a.z-pose.z; local dist=math.sqrt(dx*dx+dz*dz)
+    local ang=math.deg(math.acos(U.clamp(a.lx*pose.lx+a.lz*pose.lz,-1,1)))
+    if dist<=GK.snapMax and ang<=GK.snapAngle and snapClear(frame,i,pose) then
+     if g.stillAt[i] and now-g.stillAt[i]>=GK.snapStill then
+      g.snapSum=(g.snapSum or 0)+dist; g.snapMoves=(g.snapMoves or 0)+1
+      snapWrite(g,commands,i,pose,now,offsetSign)
+     end
+     g.snapBusy=true
+    end
+   end
+  end
+ end
+end
+-- Aux feux (2.0.4) : une ligne : recalages faits, puis écart de chaque IA à sa place (long / latéral, m), pour vérifier
+-- la grille dans le journal.
+function M.lightsReport(g,frame,now,log,offsetSign)
+ if not log then return end
+ local parts={}
+ for i=1,frame.count do
+  local a=frame.cars[i]; local k=g.slotOf[i]
+  if k>0 and not a.player and a.valid and not a.pit then
+   local lat=0; local s=g.slots[k]
+   if s and a.splineLatValid and (a.leftWidth or 0)>0 and (a.rightWidth or 0)>0 then
+    local want=offsetSign<0 and -s.lateral or s.lateral
+    local w=want*offsetSign>0 and a.rightWidth or a.leftWidth
+    lat=(a.splineLat or 0)-want*w
+   end
+   parts[#parts+1]=string.format('%d:%+.1f/%+.1f',k,gap(g,frame,i),lat)
+  end
+ end
+ local c=g.conv or {dir=0,fwd=0,lat=0}
+ U.log(log,now,'INFO',string.format('grille aux feux: %d IA reposees exactement (deplacees de %.2f m en moyenne, ecart restant au plus %.2f m, %d correction(s), %d pas a leur pose ; sens %+d, decalage %+.2f m) ; ecarts long/lat (m) %s',
+  g.snapN or 0,(g.snapMoves or 0)>0 and (g.snapSum or 0)/g.snapMoves or 0,g.snapMaxD or 0,g.snapFixes or 0,g.snapLeft or 0,c.dir,c.fwd,table.concat(parts,' ')),-1)
+end
 function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
+ -- 2.0.4 : durée de l'image (décalage de colonne progressif) et repère latéral.
+ g.dt=g.lastNow and math.max(0,math.min(0.1,now-g.lastNow)) or 0; g.lastNow=now; g.offsetSign=offsetSign; g.states=states
+ for i=1,K.maxCars do local c=commands[i]; c.gridSnap=nil; c.gridStraight=nil; c.gridStrict=nil; c.gridCalm=nil end
  -- Réveil d'une seule image : effacé à l'image suivante (aucune boucle tant qu'il n'y en a pas eu).
  if g.woke then for i=1,K.maxCars do commands[i].gridWake=false end; g.woke=false end
  -- Affinage 1.63 : protection contre le renvoi d'AC reposée à chaque image par la grille (approach, pitStarter).
@@ -446,9 +819,25 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
  if g.phase=='grid' or g.phase=='lights' then
   -- Relecture 1.64 (lot 2) : IA tenue à sa place et heurtée par une autre voiture (victime d'un choc sur la grille).
   local hit=g.hit; if hit then for i=1,frame.count do if g.held[i] and (frame.cars[i].collidedWith or -1)>=1 then hit[i]=true end end end
+  -- Beta 2.0.4 (pilote, 17 novembre : deux départs avortés de suite, IA entrées dans la voie des stands puis arrêt ou
+  -- tête-à-queue à l'entrée des stands, 540 m avant la ligne) : jamais annulé pour une voiture dans la voie des stands ou
+  -- partie de là (g.pit, g.lost), ni pour un incident dans la zone de l'entrée des stands (g.pitEntry, posé par le
+  -- moteur : de K.pitEntryBefore m avant à K.pitEntryAfter m après) ; une ligne par incident, la voiture repart et la
+  -- grille l'attend comme les autres. Ailleurs : annulé comme avant.
+  g.kept=g.kept or {}
   for i=1,frame.count do
    local c=t.cars[i]
-   if c.incident and c.since>=g.since then
+   local a=frame.cars[i]
+   local away=a.pit or g.pit[i] or g.lost[i]
+   local entry=g.pitEntry or -1
+   local d=entry>=0 and a.splineValid and frame.length>0 and U.spline(a.spline-entry)*frame.length or nil
+   local atEntry=d~=nil and d>=-K.pitEntryBefore and d<=K.pitEntryAfter
+   local onGrid=not away and not atEntry
+   if c.incident and c.since>=g.since and not onGrid and g.kept[i]~=c.since then
+    g.kept[i]=c.since
+    U.log(log,now,'INFO',away and string.format('depart maintenu: incident de %s dans la voie des stands',a.name or '') or string.format('depart maintenu: incident de %s a l entree des stands (%.0f m avant la ligne)',a.name or '',((-a.spline)%1)*frame.length),i)
+   end
+   if c.incident and c.since>=g.since and onGrid then
     U.log(log,now,'INFO','depart arrete annule: nouvel incident',i)
     if g.from~='' and not t.red then M.abortMarks(g,t,frame) end
     release(g,frame,commands,offsetSign,states); M.reset(g); t.standing='none'; t.gridLit=0; clearPlayer(t); return nil
@@ -456,6 +845,7 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
   end
  end
  local slotted=player>0 and g.slotOf[player]>0 and not g.pit[player]
+ M.snap(g,frame,commands,now,offsetSign)
  if g.phase=='grid' then
   local timeout=now-g.since>=K.gridMax
   lostCars(g,frame,now,log)
@@ -490,7 +880,9 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
   local first=firstStill(g,frame)
   -- Affinage 1.63 : protection active : jamais de feux à la limite d'immobilité (l'IA retenue n'est plus renvoyée).
   local due=not M.retireGuard and first~=nil and now-first>=stillMax()-seq-GK.lightsMargin
-  if aiReady and (placed or playerLate) or due or timeout then
+  -- 2.0.4 : recalages en cours (pose à vérifier) : les feux attendent, GK.snapWait s au plus après les IA prêtes.
+  local snapHold=g.snapBusy==true and g.aiReadyAt~=nil and now-g.aiReadyAt<GK.snapWait and not timeout and not due
+  if (aiReady and (placed or playerLate) or due or timeout) and not snapHold then
    if not timeout and not (placed and held>=n) then
     U.log(log,now,'INFO',string.format('grille: feux apres %.0f s de grille, premiere IA immobile depuis %.1f s (%d / %d IA en place%s)',now-g.since,first and now-first or 0,held,n,placed and '' or ', joueur pas en place'),-1)
    end
@@ -501,6 +893,7 @@ function M.step(g,t,frame,now,commands,offsetSign,seed,log,states,dq)
    if first and not M.retireGuard then g.outAt=max(now+seq,math.min(g.outAt,first+stillMax())) end
    if held<n then M.missing(g,frame,now,log,dq) end
    U.log(log,now,'INFO',string.format('feux: allumage (%d / %d IA en place)',held,n),-1)
+   M.lightsReport(g,frame,now,log,offsetSign)
   end
  end
  if g.phase=='lights' then

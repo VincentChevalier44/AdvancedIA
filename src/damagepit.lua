@@ -37,7 +37,7 @@ function M.step(e,frame,now,red)
  for i=1,frame.count do
   local a=frame.cars[i]; local cmd=e.commands[i]
   -- Relecture 1.59 : appels pour dégâts encore en cours comptés (leurs drapeaux viennent d'être remis à zéro).
-  if not a.pit and (cmd.rulePit or cmd.stratCalled or cmd.sanCalled or cmd.slowCalled or (d.cars[i] and d.cars[i].asked)) then requested=requested+1 end
+  if not a.pit and not (e.pits and e.pits.cars[i].requestIgnored) and (cmd.rulePit or cmd.stratCalled or cmd.sanCalled or cmd.slowCalled or (d.cars[i] and d.cars[i].asked)) then requested=requested+1 end
  end
  for i=1,frame.count do
   local a=frame.cars[i]; local cmd=e.commands[i]

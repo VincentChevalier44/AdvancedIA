@@ -333,9 +333,16 @@ local sidePublished={} -- Beta 1.61 : dernier texte écrit de chaque clé annexe
 host.openCompanion=function() return Applier.openCompanion(companionWindow) end
 -- 2.0.2 : clé annexe de SpotterEngineer lue sous son nouveau nom d'abord, puis sous l'ancien (SpotterEnginer).
 local function seText(key,old) local text=Applier.loadText(key); if text==nil or text=='' then text=Applier.loadText(old) end return text end
+-- Pont fermé (déchargement, ou erreur de publication : relecture 2.0.4) : structure marquée fermée et clés annexes
+-- écrites « fermées », pour que les lecteurs ne gardent pas la dernière valeur publiée.
+local function bridgeShut()
+ pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil
+ if sessionKey.logged then pcall(Applier.storeText,SessionKey.key,SessionKey.closedText) end
+ if tyresKey.body then pcall(Applier.storeText,TyresKey.key,TyresKey.closedText(engine.time or 0)) end
+end
 local function release()
  if released then return end
- if bridgePort then pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil; if sessionKey.logged then pcall(Applier.storeText,SessionKey.key,SessionKey.closedText) end; if tyresKey.body then pcall(Applier.storeText,TyresKey.key,TyresKey.closedText(engine.time or 0)) end end
+ if bridgePort then bridgeShut() end
  -- Aucune image ne suivra : restitution complète, y compris en pause ou en replay.
  -- Beta 1.52 : instantané protégé (released est déjà posé : une erreur ici empêchait toute la restitution).
  released=true; pcall(Snapshot.read,frame,K.dtMax,engine.time); pcall(saveRace,true); Applier.access(host); stop(true); Applier.unregister(host)
@@ -426,6 +433,9 @@ local function lightsCheck()
  local lights=Applier.trackLights(host,frame.track)
  -- Beta 1.34 : places de grille du circuit (départ arrêté), lues en même temps.
  engine.grid.nodes=Applier.gridNodes(host,frame.track)
+ -- Beta 2.0.4 (pilote, 17 novembre) : entrée des stands du circuit (zone sans décalage du tour de formation).
+ -- Noté dans la ligne du tour de formation (src/formation.lua) : aucune ligne de plus au lancement.
+ engine.pitEntry=Applier.pitEntry(host,frame.track)
  U.log(engine.log,engine.time,'INFO',lights==true and 'panneaux lumineux du circuit: detectes ('..host.trackLightsSource..')' or lights==false and 'panneaux lumineux du circuit: non detectes'..(host.trackLightsDetail or '') or 'panneaux lumineux du circuit: configuration illisible',-1)
 end
 local capsReported,menuClock=0,0
@@ -445,7 +455,7 @@ local function update(dt)
   if quiet and anyOwned() then quiet=false end
  end
  -- Affinage 1.62 (coût) : sens latéral des voitures lu seulement pendant sa recherche ou sa mesure (src/calibration.lua).
- Snapshot.sideWanted=(globals.offsetSign or 0)==0 or (globals.sideSign or 0)==0 or calibration.index>0
+ Snapshot.sideWanted=(globals.offsetSign or 0)==0 or (globals.sideSign or 0)==0 or globals.signProvisional==true or calibration.index>0
  local read=Snapshot.read(frame,valid and dt or K.dtMax,engine.time,quiet)
  mark(1)
  -- Drapeau du joueur imposé par l'app elle-même : le panneau ne le prend pas pour un drapeau natif.
@@ -564,7 +574,10 @@ local function update(dt)
  if engine.recalibrateRequested then
   stop()
   if calibration.index>0 or anyOwned() then calibration.phase='waiting_reset'; return end
-  globals.offsetSign=0; globals.sideSign=0; calibration.attempted=false; calibration.phase='waiting'
+  -- Relecture 2.0.4 (A2) : nouvelle mesure demandée : sens -1 / -1 provisoire (comme une installation neuve) au lieu de
+  -- 0 / 0 ; la mesure tourne et le confirme ou le corrige, les deux files du départ restent tenues entre-temps.
+  if K.signProvisional then globals.offsetSign=-1; globals.sideSign=-1; globals.signProvisional=true else globals.offsetSign=0; globals.sideSign=0 end
+  calibration.attempted=false; calibration.phase='waiting'
   engine.recalibrateRequested=false; Engine.reset(engine,engine.time,false); dirty()
  end
  if not ready then
@@ -665,10 +678,10 @@ local function update(dt)
   local s=host.cars[probeBefore]
   if s.owned and s.level~=nil then s.level=host.caps.probeOriginal; s.levelAt=engine.time end
  end
- local signBefore=globals.offsetSign
+ local signBefore,sideBefore=globals.offsetSign,globals.sideSign
  if Config.needsOffset(engine.run,engine.profile) then -- Beta 1.62 : la défense ne compte qu'en course
   -- Beta 1.52 : voitures exclues de la mesure calculées seulement quand elle cherche ou mesure (avant : à chaque image).
-  if calibration.index>0 or globals.offsetSign==0 or globals.sideSign==0 then
+  if calibration.index>0 or globals.offsetSign==0 or globals.sideSign==0 or globals.signProvisional then
    for i=1,frame.count do
     local state=engine.states[i]
     frame.cars[i].calibrationBlocked=state.state~='DRIVE' or state.excluded or engine.commands[i].active~=true
@@ -679,8 +692,10 @@ local function update(dt)
  -- stop() refaisait la restitution complète (drapeaux, DRS, attentes des stands, toutes les voitures) à chaque image
  -- tant que l'annulation attendait.
  elseif calibration.index>0 then step(Calibration.cancel,calibration,frame,host.caps,globals) end
- if signBefore~=globals.offsetSign and globals.offsetSign~=0 then U.log(engine.log,engine.time,'INFO',string.format('sens lateral mesure: %d / %d',globals.offsetSign,globals.sideSign),-1) end
- if signBefore~=globals.offsetSign or engine.settingsChanged then engine.settingsChanged=false; dirty() end
+ if (signBefore~=globals.offsetSign or sideBefore~=globals.sideSign) and globals.offsetSign~=0 then U.log(engine.log,engine.time,'INFO',string.format('sens lateral mesure: %d / %d',globals.offsetSign,globals.sideSign),-1); calibration.confirmed=false end
+ -- 2.0.4 : sens provisoire confirmé tel quel par la mesure.
+ if calibration.confirmed then calibration.confirmed=false; U.log(engine.log,engine.time,'INFO',string.format('sens lateral provisoire confirme par la mesure: %d / %d',globals.offsetSign,globals.sideSign),-1); dirty() end
+ if signBefore~=globals.offsetSign or sideBefore~=globals.sideSign or engine.settingsChanged then engine.settingsChanged=false; dirty() end
  if calibration.index>0 then
   local index=calibration.index; engine.commands[index].active=false
   local s=host.cars[index]; local car=frame.cars[index]
@@ -807,7 +822,7 @@ local function bridgeStep()
  if released or not bridgePort then return end
  local ok,err=pcall(bridgeWork)
  if not ok then
-  pcall(Bridge.close,bridge,bridgePort.hello); bridgePort=nil
+  bridgeShut()
   U.log(engine.log,engine.time or 0,'ERROR','pont des apps compagnes coupe: '..tostring(err):sub(1,200),-1)
  end
 end

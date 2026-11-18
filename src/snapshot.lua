@@ -222,6 +222,8 @@ local function readCar(a,index,dt,lane)
  local lx,lz=look.x/norm,look.z/norm; local yaw=math.atan2(lx,lz)
  local angular=a.initialized and U.wrap(yaw-a.yaw)/math.max(0.001,dt) or 0
  a.yawRate=U.ema(a.yawRate or 0,angular,dt,K.yawTau); a.yaw=yaw; a.lx=lx; a.lz=lz
+ -- 2.0.4 : pente du cap (recalage exact sur la grille, src/grid.lua).
+ local ly=U.number(look.y,-1000,1000,0); a.ly=U.clamp(ly/math.max(1e-6,math.sqrt(look.x*look.x+ly*ly+look.z*look.z)),-1,1)
  if sideWanted then
   local side=raw.side
   a.sideDot=side and U.finite(side.x) and U.finite(side.z) and (-side.x*lz+side.z*lx) or 0
@@ -407,6 +409,8 @@ local function simRead(s)
  s.rain=U.number(r.rainIntensity,0,1,0); s.water=U.number(r.rainWater,0,1,0)
  wxRead(s)
  s.count=math.floor(U.number(r.carsCount,0,K.maxCars,0))
+ -- Relecture 2.0.4 (E5) : nombre réel de voitures de la session (au-delà de K.maxCars : voitures ignorées, dit au journal).
+ s.countAll=math.floor(U.number(r.carsCount,0,1000000,0))
  -- 1.42 SANCTIONS : vitesse limite des stands (excès de vitesse des IA) ; nombre de secteurs (dernier secteur : tour
  -- suivant invalidé aussi), lu une fois par session.
  s.pitsSpeedLimit=U.number(r.pitsSpeedLimit,10,400,K.sanPitLimitDefault)
@@ -737,6 +741,28 @@ function M.turnAhead(spline,length)
   if math.abs(math.atan2(cross,dot))>=K.duelTurnMin then return cross>0 and 1 or -1 end
  end
  return 0
+end
+-- Beta 2.0.4 (tour de formation, src/antics.lua) : courbure de la piste (1/m) autour de la voiture a et
+-- K.formWeaveLook s devant elle (la plus forte des deux), et écart latéral réel de la voiture à la trajectoire (m) ;
+-- points tous les K.formWeaveProbe m. Illisible : -1, nil.
+local bendVec
+local b1,b2,b3,b4,b5,b6={0,0},{0,0},{0,0},{0,0},{0,0},{0,0}
+local function bendPoint(spline,out)
+ if not pcall(ac.trackProgressToWorldCoordinateTo,spline%1,bendVec) or not U.finite(bendVec.x) or not U.finite(bendVec.z) then return false end
+ out[1]=bendVec.x; out[2]=bendVec.z; return true
+end
+local function heading(p,q) return math.atan2(q[2]-p[2],q[1]-p[1]) end
+local function bendOf(p,q,r,step) return math.abs(U.wrap(heading(q,r)-heading(p,q)))/step end
+function M.bendLat(a,length)
+ -- Sonde allouée une fois, gardée seulement quand vec3 existe (tests : réessayée).
+ if not bendVec then local ok,v=pcall(function() return vec3() end); if ok and v then bendVec=v end end
+ if not bendVec or not length or length<=0 or not a.splineValid or not U.finite(a.spline) then return -1,nil end
+ local step=K.formWeaveProbe/length; local look=math.max(step,(a.speed or 0)*K.formWeaveLook/length); local sp=a.spline
+ if not (bendPoint(sp-step,b1) and bendPoint(sp,b2) and bendPoint(sp+step,b3) and bendPoint(sp+look,b4) and bendPoint(sp+look+step,b5) and bendPoint(sp+look+2*step,b6)) then return -1,nil end
+ local bend=math.max(bendOf(b1,b2,b3,K.formWeaveProbe),bendOf(b4,b5,b6,K.formWeaveProbe))
+ local tx,tz=b3[1]-b2[1],b3[2]-b2[2]; local n=math.sqrt(tx*tx+tz*tz)
+ if n>K.formWeaveProbe*0.5 and U.finite(a.x) and U.finite(a.z) then return bend,((a.x-b2[1])*tz-(a.z-b2[2])*tx)/n end
+ return bend,nil
 end
 function M.carLoader() return {folders={},list={},read=0,started=false,done=false,root=''} end
 local function byName(a,b) return a.sort<b.sort or a.sort==b.sort and a.id<b.id end
