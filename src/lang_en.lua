@@ -97,7 +97,7 @@ return {
  conflict='Another AI app detected (check what it does): ',enduranceSuggestion='Long session: the Endurance layer is available.',
  learn='Learn headlight flashes (6 s)',learning='For %d seconds, give several short flashes.',field='Signal: ',unlearned='not calibrated',
  event='Last event: ',signs='Sign calibration',calibrate='Rerun sign calibration',
- calibration={waiting='Waiting for two isolated AI cars, lined up on a straight',running='Measuring',ready='Signs confirmed',waiting_reset='Reset postponed: side occupied',inconclusive='Not enough movement: rerun on another straight',aborted='Stopped for safety'},
+ calibration={waiting='Waiting for two isolated AI cars, lined up on a straight',running='Measuring',ready='Signs confirmed',waiting_reset='Reset postponed: side occupied',inconclusive='No conclusion (not enough movement, or a measurement against the usual direction still to be repeated): measured again on the next straight',aborted='Stopped for safety'},
  zones='Track zones',markStart='Mark start',markEnd='Mark end (no manoeuvres)',export='Copy zones',
  
  logs='Event log',logLevels={'ALL','ERROR','WARN','INFO','DEBUG'},

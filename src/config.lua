@@ -1,5 +1,5 @@
 local U=require('src/util')
-local M={version=3,release='Beta 2.0.4',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
+local M={version=3,release='Beta 2.0.5',profiles={'J','P','Q','C','H'},schema={},sections={'general','yield','blue','flash','overtake','lateral','human','start','accidents','rules','endurance','weather','traffic','globals','lights','strategy','sanctions'}}
 local sectionKeys={}
 for _,group in ipairs(M.sections) do sectionKeys[group]='section_'..group end
 M.globalRuntimeKeys={'overrideAwareness','useGripBoost','useBrakeAssist','gripPerLevelPct','occLatMin','occLatMax','occMargin','occSpeedGain','seed','levelMode','debugLog'}
@@ -452,7 +452,7 @@ M.K={maxCars=61,paceBins=400,logLines=200,logRate=20,logDedup=5,maxZones=64,maxZ
  writePeriod=0.2,readbackPeriod=2,offsetEpsilon=0.002,levelEpsilon=0.005,aggrEpsilon=0.01,cautionEpsilon=0.02,gripEpsilon=0.001,
  capabilityFailures=3,carErrorTime=5,carErrorMax=3,saveDelay=1,maxCaution=16,maxAggression=0.95,
  probeLevel=1.05,probeDelay=0.3,probeTolerance=0.01,gripBase=1.2,calibrationOffset=0.5,
- calibrationTime=3,calibrationMinMove=0.15,calibrationRange=100,calibrationSpeed=60,calibrationCorner=0.95,
+ calibrationTime=3,calibrationMinMove=0.5,calibrationRange=100,calibrationSpeed=60,calibrationCorner=0.95,
  calibrationPairGap=50,calibrationPairMax=150,calibrationMinWidth=2.5,calibrationActiveCorner=0.6,calibrationAlignment=0.98,
  classPatternClassMax=4,defaultLevel=1,defaultAggression=0.5,defaultCaution=1,modulatorTau=0.4,fastModulatorTau=0.15,
  minNativeLevel=0.3,yieldReachedEpsilon=0.03,centerEpsilon=0.03,yieldAggression=0.5,yieldHoldCaution=1.1,yieldRecoveryTau=1.5,
@@ -993,7 +993,7 @@ function M.upgradeObstacles(p) if p.section_start==true and not p.section_accide
 -- _preset : vrai pour un préréglage personnel (src/presets.lua) ; plus lu depuis la Beta 1.52, gardé pour ses appels.
 -- Clés de règles apparues après les révisions qui jugent un jeu de règles : ignorées par ces révisions.
 local keys18={safetyCarEscalation=true}
-M.dataRevision=23
+M.dataRevision=24
 function M.migrateProfile(profile,p,from,_preset,out)
  out=out or {}
  if from<5 and equal(p.deltaTolerance,0.1) then p.deltaTolerance=M.defaults(profile).deltaTolerance; out[#out+1]=profile..':delta' end
@@ -1119,8 +1119,18 @@ function M.migrate(g,profiles,customs)
  -- corrige.
  local provisional=false
  if g.dataRevision<23 and M.K.signProvisional and g.offsetSign==0 and g.sideSign==0 then g.offsetSign=-1; g.sideSign=-1; g.signProvisional=true; provisional=true end
+ -- Révision 24 (2.0.5 b, journal d'un joueur du 18 novembre : sens enregistré 1 / -1, les deux files du départ rangées
+ -- du mauvais côté, accrochages à chaque départ ; une seule mesure de 15 cm suffisait et restait pour toujours ;
+ -- décision du pilote : « corriger et réparer ») : sens enregistré différent de la convention d'AC (-1 / -1, la seule
+ -- relevée sur toutes les installations mesurées) : remis à -1 / -1 provisoire ; la mesure (src/calibration.lua) le
+ -- confirme, ou le corrige après K.signConfirm mesures contraires identiques de suite. Renvoie le sens qui était
+ -- enregistré (texte), pour le journal.
+ local repaired=nil
+ if g.dataRevision<24 and M.K.signProvisional and (g.offsetSign~=0 or g.sideSign~=0) and not (g.offsetSign==M.K.signOffset and g.sideSign==M.K.signSide) then
+  repaired=g.offsetSign..' / '..g.sideSign; g.offsetSign=M.K.signOffset; g.sideSign=M.K.signSide; g.signProvisional=true
+ end
  g.dataRevision=M.dataRevision
- return upgraded,fresh,restored,provisional
+ return upgraded,fresh,restored,provisional,repaired
 end
 -- Règles d'une catégorie, appliquées ensemble aux profils Essais, Qualifications et Course : clés de l'onglet
 -- Règles de course (hors préférences du pilote) et réglages de double jaune propres à une catégorie (delta de zone,
@@ -1995,6 +2005,12 @@ end
 -- startRelatch : files relevées de nouveau à chaque départ donné par l'app (drapeau vert du départ lancé, extinction de
 -- la grille après le tour de formation).
 for key,value in pairs({signProvisional=true,startFilesBrakeKmh=30,startRelatch=true}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.5 b : signOffset, signSide : convention d'AC du sens latéral (-1 / -1) ; signConfirm : nombre de mesures
+-- contraires identiques de suite pour qu'elle soit abandonnée (une seule suffisait : 15 cm d'écart naturel entre deux
+-- voitures donnaient un sens faux, gardé pour toujours) ; calibrationMinMove : 0,5 m (0,15 avant).
+for key,value in pairs({signOffset=-1,signSide=-1,signConfirm=3}) do assert(M.K[key]==nil,key); M.K[key]=value end
+-- 2.0.5 c (relecture) : calibrationLate : retard (s) au-dela de calibrationTime apres lequel une mesure n'est plus conclue.
+for key,value in pairs({calibrationLate=1}) do assert(M.K[key]==nil,key); M.K[key]=value end
 assert(M.globalDefaults.signProvisional==nil); M.globalDefaults.signProvisional=false
 -- Relecture 2.0.4 (H1) : laneLogMax : lignes « maintien de ligne » au plus par départ (la rafale de toutes les voitures à la
 -- même image chassait les autres lignes de la seconde du départ, limite K.logRate).

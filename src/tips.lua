@@ -401,7 +401,7 @@ return {
   safetyPick='Choisit la voiture de sécurité parmi toutes les voitures installées, présentées « nom (dossier) » ; ajoutez-la ensuite à la grille dans Content Manager.',
   journal='Écrit le journal de session dans Documents/Assetto Corsa/logs (AdvancedIA.log, trois anciens conservés) : sessions, incidents, résumé chaque minute.',
   apiList='Affiche la liste des fonctions IA exposées par ce CSP.',
-  calibrate='Relance la calibration du repère gauche/droite sur deux IA isolées en ligne droite. Les manœuvres latérales attendent la confirmation.',
+  calibrate='Relance la mesure du repère gauche/droite sur deux IA isolées en ligne droite. En attendant, le sens habituel d’Assetto Corsa (-1 / -1) reste utilisé et les manœuvres latérales continuent ; une mesure contraire n’est retenue qu’après 3 mesures identiques de suite.',
   learn='Pendant 6 s, faites plusieurs appels de phares brefs : l’app apprend quel signal de votre voiture correspond à l’appel.',
   markStart='Marque le début d’une zone sans manœuvre à la position de votre voiture.',
   markEnd='Marque la fin de la zone à la position de votre voiture : aucune cession ni aucun dépassement n’y seront commandés.',

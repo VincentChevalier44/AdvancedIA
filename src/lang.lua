@@ -97,7 +97,7 @@ return {
  conflict='Autre app IA détectée (activité à vérifier) : ',enduranceSuggestion='Session longue : la surcouche Endurance est disponible.',
  learn='Apprendre les appels de phares (6 s)',learning='Pendant %d secondes, effectuer plusieurs appels brefs.',field='Champ : ',unlearned='non calibré',
  event='Dernier événement : ',signs='Calibration des signes',calibrate='Relancer la calibration des signes',
- calibration={waiting='En attente de deux IA isolées, alignées et en ligne droite',running='Mesure en cours',ready='Signes confirmés',waiting_reset='Remise à zéro différée : côté occupé',inconclusive='Mouvement insuffisant : relancer dans une autre ligne droite',aborted='Interrompue pour sécurité'},
+ calibration={waiting='En attente de deux IA isolées, alignées et en ligne droite',running='Mesure en cours',ready='Signes confirmés',waiting_reset='Remise à zéro différée : côté occupé',inconclusive='Sans conclusion (mouvement insuffisant, ou mesure contraire au sens habituel à répéter) : nouvelle mesure à la prochaine ligne droite',aborted='Interrompue pour sécurité'},
  zones='Zones du circuit',markStart='Marquer début',markEnd='Marquer fin (sans manœuvres)',export='Copier les zones',
  
  logs='Journal circulaire',logLevels={'TOUS','ERROR','WARN','INFO','DEBUG'},

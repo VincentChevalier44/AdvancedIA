@@ -401,7 +401,7 @@ return {
   safetyPick='Picks the Safety Car from all installed cars, listed as “name (folder)”; then add it to the grid in Content Manager.',
   journal='Writes the session log to Documents/Assetto Corsa/logs (AdvancedIA.log, three older ones kept): sessions, incidents, a summary every minute.',
   apiList='Shows the list of AI functions exposed by this CSP.',
-  calibrate='Reruns the calibration of the left/right reference on two isolated AI cars on a straight. Lateral manoeuvres wait for the confirmation.',
+  calibrate='Reruns the measurement of the left/right reference on two isolated AI cars on a straight. Meanwhile the usual Assetto Corsa direction (-1 / -1) stays in use and lateral manoeuvres go on; a measurement against it is kept only after 3 identical ones in a row.',
   learn='For 6 s, give several short headlight flashes: the app learns which signal of your car is the flash.',
   markStart='Marks the start of a no-manoeuvre zone at the position of your car.',
   markEnd='Marks the end of the zone at the position of your car: no yielding or overtaking will be commanded there.',

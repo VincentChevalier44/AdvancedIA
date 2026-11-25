@@ -163,8 +163,8 @@ function M.openStore(a)
   end
  end
  -- Données 1.2.0 : migration unique, sauvegardée à la première occasion.
- local migrated,upgraded,fresh,restored,provisional=pcall(C.migrate,g,profiles,a.presets)
- if migrated and upgraded then a.upgraded=upgraded; a.firstInstall=fresh==true; a.signsRestored=restored==true; a.signsProvisional=provisional==true; a.dirty=true; a.dirtyAt=0 end
+ local migrated,upgraded,fresh,restored,provisional,repaired=pcall(C.migrate,g,profiles,a.presets)
+ if migrated and upgraded then a.upgraded=upgraded; a.firstInstall=fresh==true; a.signsRestored=restored==true; a.signsProvisional=provisional==true; a.signsRepaired=type(repaired)=='string' and repaired or nil; a.dirty=true; a.dirtyAt=0 end
  return g,profiles
 end
 function M.savePreset(a,entry)
@@ -321,8 +321,9 @@ local function laneRelease(a,s,car,now,i)
   end
  end
  if s.speed~=nil and Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil; released=true; a.recoveryDirty=true end
- if s.level~=nil and Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil; a.recoveryDirty=true end
- if s.aggression~=nil and Caps.restoreCall(a.caps,'aggression',car.index,s.originalAggression) then s.aggression=nil; a.recoveryDirty=true end
+ -- 2.0.5 (relecture, tour 2) : valeurs rendues remises aussi dans l'image du moment (voir M.restore).
+ if s.level~=nil and Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil; car.aiLevel=s.originalLevel; a.recoveryDirty=true end
+ if s.aggression~=nil and Caps.restoreCall(a.caps,'aggression',car.index,s.originalAggression) then s.aggression=nil; car.aiAggression=s.originalAggression; a.recoveryDirty=true end
  if s.caution~=nil and Caps.restoreCall(a.caps,'caution',car.index,K.defaultCaution) then s.caution=nil; a.recoveryDirty=true end
  if s.grip~=nil and Caps.restoreCall(a.caps,'grip',car.index,K.gripBase) then s.grip=nil; a.recoveryDirty=true end
  -- Une ligne par voiture et par session, seulement pour un décalage ou une vitesse limitée restés (les valeurs dangereuses).
@@ -382,8 +383,12 @@ function M.restore(a,frame,pendingOnly,now,final,keepParked)
      if a.offsetSign==0 then safe=not a.safety.left and not a.safety.right end
      if safe then good=Caps.restoreCall(a.caps,'offset',car.index,0,false); s.offsetReset=good end
     end
-    if s.level~=nil then if Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil else good=false end end
-    if s.aggression~=nil then if Caps.restoreCall(a.caps,'aggression',car.index,s.originalAggression) then s.aggression=nil else good=false end end
+    -- 2.0.5 (relecture, tour 2 : séance changée pendant la mesure du sens latéral, ou script rechargé) : niveau et
+    -- agressivité d'origine remis aussi dans l'image du moment, lue avant cette écriture : une reprise de la voiture
+    -- dans la même image (mesure, sonde du niveau) prenait sinon les valeurs de l'app pour celles d'origine, les
+    -- rendait au jeu au déchargement et s'en servait de base. Jamais pour la voiture sondée (verdict de la sonde).
+    if s.level~=nil then if Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil; if i~=a.caps.probeIndex then car.aiLevel=s.originalLevel end else good=false end end
+    if s.aggression~=nil then if Caps.restoreCall(a.caps,'aggression',car.index,s.originalAggression) then s.aggression=nil; car.aiAggression=s.originalAggression else good=false end end
     if s.caution~=nil then if Caps.restoreCall(a.caps,'caution',car.index,K.defaultCaution) then s.caution=nil else good=false end end
     if s.grip~=nil then if Caps.restoreCall(a.caps,'grip',car.index,K.gripBase) then s.grip=nil else good=false end end
     if s.brake~=0 then good=false end
@@ -1178,11 +1183,17 @@ function M.journalOpen(a)
   local base=root..'/AdvancedIA'
   local continued=M.loadText(K.journalMarker)=='1' and type(io.fileExists)=='function' and io.fileExists(base..'.log')
   if not continued and type(io.fileExists)=='function' and type(io.move)=='function' then
-   for n=K.journalKeep-1,1,-1 do local from=base..'.'..n..'.log'; if io.fileExists(from) then io.move(from,base..'.'..(n+1)..'.log',true) end end
-   if io.fileExists(base..'.log') then io.move(base..'.log',base..'.1.log',true) end
+   -- 2.0.5 g (relecture, tour 5, N) : une place restée prise (journal tenu ouvert par un autre programme, déplacement
+   -- refusé par Windows) n'est jamais écrasée par le journal suivant : décalage arrêté là, seul le plus ancien est
+   -- remplacé ; chaque déplacement est protégé (une erreur vaut un refus, le journal du lancement reste ouvert).
+   for n=K.journalKeep-1,1,-1 do local from,to=base..'.'..n..'.log',base..'.'..(n+1)..'.log'; if io.fileExists(from) and (n==K.journalKeep-1 or not io.fileExists(to)) then pcall(io.move,from,to,true) end end
+   if io.fileExists(base..'.log') and not io.fileExists(base..'.1.log') then pcall(io.move,base..'.log',base..'.1.log',true) end
   end
-  local f=io.open(base..'.log',continued and 'a' or 'w'); if not f then return end
-  if continued and f.seek then a.journalBytes=tonumber(f:seek('end')) or 0 end
+  -- 2.0.5 g : journal précédent resté en place (décalage refusé) : poursuivi, jamais vidé ; sans io.move (ancien CSP,
+  -- aucun décalage possible) : vidé à chaque lancement, comme avant.
+  local append=continued or type(io.move)=='function' and type(io.fileExists)=='function' and io.fileExists(base..'.log')
+  local f=io.open(base..'.log',append and 'a' or 'w'); if not f then return end
+  if append and f.seek then a.journalBytes=tonumber(f:seek('end')) or 0 end
   f:close(); a.journalPath=base..'.log'; M.storeText(K.journalMarker,'1')
  end)
  return ok and a.journalPath~=nil

@@ -119,7 +119,7 @@ MUTATIONS = [
     ('frein gardé aux stands', 'src/applier.lua', "   if mine and s.brake~=0 and Caps.restoreCall(a.caps,'brake',car.index,0) then s.brake=0; a.recoveryDirty=true end\n", '', 'BRAKE_RELEASED_IN_PITS'),
     ('visite de la voiture précédente', 'src/applier.lua', ' if s.tyreVisit>=0 and s.id~=(car.identity or car.id) then s.tyreVisit=-1 end\n', '', 'TYRE_VISIT_RESET'),
     ('visite gardée d une session à l autre', 'src/applier.lua', '    s.reset=not s.parked and not s.scHeld; s.tyreVisit=-1\n', '    s.reset=not s.parked and not s.scHeld\n', 'TYRE_VISIT_RESET'),
-    ('étape de restitution non protégée', 'AdvancedIA.lua', 'step(cancelProbe); step(Calibration.cancel,calibration,frame,host.caps,globals)', 'step(cancelProbe); Calibration.cancel(calibration,frame,host.caps,globals)', 'INT:restitution complète même'),
+    ('étape de restitution non protégée', 'AdvancedIA.lua', 'step(cancelProbe); step(Calibration.cancel,calibration,frame,host.caps,globals,ownLat)', 'step(cancelProbe); Calibration.cancel(calibration,frame,host.caps,globals,ownLat)', 'INT:restitution complète même'),
     ('drapeau natif gardé sans voiture suivie', 'AdvancedIA.lua', '   if (host.flagOverride or host.flagLeftover) and Applier.access(host) then Applier.flag(host,frame,false,nil,nil,nil,engine.time) end\n', '', 'INT:drapeau jaune natif rendu'),
     ('erreur d affichage fatale', 'AdvancedIA.lua', ' protectUI(fn,panel)\n', ' protect(fn,panel)\n', 'INT:erreur d affichage'),
     ('arrêts mémorisés après redémarrage', 'AdvancedIA.lua', '; Pits.forget(engine.pits)', '', 'INT:arrêts obligatoires mémorisés'),
@@ -1924,7 +1924,7 @@ MUTATIONS = [
     ('158 voiture tenue rendue quand même', 'src/applier.lua', ' if not now or s.parked or s.stop or s.scHeld or i==a.caps.probeIndex or i==a.calibrationIndex then s.laneAt=nil; return end\n', ' if not now or i==a.caps.probeIndex or i==a.calibrationIndex then s.laneAt=nil; return end\n', 'LANE_RELEASE_HELD_CARS_158'),
     ('158 décalage rendu d un coup', 'src/applier.lua', '  local step=K.laneReleaseRate*dt; local value=math.abs(s.offset)<=step+K.offsetEpsilon and 0 or s.offset-U.sign(s.offset)*step\n', '  local value=0\n', 'LANE_RELEASE_AFTER_FINISH_158'),
     ('158 vitesse limitée gardée', 'src/applier.lua', " if s.speed~=nil and Caps.restoreCall(a.caps,'speed',car.index,K.unlimitedSpeed) then s.speed=nil; released=true; a.recoveryDirty=true end\n", '', 'LANE_RELEASE_AFTER_FINISH_158'),
-    ('158 niveau gardé', 'src/applier.lua', " if s.level~=nil and Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil; a.recoveryDirty=true end\n", '', 'LANE_RELEASE_AFTER_FINISH_158'),
+    ('158 niveau gardé', 'src/applier.lua', " if s.level~=nil and Caps.restoreCall(a.caps,'level',car.index,s.originalLevel) then s.level=nil; car.aiLevel=s.originalLevel; a.recoveryDirty=true end\n", '', 'LANE_RELEASE_AFTER_FINISH_158'),
     ('158 prudence gardée', 'src/applier.lua', " if s.caution~=nil and Caps.restoreCall(a.caps,'caution',car.index,K.defaultCaution) then s.caution=nil; a.recoveryDirty=true end\n", '', 'LANE_RELEASE_AFTER_FINISH_158'),
     ('158 ligne à chaque passage', 'src/applier.lua', '   a.laneNoted[key]=true\n', '', 'LANE_RELEASE_MID_RACE_158'),
     ('158 ligne jamais écrite', 'src/applier.lua', '  if not a.laneNoted[key] then\n', '  if false then\n', 'LANE_RELEASE_AFTER_FINISH_158'),
@@ -3500,6 +3500,56 @@ MUTATIONS = [
     ('204h consigne laterale pas stricte', 'src/grid.lua', ' cmd.gridStrict=true; cmd.gridCalm=true\n', ' cmd.gridCalm=true\n', 'LOCK_GRID_DRIVE_TO_POSE_204'),
     ('204h evitement natif garde sur la grille', 'src/applier.lua', '    local strict=offset~=0 and g.overrideAwareness or cmd.gridStrict==true\n', '    local strict=offset~=0 and g.overrideAwareness\n', 'LOCK_GRID_DRIVE_TO_POSE_204'),
     ('204h agressivite native gardee sur la grille', 'src/applier.lua', 'cmd.aggressionOwned or cmd.gridCalm==true,cmd.gridCalm==true and 0 or', 'cmd.aggressionOwned,false and 0 or', 'LOCK_GRID_DRIVE_TO_POSE_204'),
+    # 2.0.5 b : sens latéral enregistré à l'envers réparé, mesure contraire confirmée trois fois (tests/review205b.lua).
+    ('205b sens enregistre a l envers garde', 'src/config.lua', ' if g.dataRevision<24 and M.K.signProvisional and (g.offsetSign~=0 or g.sideSign~=0) and not (', ' if false and (g.offsetSign~=0 or g.sideSign~=0) and not (', 'LOCK_SIGN_REPAIR_205'),
+    ('205b sens conforme repare aussi', 'src/config.lua', ' and not (g.offsetSign==M.K.signOffset and g.sideSign==M.K.signSide) then\n  repaired=', ' then\n  repaired=', 'LOCK_SIGN_REPAIR_205'),
+    ('205b sens repare pas provisoire', 'src/config.lua', 'g.offsetSign=M.K.signOffset; g.sideSign=M.K.signSide; g.signProvisional=true\n end\n', 'g.offsetSign=M.K.signOffset; g.sideSign=M.K.signSide\n end\n', 'LOCK_SIGN_REPAIR_205'),
+    ('205b mesure contraire retenue aussitot', 'src/calibration.lua', "      if contrary and self.contra<K.signConfirm then self.phase='inconclusive';", "      if false then self.phase='inconclusive';", 'LOCK_SIGN_CONFIRM_205'),
+    ('205b mesures contraires differentes additionnees', 'src/calibration.lua', '      elseif contrary then self.contraOffset=so; self.contraSide=ss; self.contra=1\n', '      elseif contrary then self.contraOffset=so; self.contraSide=ss; self.contra=(self.contra or 0)+1\n', 'LOCK_SIGN_CONFIRM_205'),
+    # « 205b compte garde apres une mesure conforme » non ajoutée : équivalente (une mesure conforme est toujours retenue,
+    # et tout sens retenu remet le compte à zéro : mutation « 205b compte garde apres un sens retenu »).
+    ('205b sens inconnu jamais mesure', 'src/calibration.lua', '      local contrary=g.offsetSign==K.signOffset and g.sideSign==K.signSide and (so~=K.signOffset or ss~=K.signSide)\n', '      local contrary=so~=K.signOffset or ss~=K.signSide\n', 'LOCK_SIGN_CONFIRM_205'),
+    ('205b compte garde apres un sens retenu', 'src/calibration.lua', '       self.contra=0; self.contraOffset=nil; self.contraSide=nil -- sens retenu : le compte repart de zéro\n', '', 'LOCK_SIGN_CONFIRM_205'),
+    ('205b mesure de 15 cm', 'src/config.lua', 'calibrationTime=3,calibrationMinMove=0.5,', 'calibrationTime=3,calibrationMinMove=0.15,', 'LOCK_SIGN_CONFIRM_205'),
+    ('205b mesure refusee jamais dite', 'AdvancedIA.lua', ' if calibration.refused then U.log(', ' if false then U.log(', 'INT:calibration uniquement apres activation'),
+    # 2.0.5 f (Beta 2.0.5, sens latéral seulement) : mutations des verrous repris de la relecture (libellés inchangés ;
+    # tests/review205f.lua, cas d'intégration LOCK_SIGN_REPAIR_LAUNCH_205 et LOCK_SIGN_MEASURE_RECORD_205).
+    ('205c sens juge sur la voiture repere', 'src/calibration.lua', 'self.startOwn=lateral and lateral(a) or nil; self.canonical=0;', 'self.startOwn=nil; self.canonical=0;', 'LOCK_SIGN_OWN_MOVE_205'),
+    ('205c mesure perimee conclue', 'src/calibration.lua', '    if valid and now-self.startAt<=K.calibrationTime+K.calibrationLate then\n', '    if valid then\n', 'LOCK_SIGN_STALE_205'),
+    ('205c mesure tenue dans la voie des stands', 'src/calibration.lua', "   if a and a.valid and a.control and a.pit then self.index=0; self.phase='aborted'; self.retryAt=now+K.calibrationRetry; return true end\n", '', 'LOCK_SIGN_PIT_205'),
+    ('205c annulation attend la fin de l arret', 'src/calibration.lua', " if a and a.valid and a.control and a.pit then self.index=0; self.phase='aborted'; self.retryAt=-math.huge; return true end\n", '', 'LOCK_SIGN_PIT_205'),
+    ('205d reparation jamais dite', 'AdvancedIA.lua', 'if host.signsRepaired then U.log(', 'if false then U.log(', 'INT:LOCK_SIGN_REPAIR_LAUNCH_205'),
+    ('205d reparation non transmise', 'src/applier.lua', "a.signsRepaired=type(repaired)=='string' and repaired or nil;", 'a.signsRepaired=nil;', 'INT:LOCK_SIGN_REPAIR_LAUNCH_205'),
+    ('205d sens provisoire dit installation neuve', 'src/engine.lua', "' provisoire (convention d AC, pas encore confirme par la mesure)'", "' provisoire (installation neuve ou jamais mesure), confirme par la mesure'", 'LOCK_SIGN_PROVISIONAL_LINE_205'),
+    ('205d sens provisoire sans regle anglaise', 'src/journal_en.lua', "{'sens lateral: {} / {} provisoire (convention d AC, pas encore confirme par la mesure)','lateral direction: {1} / {2} provisional (AC convention, not yet confirmed by the measurement)'},", '', 'LOCK_SIGN_PROVISIONAL_LINE_205'),
+    ('205e voiture rendue par la mesure jamais notee', 'src/calibration.lua', 'then self.restoredIndex=self.index; self.index=0 end\n', 'then self.index=0 end\n', 'LOCK_SIGN_MEASURE_RESTORED_205'),
+    ('205e voiture rendue par l annulation jamais notee', 'src/calibration.lua', "then self.restoredIndex=self.index; self.index=0; self.phase='aborted'", "then self.index=0; self.phase='aborted'", 'LOCK_SIGN_MEASURE_RESTORED_205'),
+    ('205e suivi de l applicateur garde apres la mesure', 'AdvancedIA.lua', 'calibration.restoredIndex=nil; if s then s.offset=0; s.offsetReset=true end end\n', 'calibration.restoredIndex=nil end\n', 'INT:LOCK_SIGN_MEASURE_RECORD_205'),
+    ('205e voiture rendue par la mesure jamais notee (bout en bout)', 'src/calibration.lua', 'then self.restoredIndex=self.index; self.index=0 end\n', 'then self.index=0 end\n', 'INT:LOCK_SIGN_MEASURE_RECORD_205'),
+    # 2.0.5 f : relecteur G, constat 1 (cas d'intégration LOCK_SIGN_PIT_NOT_READY_205).
+    ('205f mesure lachee app pas prete, applicateur pas prevenu', 'AdvancedIA.lua', ' host.calibrationIndex=calibration.index; local back=', ' local back=', 'INT:LOCK_SIGN_PIT_NOT_READY_205'),
+    ('205f suivi garde, mesure rendue app pas prete', 'AdvancedIA.lua', ' if back then back.offset=0; back.offsetReset=true end\n', '', 'INT:LOCK_SIGN_PIT_NOT_READY_205'),
+    # 2.0.5 f : relecteur H, constat F1 (tests/review205f.lua).
+    ('205f passages gardes a une session relancee', 'src/engine.lua', '  if e.runs then Runs.reset(e.runs) end\n', '', 'LOCK_RUNS_RESET_RESTART_205'),
+    # 2.0.5 (relecture, tour 2, constat I1) : valeurs d'origine remises dans l'image à la restitution.
+    ('205 restitution : niveau d origine pas remis dans l image', 'src/applier.lua', 's.level=nil; if i~=a.caps.probeIndex then car.aiLevel=s.originalLevel end else good=false end end\n', 's.level=nil else good=false end end\n', 'LOCK_RESTORE_FRAME_ORIGINALS_205'),
+    ('205 restitution : agressivite d origine pas remise dans l image', 'src/applier.lua', 's.aggression=nil; car.aiAggression=s.originalAggression else good=false end end\n', 's.aggression=nil else good=false end end\n', 'LOCK_RESTORE_FRAME_ORIGINALS_205'),
+    ('205 voie des stands : niveau d origine pas remis dans l image', 'src/applier.lua', 'then s.level=nil; car.aiLevel=s.originalLevel; a.recoveryDirty=true end\n', 'then s.level=nil; a.recoveryDirty=true end\n', 'LOCK_RESTORE_FRAME_ORIGINALS_205'),
+    # 2.0.5 g (relecture, tour 5) : côté du déboîtement en sortie de virage (O), mesure lâchée hors piste (N), journal
+    # du lancement jamais écrasé (N), câblage de la mesure et de « Relancer » dans le fichier d'entrée (N, intégration).
+    ('205g sortie de virage vers la cible', 'src/director.lua', 'K.exitPassLatMin and (target.lat>0 and 1 or -1)', 'K.exitPassLatMin and (target.lat>0 and -1 or 1)', 'LOCK_CORNER_EXIT_PASS_SIDE_205'),
+    ('205g sortie de piste concluse', 'src/calibration.lua', '  if a and a.valid and a.offtrack then self.startAt=-math.huge end\n', '', 'LOCK_SIGN_OFFTRACK_205'),
+    ('205g decalage ecrase une place prise', 'src/applier.lua', ' and (n==K.journalKeep-1 or not io.fileExists(to))', '', 'LOCK_JOURNAL_LAUNCH_HELD_205'),
+    ('205g journal du lancement ecrase la place .1', 'src/applier.lua', "if io.fileExists(base..'.log') and not io.fileExists(base..'.1.log') then pcall(io.move,", "if io.fileExists(base..'.log') then pcall(io.move,", 'LOCK_JOURNAL_LAUNCH_HELD_205'),
+    ('205g journal precedent vide au lancement', 'src/applier.lua', "local append=continued or type(io.move)=='function' and type(io.fileExists)=='function' and io.fileExists(base..'.log')", 'local append=continued', 'LOCK_JOURNAL_LAUNCH_HELD_205'),
+    ('205g ownLat sans lecture', 'AdvancedIA.lua', 'local _,lat=Snapshot.bendLat(a,frame.length); return lat end', 'local _,lat=Snapshot.bendLat(a,frame.length); return nil end', 'INT:LOCK_SIGN_OWN_MOVE_WIRING_205'),
+    ('205g Relancer attend toute voiture gardee', 'AdvancedIA.lua', 'if calibration.index>0 or offsetOwed() then', 'if calibration.index>0 or anyOwned() then', 'INT:LOCK_SIGN_RERUN_PIT_205'),
+    ('205g Relancer sans attendre un decalage en piste', 'AdvancedIA.lua', 'if calibration.index>0 or offsetOwed() then', 'if calibration.index>0 then', 'INT:LOCK_SIGN_RERUN_TRACK_OWED_205'),
+    # 2.0.5 h (relecture, tour 6, Q) : décélération poursuivie pendant l'attente de « Relancer », décalage tenu hors piste
+    # attendu quand la nouvelle mesure change le sens (intégration), journal vidé comme avant sans io.move.
+    ('205h5 Relancer fige la deceleration', 'AdvancedIA.lua', "calibration.phase='waiting_reset'; coolStep(dt,ready or engine.guard=='finished'); return end", "calibration.phase='waiting_reset'; return end", 'INT:LOCK_SIGN_RERUN_COOLDOWN_205'),
+    ('205h5 Relancer change le sens sans attendre hors piste', 'AdvancedIA.lua', '(change or not car.offtrack)', 'not car.offtrack', 'INT:LOCK_SIGN_RERUN_OFFTRACK_SIGN_205'),
+    ('205h5 journal poursuivi sans io.move', 'src/applier.lua', "local append=continued or type(io.move)=='function' and type(io.fileExists)=='function' and io.fileExists(base..'.log')", "local append=continued or type(io.fileExists)=='function' and io.fileExists(base..'.log')", 'LOCK_JOURNAL_NO_MOVE_205'),
 ]
 
 

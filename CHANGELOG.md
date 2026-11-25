@@ -2,6 +2,41 @@
 
 Newest first. Each entry says what changed, why, and how it was verified.
 
+## Beta 2.0.5 — November 2026
+
+A short fix for chaotic starts on some installations, plus a few small fixes. Thanks a lot to everyone who sent a log,
+it made it easy to find!
+
+### Starts
+- **The left/right direction of the AI is repaired automatically.** On some installations the app had stored the
+  direction in which the AI move left and right the wrong way round. At the start the two files were then sent to the
+  wrong side: the AI cut across towards the racing line and touched each other. The app now puts this direction back
+  to Assetto Corsa's usual convention when it updates, and confirms it with a measurement.
+- **A more reliable measurement.** The app now measures how far the measured AI really moved away from the racing line
+  (when CSP gives the track coordinates), instead of reading it against another car further ahead, which could fool it
+  in a slight bend. A measurement that goes against the usual convention is only accepted after three identical ones in
+  a row; a measurement is dropped as soon as the measured car leaves the track, even if it comes back before the end,
+  and one interrupted by a pit stop or a session change is never used; the measured car entering the pit lane is given
+  back to the game at once; and **Rerun** (DIAGNOSTICS › Sign calibration) no longer pauses the AI while a car is in the
+  pits. After the chequered flag, **Rerun** no longer freezes the cool-down lap of an AI, and when it changes the
+  direction it now also waits for a car that is off the track.
+
+### Passing in races
+- **Corner-exit passes on the open side.** An AI pulling out to pass at a corner exit, or to pass a car that made a
+  mistake ahead, now first goes for the side away from that car, also when it is only slightly off line. Before, it
+  could pull out into the narrower gap and stay stuck behind.
+
+### Practice and qualifying
+- **No more AI stuck in their pit box after a restart.** Restarting a practice or qualifying session could leave some AI
+  in their box for the whole new session. Their runs now start afresh with the session.
+
+### Session log
+- **No recent log lost at launch.** When an older log is held open by another program, no recent log is overwritten or
+  emptied (at most the oldest one is dropped, as at every launch): the new launch carries on in `AdvancedIA.log`.
+
+### Verification
+1566 unit checks, 201 integration cases, 3370 of 3370 mutations detected, endurance run with 0 errors, and the in-game update replayed with the updater of 2.0.4, 2.0.3, 2.0.2, 2.0.1, 2.0.0, 1.62, 1.59.1 and 1.58 (package accepted, every file in place, fonts held open as in the game).
+
 ## Beta 2.0.4 — November 2026
 
 Better starts, especially with big grids. Thanks a lot for your reports, they made it easy to find!

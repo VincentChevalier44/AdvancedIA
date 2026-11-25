@@ -739,6 +739,9 @@ function M.step(e,frame,dt)
   e.reportLines=Sanctions.flushReport(e.sanctions,e,frame) or e.reportLines; e.acPenaltyWarned=false; e.acCutSeen=false; e.acPenaltyChecked=false
   e.configuredRevision=-1; Merge.reset(e.merge); Strategy.reset(e.strategy,now); Sanctions.reset(e.sanctions,now); Quali.reset(e.quali)
   FirstLap.reset(e.fl); e.fl.restartSerial=e.incidents.restartSerial or 0
+  -- 2.0.5 f (relecture) : passages des essais et qualifications remis à zéro aussi à une session relancée (même
+  -- indice) ; avant : une IA gardée à son stand en fin de session (stay) y restait toute la session relancée.
+  if e.runs then Runs.reset(e.runs) end
   for i=1,K.maxCars do local s=e.states[i]; s.flOn=false; s.flW=0; s.flCare=0; s.flApproach=false end
   for i=1,K.maxCars do
    local s=e.states[i]; s.topKmh=0; s.stint=0; s.stintStart=now; s.class=2; s.classified=false; s.classCandidate=0; s.classCycles=0
@@ -830,7 +833,7 @@ function M.step(e,frame,dt)
   e.rulesLogged=C.on(selected,'rules') and (C.ruleCategory(e.profile,selected,C.switchKeys) or 'personnalisees') or 'decochees'
   U.log(e.log,now,'INFO','onglets: '..(#tabs>0 and table.concat(tabs,',') or 'aucun')..' ; regles: '..e.rulesLogged,-1)
   -- Sens latéral (Beta 1.25) : sans lui, aucun déplacement latéral n'est écrit (cession, dépassement, évitement).
-  U.log(e.log,now,'INFO',string.format('sens lateral: %d / %d%s',e.g.offsetSign,e.g.sideSign,e.g.offsetSign==0 and ' (en attente de mesure, aucun deplacement lateral)' or e.g.signProvisional and ' provisoire (installation neuve ou jamais mesure), confirme par la mesure' or ''),-1)
+  U.log(e.log,now,'INFO',string.format('sens lateral: %d / %d%s',e.g.offsetSign,e.g.sideSign,e.g.offsetSign==0 and ' (en attente de mesure, aucun deplacement lateral)' or e.g.signProvisional and ' provisoire (convention d AC, pas encore confirme par la mesure)' or ''),-1)
  end
  if e.configured~=e.profile or e.seed~=e.g.seed or e.configuredRevision~=e.revision then
   M.reset(e,now,true); M.configure(e)

@@ -11,6 +11,9 @@ return function(source)
  -- Beta 1.51 : les cas réglés à la main partent sans préréglage de la session (comme la fixture) ; le dernier cas joue
  -- la vraie première installation avec l'interrupteur allumé (défaut de l'app).
  local presetDefault=C.globalDefaults.presetBySession; C.globalDefaults.presetBySession=false
+ -- 2.0.5 b : le banc joue les deux repères du jeu (tests/host.lua, rightHanded) : une mesure contraire à la convention
+ -- d'AC y est retenue aussitôt (K.signConfirm à 1) ; le cas du recalibrage vérifie la vraie valeur de bout en bout.
+ local signConfirm=C.K.signConfirm; C.K.signConfirm=1
  -- Filtre facultatif (mutations ciblées) : seuls les cas dont le nom contient INT_FILTER sont joués.
  local filter=rawget(_G,'INT_FILTER')
  local results={}; local function check(name,fn) if filter and not name:find(filter,1,true) then return end; fn()
@@ -181,6 +184,13 @@ return function(source)
   e.recalibrateRequested=true; H.tick(HOST,0.2)
   assert(not e.recalibrateRequested and g.offsetSign==-1 and g.sideSign==-1 and g.signProvisional==true,'recalibrate: -1 / -1 provisional, sign='..g.offsetSign..'/'..g.sideSign)
   H.tick(HOST,5); assert(g.offsetSign==1 and g.signProvisional==false,'measured again: '..g.offsetSign)
+  -- 2.0.5 b (LOCK_SIGN_CONFIRM_205, de bout en bout) : avec la vraie valeur de K.signConfirm, une mesure contraire à
+  -- la convention d'AC est dite au journal et n'est pas retenue ; le sens -1 / -1 provisoire reste en usage.
+  local sideMeasured=g.sideSign
+  C.K.signConfirm=signConfirm; e.recalibrateRequested=true; H.tick(HOST,0.2); H.tick(HOST,5)
+  assert(g.offsetSign==-1 and g.sideSign==-1 and g.signProvisional==true,'one measurement against the convention: not kept, sign='..g.offsetSign..'/'..g.sideSign)
+  assert(logged('sens lateral: mesure contraire a la convention d AC (1 / '..sideMeasured..'), 1 sur '..signConfirm..', non retenue'),'refused measurement said in the journal')
+  C.K.signConfirm=1; e.recalibrateRequested=true; H.tick(HOST,0.2); H.tick(HOST,5); assert(g.offsetSign==1 and g.signProvisional==false,'bench value back: measured '..g.offsetSign)
   local Cal=package.loaded['src/calibration']; local step0=Cal.step
   g.offsetSign=1; g.sideSign=1; g.signProvisional=true
   Cal.step=function(self,frame,caps,gg) if gg.signProvisional then gg.signProvisional=false; self.confirmed=true; gg.sideSign=-1 end return false end
@@ -4528,6 +4538,198 @@ return function(source)
   assert(screens>200,'screens drawn: '..screens)
   HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
  end)
- C.globalDefaults.presetBySession=presetDefault
+ -- 2.0.5 d (relecture) : sens enregistré 1 / -1 réparé au lancement : la ligne du journal (AdvancedIA.lua) et sa
+ -- transmission par l'applicateur (src/applier.lua, a.signsRepaired) n'étaient tenues par aucun test.
+ check('LOCK_SIGN_REPAIR_LAUNCH_205 : sens enregistre 1 / -1 repare au lancement, dit au journal, enregistre',function()
+  -- Vraie valeur de K.signConfirm (le banc la met à 1, plus haut) : une mesure contraire du banc n'est pas retenue pendant le cas.
+  C.K.signConfirm=signConfirm
+  HUMANAI.release(); HOST=H.create(true)
+  HOST.storage['humanai:g:']={schemaVersion=3,dataRevision=23,presetsUsed=true,offsetSign=1,sideSign=-1}
+  assert(loadstring(source))(); H.tick(HOST,1)
+  local e=HUMANAI.engine; local g=e.g
+  local function logged(text) local q=e.log; for k=1,q.limit do local r=q[k]; if r and r.message==text then return true end end return false end
+  assert(g.offsetSign==-1 and g.sideSign==-1 and g.signProvisional==true and g.dataRevision==C.dataRevision,'stored 1 / -1 repaired at the launch')
+  assert(logged('sens lateral repare: -1 / -1 (enregistre 1 / -1 ; convention d AC, la mesure le confirmera)'),'repair said in the journal')
+  H.tick(HOST,11); assert(rawget(HOST.storage['humanai:g:'],'offsetSign')==-1 and rawget(HOST.storage['humanai:g:'],'signProvisional')==true,'repair saved ('..tostring(rawget(HOST.storage['humanai:g:'],'offsetSign'))..', '..tostring(rawget(HOST.storage['humanai:g:'],'signProvisional'))..')')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false; C.K.signConfirm=1
+ end)
+ -- 2.0.5 e (relecture, banc des configurations) : décalage de la mesure du sens latéral rendu par la mesure elle-même
+ -- (fin de la mesure en piste) : le suivi de l'applicateur est remis à zéro avec lui. Avant : il gardait
+ -- K.calibrationOffset ; avec un sens resté inconnu (0 / 0, mesure sans conclusion) aucune commande ne le corrigeait,
+ -- et à l'entrée de la voiture dans la voie des stands la restitution « rendait » ce décalage une seconde fois, par
+ -- une rampe (0,46, 0,42…), à un jeu qui tenait déjà 0.
+ check('LOCK_SIGN_MEASURE_RECORD_205 : decalage de la mesure rendu par la mesure, suivi de l applicateur remis a zero, rien d ecrit ensuite dans la voie des stands',function()
+  HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))(); H.tick(HOST,0.2)
+  local e=HUMANAI.engine; local g=e.g; local a=HUMANAI.host; local p=e.p
+  for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end
+  E.changed(e)
+  -- Sens inconnu (0 / 0 : plus atteignable par un joueur depuis la 2.0.4, posé ici à la main) ; mesure sans conclusion
+  -- (seuil de déplacement hors d'atteinte) : le sens reste inconnu, aucune commande de décalage n'est écrite ensuite.
+  local minMove=C.K.calibrationMinMove; C.K.calibrationMinMove=math.huge
+  g.offsetSign=0; g.sideSign=0; g.signProvisional=false
+  local ok,err=pcall(function()
+   local index=0
+   for _=1,600 do H.tick(HOST,1/60); if a.calibrationIndex>0 then index=a.calibrationIndex; break end end
+   assert(index>0,'scene: measure started ('..tostring(e.guard)..')')
+   assert(HOST.offsets[index-1]==C.K.calibrationOffset and a.cars[index].offset==C.K.calibrationOffset,'scene: measure offset written and followed by the applier')
+   for _=1,600 do H.tick(HOST,1/60); if a.calibrationIndex==0 then break end end
+   assert(a.calibrationIndex==0 and g.offsetSign==0 and g.sideSign==0,'scene: measure ended on the track without a conclusion')
+   assert(HOST.offsets[index-1]==0,'offset given back by the measure')
+   H.tick(HOST,0.5)
+   assert(a.cars[index].offset==0 and a.cars[index].offsetReset==true,'applier record of the measured car still at '..tostring(a.cars[index].offset)..' after the measure gave the offset back')
+   -- La voiture entre dans la voie des stands : rien à rendre, rien d'écrit.
+   local calls,refused=HOST.offsetCalls,a.caps.failureCount or 0
+   HOST.cars[index-1].isInPitlane=true; H.tick(HOST,1)
+   assert(HOST.offsetCalls==calls and (a.caps.failureCount or 0)==refused and HOST.offsets[index-1]==0,string.format('offset written in the pit lane after the measure: %d write(s), %d refused by the game',HOST.offsetCalls-calls,(a.caps.failureCount or 0)-refused))
+   HOST.cars[index-1].isInPitlane=false
+  end)
+  C.K.calibrationMinMove=minMove; assert(ok,err)
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ -- 2.0.5 f (relecture du 18 novembre, deuxième tour, relecteur G) : mesure du sens latéral en cours, l'app cesse d'être
+ -- prête (ici : app coupée) pendant que la voiture mesurée entre dans la voie des stands. La mesure la lâche
+ -- (Calibration.cancel dans stop()), mais l'applicateur gardait l'ancien numéro de la voiture mesurée (copié seulement
+ -- en fin du chemin « prête ») : laneRelease la sautait et le jeu gardait le décalage de la mesure (0,5) tout le long de
+ -- la voie des stands.
+ check('LOCK_SIGN_PIT_NOT_READY_205 : app plus prete, voiture mesuree dans la voie des stands : decalage de la mesure rendu',function()
+  HUMANAI.release(); HOST=H.create(true); assert(loadstring(source))(); H.tick(HOST,0.2)
+  local e=HUMANAI.engine; local g=e.g; local a=HUMANAI.host; local p=e.p
+  for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end
+  E.changed(e)
+  g.offsetSign=0; g.sideSign=0; g.signProvisional=false
+  local ok,err=pcall(function()
+   local index=0
+   for _=1,600 do H.tick(HOST,1/60); if a.calibrationIndex>0 then index=a.calibrationIndex; break end end
+   assert(index>0,'scene: measure started ('..tostring(e.guard)..')')
+   assert(HOST.offsets[index-1]==C.K.calibrationOffset,'scene: measure offset written')
+   H.tick(HOST,1); assert(a.caps.probeIndex==0 and a.calibrationIndex==index and HOST.offsets[index-1]==C.K.calibrationOffset,'scene: level probe over, measure still running')
+   HOST.cars[index-1].isInPitlane=true
+   g.enabled=false
+   for _=1,300 do H.tick(HOST,1/60) end
+   local left=HOST.offsets[index-1]
+   HOST.cars[index-1].isInPitlane=false; g.enabled=true
+   assert(left==0,'offset of the measure still '..tostring(left)..' in the game 5 s after the car entered the pit lane (applier record '..tostring(a.cars[index].offset)..', applier calibrationIndex '..tostring(a.calibrationIndex)..', guard '..tostring(e.guard)..')')
+   -- Même chose en piste : la mesure rend elle-même son décalage (annulation) ; le suivi de l'applicateur est remis à
+   -- zéro avant sa restitution, qui n'écrit pas le même 0 une seconde fois.
+   for _=1,3600 do H.tick(HOST,1/60); if a.calibrationIndex>0 then break end end
+   index=a.calibrationIndex
+   assert(index>0 and HOST.offsets[index-1]==C.K.calibrationOffset,'scene: second measure started on the track')
+   local calls=HOST.offsetCalls
+   g.enabled=false; H.tick(HOST,1/60)
+   assert(HOST.offsets[index-1]==0 and a.cars[index].offset==0 and a.cars[index].offsetReset==true,'scene: offset given back on the track, record cleared ('..tostring(a.cars[index].offset)..')')
+   assert(HOST.offsetCalls-calls==1,'offset given back '..(HOST.offsetCalls-calls)..' times (the measure, then the restore of a record still at the measure offset)')
+   g.enabled=true
+  end)
+  g.enabled=true; assert(ok,err)
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ -- 2.0.5 g (relecture, tour 5, N) : câblage de la mesure du sens latéral dans le fichier d'entrée, jusque-là
+ -- tenu par aucun test : déplacement de la voiture mesurée lu par ownLat (Snapshot.bendLat) au début et à la fin, et
+ -- attente de « Relancer » limitée aux décalages encore tenus en piste (offsetOwed).
+ local function measureScene()
+  HUMANAI.release(); HOST=H.create(true,{rightHanded=true}); assert(loadstring(source))(); H.tick(HOST,0.2)
+  local e=HUMANAI.engine; local p=e.p
+  for _,group in ipairs(C.sections) do p['section_'..group]=group~='traffic' end
+  E.changed(e)
+  return e,e.g,HUMANAI.host,HUMANAI.panel.calibration
+ end
+ local function said(e,text) local q=e.log; for k=1,q.limit do local r=q[k]; if r and r.message==text then return true end end return false end
+ check('LOCK_SIGN_OWN_MOVE_WIRING_205 : mesure du sens lateral jugee sur le deplacement de la voiture mesuree (ownLat), pas sur la voiture repere',function()
+  local e,g,a,cal=measureScene()
+  g.offsetSign=-1; g.sideSign=-1; g.signProvisional=true
+  local index=0
+  for _=1,600 do H.tick(HOST,1/60); if a.calibrationIndex>0 then index=a.calibrationIndex; break end end
+  assert(index>0,'scene: measure started ('..tostring(e.guard)..')')
+  assert(cal.startOwn~=nil,'own lateral read at the start of the measure (ownLat wired): '..tostring(cal.startOwn))
+  -- Voiture repère, 120 m devant, déportée de 4 m pendant la mesure (courbe, changement de ligne) : l'ancienne lecture
+  -- par la voiture repère y verrait un sens +1, contraire.
+  local ref=HOST.cars[cal.reference-1]
+  for _=1,4*60 do ref.position.x=-4; H.tick(HOST,1/60); if a.calibrationIndex==0 then break end end
+  assert(a.calibrationIndex==0,'scene: measure over')
+  assert(g.offsetSign==-1 and g.sideSign==-1 and g.signProvisional==false and said(e,'sens lateral provisoire confirme par la mesure: -1 / -1'),
+   'own move of the measured car confirms -1 / -1: '..g.offsetSign..' / '..g.sideSign..' provisional='..tostring(g.signProvisional))
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ check('LOCK_SIGN_RERUN_PIT_205 : Relancer pendant qu une IA gardee par l app est dans la voie des stands : mesure relancee aussitot',function()
+  local e,g,a,cal=measureScene()
+  g.offsetSign=-1; g.sideSign=-1; g.signProvisional=false
+  H.tick(HOST,2)
+  local s=a.cars[3]; local car=e.frame.cars[3]
+  HOST.cars[2].isInPitlane=true
+  s.owned=true; s.id=car.identity or car.id; s.offset=0; s.offsetReset=true; s.originalLevel=0.9; s.originalAggression=0.45
+  s.stop=true -- tenue à son emplacement par l'app : gardée par la restitution
+  e.recalibrateRequested=true; H.tick(HOST,1/60)
+  assert(a.cars[3].owned,'scene: car still owned in the pit lane')
+  assert(not e.recalibrateRequested and g.signProvisional==true and cal.phase~='waiting_reset','RERUN held by a car in the pit lane: phase='..tostring(cal.phase))
+  HOST.cars[2].isInPitlane=false; s.stop=false
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ check('LOCK_SIGN_RERUN_TRACK_OWED_205 : Relancer pendant qu un decalage de l app reste tenu en piste (voisin de ce cote) : attente',function()
+  local e,g,a,cal=measureScene()
+  g.offsetSign=-1; g.sideSign=-1; g.signProvisional=false
+  H.tick(HOST,2)
+  -- Voiture 2 décalée par l'app (SDK +0,4 : vers la droite dans le repère d'AC) ; voiture 3 roule à côté d elle, du côté du retour à zéro (+X : gauche dans le repère d AC).
+  local s=a.cars[2]; local car=e.frame.cars[2]
+  s.owned=true; s.id=car.identity or car.id; s.offset=0.4; s.offsetReset=false; s.originalLevel=0.9; s.originalAggression=0.45
+  local b=HOST.cars[2]; local z=HOST.cars[1].position.z
+  local function beside() b.position.z=HOST.cars[1].position.z; b.position.x=HOST.cars[1].position.x+2.5; b.splinePosition=HOST.cars[1].splinePosition end
+  beside()
+  e.recalibrateRequested=true; beside(); H.tick(HOST,1/60)
+  assert(e.recalibrateRequested and cal.phase=='waiting_reset' and g.signProvisional==false and s.owned and s.offset==0.4,
+   'RERUN waits for the offset kept on the track: phase='..tostring(cal.phase)..' offset='..tostring(s.offset))
+  b.position.z=z+5000; H.tick(HOST,1/60)
+  assert(not e.recalibrateRequested and g.signProvisional==true,'RERUN goes on once the side is free')
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ -- 2.0.5 h (relecture, tour 6, Q) : Relancer pendant le tour de décélération d'une IA arrivée (décalage vers le côté libre
+ -- tenu pour une voiture encore en course derrière) : la décélération continue pendant l'attente, le décalage est rendu
+ -- quand la voiture de derrière est partie, puis la mesure repart ; avant : décélération figée, attente sans fin (jusqu'à
+ -- l'entrée de cette IA dans la voie des stands), toutes les commandes en pause.
+ check('LOCK_SIGN_RERUN_COOLDOWN_205 : Relancer pendant un tour de deceleration : attente bornee, deceleration continue',function()
+  HUMANAI.release(); HOST=H.create(true,{rightHanded=true}); HOST.sim.raceSessionType=3; HOST.session={laps=10,durationMinutes=0,isTimedRace=false}
+  assert(loadstring(source))(); H.tick(HOST,0.5)
+  local e=HUMANAI.engine; C.preset('Course','C',e.profiles.C); E.changed(e); H.tick(HOST,0.5)
+  local g=e.g; g.offsetSign=-1; g.sideSign=-1; g.signProvisional=false
+  local cal=HUMANAI.panel.calibration
+  H.tick(HOST,3)
+  HOST.cars[3].isRaceFinished=true; HOST.cars[3].speedKmh=200 -- voiture 2, encore en course, 120 m derrière
+  H.tick(HOST,3)
+  assert(HOST.offsets[3]~=0 and HUMANAI.host.cars[4].cooling,'scene: cool-down offset held for the car behind: '..tostring(HOST.offsets[3]))
+  e.recalibrateRequested=true; H.tick(HOST,1)
+  assert(e.recalibrateRequested and cal.phase=='waiting_reset','scene: RERUN waits while the cool-down offset is needed')
+  local cap=HOST.speedLimits[3]; H.tick(HOST,1)
+  assert(HOST.speedLimits[3]<cap,'cool-down frozen while RERUN waits: cap '..tostring(cap)..' -> '..tostring(HOST.speedLimits[3]))
+  HOST.cars[2].position.z=-3000; HOST.cars[2].splinePosition=0.7 -- plus personne derrière
+  H.tick(HOST,5)
+  assert(not e.recalibrateRequested and g.signProvisional==true and (HOST.offsets[3] or 0)==0,
+   'RERUN still waiting 5 s after the car behind left: phase='..tostring(cal.phase)..' offset='..tostring(HOST.offsets[3]))
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ -- 2.0.5 h (relecture, tour 6, Q) : Relancer qui change le sens latéral (sens enregistré 1 / 1, retenu après trois mesures
+ -- contraires) pendant qu'une IA hors piste tient encore un décalage de l'app : la nouvelle mesure attend ce décalage
+ -- (rendu avec le sens sous lequel il a été écrit, côté du retour libre) ; avant : mesure relancée aussitôt, puis retour
+ -- à 0 jugé avec le nouveau sens (côté opposé vérifié), vers la voiture à côté.
+ check('LOCK_SIGN_RERUN_OFFTRACK_SIGN_205 : Relancer qui change le sens : decalage tenu hors piste attendu, jamais rendu vers un voisin',function()
+  HUMANAI.release(); HOST=H.create(true,{rightHanded=false})
+  HOST.storage['humanai:g:']={schemaVersion=3,dataRevision=24,presetsUsed=true,offsetSign=1,sideSign=1}
+  assert(loadstring(source))(); H.tick(HOST,0.2)
+  local e=HUMANAI.engine; for _,group in ipairs(C.sections) do e.p['section_'..group]=group~='traffic' end; E.changed(e)
+  local g=e.g; local cal=HUMANAI.panel.calibration
+  H.tick(HOST,2)
+  assert(g.offsetSign==1 and g.sideSign==1 and cal.index==0,'scene: stored sign 1 / 1, no measurement')
+  local s=HUMANAI.host.cars[2]; local car=e.frame.cars[2]
+  s.owned=true; s.id=car.identity or car.id; s.offset=0.4; s.offsetReset=false; s.originalLevel=0.9; s.originalAggression=0.45
+  physics.setAISplineOffset(1,0.4) -- SDK +0,4 sous le sens 1 : voiture à x=+2, retour vers x=0
+  local b,nb=HOST.cars[1],HOST.cars[2]; b.wheelsOutside=4; H.tick(HOST,0.1)
+  assert(e.frame.cars[2].offtrack,'scene: car off the track')
+  e.recalibrateRequested=true; H.tick(HOST,1/60)
+  b.wheelsOutside=0
+  local function beside() nb.position.z=b.position.z; nb.position.x=b.position.x-2.5; nb.splinePosition=b.splinePosition end
+  for _=1,60 do beside(); H.tick(HOST,1/60); assert((HOST.offsets[1] or 0)~=0,'offset given back towards the car alongside (side judged with the new sign)') end
+  nb.position.z=b.position.z+5000; H.tick(HOST,1)
+  assert(not e.recalibrateRequested and g.signProvisional==true,'RERUN goes on once the offset is given back: '..tostring(cal.phase))
+  HOST.releasing=true; HUMANAI.release(); HOST.releasing=false
+ end)
+ C.globalDefaults.presetBySession=presetDefault; C.K.signConfirm=signConfirm
  return results
 end

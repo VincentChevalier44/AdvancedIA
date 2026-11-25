@@ -116,6 +116,8 @@ local engine=Engine.new(globals,profiles)
 engine.batchCars=jitTuned
 local frame=Snapshot.new()
 local calibration=Calibration.new()
+-- 2.0.5 c : ecart de la voiture mesuree a la trajectoire (m), lu au debut et a la fin de la mesure du sens lateral.
+local function ownLat(a) local _,lat=Snapshot.bendLat(a,frame.length); return lat end
 local initialized=false
 local released=false
 local loadedTrack=''
@@ -219,6 +221,8 @@ U.log(engine.log,0,'INFO',jitTuned and 'compilateur JIT: cache agrandi (8000 tra
 if jitTuned then U.log(engine.log,0,'INFO',jitWide and 'compilateur JIT: limites de trace relevees' or 'compilateur JIT: limites de trace par defaut (options refusees)',-1) end
 if host.upgraded and #host.upgraded>0 then U.log(engine.log,0,'INFO','profils mis a jour vers les prereglages '..Config.release..': '..table.concat(host.upgraded,', '),-1) end
 if host.signsRestored then U.log(engine.log,0,'INFO','sens lateral retabli: -1 / -1 (convention AC, mesure sur cette installation jusqu a la Beta 1.8 ; la mesure le confirmera)',-1) end
+-- 2.0.5 b : sens enregistré contraire à la convention d'AC, réparé à la mise à jour (src/config.lua, révision 24).
+if host.signsRepaired then U.log(engine.log,0,'INFO',string.format('sens lateral repare: -1 / -1 (enregistre %s ; convention d AC, la mesure le confirmera)',host.signsRepaired),-1) end
 if host.firstInstall then U.log(engine.log,0,'INFO','premiere installation: prereglages recommandes et regles de base (essais, qualifications, course)',-1) end
 local journal=Journal.new()
 -- Journal de session sur disque : lignes nouvelles toutes les deux secondes, résumé chaque minute. Les capacités de CSP
@@ -290,6 +294,18 @@ local function anyOwned()
  for i=1,frame.count do if host.cars[i].owned then return true end end
  return false
 end
+-- 2.0.5 c (relecture) : une voiture en piste garde encore un décalage de l'app à rendre (nouvelle mesure du sens latéral :
+-- seule attente utile ; une voiture gardée aux stands ou hors piste ne retient plus la mesure ni les commandes).
+local function offsetOwed()
+ -- 2.0.5 h (relecture, tour 6, Q) : sens latéral changé par cette nouvelle mesure : un décalage tenu hors piste est
+ -- attendu aussi (sinon rendu ensuite avec le nouveau sens : côté du retour vérifié à tort, retour à 0 vers un voisin).
+ local change=not K.signProvisional or globals.offsetSign~=-1 or globals.sideSign~=-1
+ for i=1,frame.count do
+  local s,car=host.cars[i],frame.cars[i]
+  if s.owned and car.valid and not car.pit and (change or not car.offtrack) and not (s.offsetReset==true and s.offset==0) then return true end
+ end
+ return false
+end
 -- Chaque étape de la restitution est protégée : une erreur dans l'une n'empêche jamais les suivantes.
 local function step(fn,...)
  local ok,err=pcall(fn,...)
@@ -298,7 +314,11 @@ end
 -- keepParked : fin de session, voitures garées (voiture de sécurité, réserves, IA disqualifiées) laissées à leur stand
 -- jusqu'à la session suivante ; jamais au déchargement.
 local function stop(final,keepParked)
- if host.allowed then step(cancelProbe); step(Calibration.cancel,calibration,frame,host.caps,globals) end
+ if host.allowed then step(cancelProbe); step(Calibration.cancel,calibration,frame,host.caps,globals,ownLat) end
+ -- 2.0.5 f (relecture, relecteur G) : mesure lâchée ici (app plus prête) : l'applicateur le sait avant sa restitution
+ -- (voie des stands : laneRelease ne saute plus la voiture) ; voiture rendue par la mesure : suivi remis à zéro.
+ host.calibrationIndex=calibration.index; local back=calibration.restoredIndex and host.cars[calibration.restoredIndex]; calibration.restoredIndex=nil
+ if back then back.offset=0; back.offsetReset=true end
  step(Applier.restore,host,frame,false,engine.time,final,keepParked); step(syncRestored); step(Applier.checkpoint,host,frame)
 end
 -- Arrêts et sanctions de la course : sauvegardés une seconde au plus après un changement, et au déchargement.
@@ -573,11 +593,14 @@ local function update(dt)
  if not access then engine.guard='access'; return end
  if engine.recalibrateRequested then
   stop()
-  if calibration.index>0 or anyOwned() then calibration.phase='waiting_reset'; return end
+  -- 2.0.5 h (relecture, tour 6, Q) : tour de décélération poursuivi pendant l'attente (comme quand l'app n'est pas
+  -- prête) : son décalage est rendu dès qu'il n'est plus utile ; avant : figé, attente jusqu'à la voie des stands.
+  if calibration.index>0 or offsetOwed() then calibration.phase='waiting_reset'; coolStep(dt,ready or engine.guard=='finished'); return end
   -- Relecture 2.0.4 (A2) : nouvelle mesure demandée : sens -1 / -1 provisoire (comme une installation neuve) au lieu de
   -- 0 / 0 ; la mesure tourne et le confirme ou le corrige, les deux files du départ restent tenues entre-temps.
   if K.signProvisional then globals.offsetSign=-1; globals.sideSign=-1; globals.signProvisional=true else globals.offsetSign=0; globals.sideSign=0 end
   calibration.attempted=false; calibration.phase='waiting'
+  calibration.contra=0; calibration.contraOffset=nil; calibration.contraSide=nil -- 2.0.5 b : nouvelle mesure demandée, compte des mesures contraires remis à zéro
   engine.recalibrateRequested=false; Engine.reset(engine,engine.time,false); dirty()
  end
  if not ready then
@@ -687,12 +710,18 @@ local function update(dt)
     frame.cars[i].calibrationBlocked=state.state~='DRIVE' or state.excluded or engine.commands[i].active~=true
    end
   end
-  Calibration.step(calibration,frame,host.caps,globals,engine.time)
+  Calibration.step(calibration,frame,host.caps,globals,engine.time,ownLat)
  -- Beta 1.52 : mesure en cours devenue inutile : seule la mesure est annulée (décalage rendu dès que c'est sûr) ; avant,
  -- stop() refaisait la restitution complète (drapeaux, DRS, attentes des stands, toutes les voitures) à chaque image
  -- tant que l'annulation attendait.
- elseif calibration.index>0 then step(Calibration.cancel,calibration,frame,host.caps,globals) end
+ elseif calibration.index>0 then step(Calibration.cancel,calibration,frame,host.caps,globals,ownLat) end
+ -- 2.0.5 e (relecture) : décalage de la mesure rendu par la mesure elle-même : suivi de l'applicateur remis à zéro (il
+ -- gardait K.calibrationOffset ; sens resté inconnu : rien ne le corrigeait, et la restitution de la voie des stands
+ -- « rendait » ce décalage une seconde fois, par une rampe, à un jeu qui tenait déjà 0).
+ if calibration.restoredIndex then local s=host.cars[calibration.restoredIndex]; calibration.restoredIndex=nil; if s then s.offset=0; s.offsetReset=true end end
  if (signBefore~=globals.offsetSign or sideBefore~=globals.sideSign) and globals.offsetSign~=0 then U.log(engine.log,engine.time,'INFO',string.format('sens lateral mesure: %d / %d',globals.offsetSign,globals.sideSign),-1); calibration.confirmed=false end
+ -- 2.0.5 b : mesure contraire à la convention d'AC, pas encore répétée K.signConfirm fois : dite, non retenue.
+ if calibration.refused then U.log(engine.log,engine.time,'INFO',string.format('sens lateral: mesure contraire a la convention d AC (%s), %d sur %d, non retenue',calibration.refused,calibration.refusedCount or 0,K.signConfirm),-1); calibration.refused=nil end
  -- 2.0.4 : sens provisoire confirmé tel quel par la mesure.
  if calibration.confirmed then calibration.confirmed=false; U.log(engine.log,engine.time,'INFO',string.format('sens lateral provisoire confirme par la mesure: %d / %d',globals.offsetSign,globals.sideSign),-1); dirty() end
  if signBefore~=globals.offsetSign or sideBefore~=globals.sideSign or engine.settingsChanged then engine.settingsChanged=false; dirty() end

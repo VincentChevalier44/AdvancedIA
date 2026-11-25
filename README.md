@@ -6,7 +6,7 @@
 
 AdvancedIA is a Lua app for Assetto Corsa running on Custom Shaders Patch (CSP). Its HumanAI engine sits on top of the game's own AI and makes the AI cars drive more like people. On a track day they move aside for faster cars and spread out around the lap. In a race they respect blue flags, overtake and defend with intent, and flash their headlights at slower cars. They make the odd mistake, slow down for yellow flags, and follow Full Course Yellows, Virtual Safety Cars, a Safety Car and red flags. They make their mandatory pit stops, refuel and repair, and fit wet tyres when it rains. The app enforces the racing rules for you as well (delta time, penalties, DRS rules), and its in-game overlay tells you what is happening. It works in **offline sessions only**.
 
-- **Current version:** Beta 2.0.4. See [CHANGELOG.md](CHANGELOG.md).
+- **Current version:** Beta 2.0.5. See [CHANGELOG.md](CHANGELOG.md).
 - **Interactive guide:** chapter-by-chapter videos and the full manual: https://vincentchevalier44.github.io/AdvancedIA/
 - **Interface:** English by default, French available (**FR** | **EN** buttons in the settings window).
 - **Author:** VincentChevalier44. MIT License.
@@ -536,13 +536,15 @@ Section **Lines** (sidebar **DRIVING**).
     an edge. The log shows it at the end of each yield and overtake: the offset wanted, the largest offset reached, in metres and with its side, the track widths at that moment, and the lowest bound met.
   - **The set side is a preference.** When the configured yield side has less than 1 m of room and the other side has room and is free, the car yields on the other side (the line says so: `cote regle sans place, autre cote pris`); a pass goes to the side that has room, and no attempt starts when neither has 1.2 m. A yielding car that cannot move aside does not lift.
   - The app follows the CSP SDK convention (offset +1 = right) whatever the sign measured in game.
+  - In Assetto Corsa, **DIAGNOSTICS** normally reads *Offset / side sign: -1 / -1*. That is expected.
+  - **The app starts from -1 / -1.** On a new installation, or when the direction was never measured, it uses Assetto Corsa's usual direction as a provisional value, so lateral moves are written from the first session (`sens lateral: -1 / -1 provisoire (…)` in the log).
+  - **The measurement confirms it.** While the value is provisional, the calibration waits for an AI on a straight, above 60 km/h, with at least 2.5 m of track on each side, no other car within 100 m and another AI lined up about 100 to 150 m ahead. It makes a native +0.5 offset for three seconds, then returns to zero once the side is free, and reads how far that car itself has moved sideways from the racing line. A move of less than 0.5 m gives no result, and neither does a measurement that was interrupted or could not be read in time (the car left the track or entered the pit lane). Without a result it is tried again every 60 s.
+  - A result that agrees with -1 / -1 confirms it at once (`sens lateral provisoire confirme par la mesure: -1 / -1`). A result that disagrees is kept only after three identical results in a row; until then -1 / -1 stays in use (`sens lateral: mesure contraire a la convention d AC (…), n sur 3, non retenue`).
+  - **Repair on update.** A stored direction other than -1 / -1 is put back to -1 / -1, provisional, at the first launch after the update (`sens lateral repare: -1 / -1 (enregistre …)`). A direction lost on an older installation is put back to -1 / -1 as well (`sens lateral retabli`).
+  - **RERUN** (DIAGNOSTICS › Sign calibration) starts again from -1 / -1 provisional; lateral moves keep being written meanwhile.
 - **Rear awareness** (off by default). An AI never moves towards the side where a faster car will be alongside within
   1 to 2 seconds. Outside the race it yields sooner to a much faster car, or keeps its line when it is too late to
   move. In the race it defends in one early move, never once the attacker has pulled out.
-  - In Assetto Corsa, **DIAGNOSTICS** normally reads *Offset / side sign: -1 / -1*. That is expected.
-  - The calibration waits for two isolated AI lined up on a straight with enough width. It makes a native +0.5 offset for three seconds, then returns to zero once the side is free.
-  - No behavioural offset is sent until the sign is confirmed. If the measurement fails, it is retried every 60 s, or rerun with **Rerun sign calibration**.
-  - A sign lost on an installation is put back to -1 / -1 (*sens lateral retabli* in the log).
 - **Track zones**: no-manoeuvre zones can be defined per track. See [Track zones and class patterns](#track-zones-and-class-patterns).
 
 ### Race start
@@ -889,7 +891,7 @@ Safety Car escalation (**Safety Car if the incident escalates**, on by default i
   - **Restart after a red flag** chooses how the race restarts (the overlay announces it during the restart lap):
     - **Rolling start (RS) behind the Safety Car** (base, GT and Endurance rules): the green comes when the Safety Car pits, as above.
     - **Standing start (SS) from the grid** (F1 2025 and F1 2026 rules): after the restart lap, every car drives to its grid slot, in race order with the slots closed up. A car in the pit lane starts from the pit lane. The AI slow down along the approach (speed cap from the distance to the slot, assist brake in the last metres), take the column of their slot and are held there. The overlay tells you your slot and the distance to it (*Go to your grid slot: P4 · 380 m*, to the metre below 20 m, then **IN POSITION** or **SLOT PASSED**). With the VSC or FCY, the restart lap ends when the leader completes it. Once everyone is in place (or after 2 minutes, whoever is still out is held where they are), five lights come on in the overlay, one per second, and go out after a random hold; every AI leaves at once, with the race-start protections (caution, aggression, front radar, lane holding). Moving forwards once you are in your slot and stopped, before lights out, is a **jump start**, penalised like the other infringements (throttle cut, counted towards disqualification) once you are past the line, never on the grid; starting from the pit lane is never a jump start. The trackside light panels stay yellow during the grid and the lights, then green.
-    - The grid slots are the track's `AC_START` nodes when CSP gives them and they make sense (before the line, within 400 m, in order, on the track), otherwise computed: 6 m before the line, 8 m apart, alternating columns. Nobody is ever teleported, so laps stay exact. Without the CSP functions it needs (stop counter, speed cap, lateral offset) or a measured lateral direction, the restart stays rolling and the log says why.
+    - The grid slots are the track's `AC_START` nodes when CSP gives them and they make sense (before the line, within 400 m, in order, on the track), otherwise computed: 6 m before the line, 8 m apart, alternating columns. Nobody is ever teleported, so laps stay exact. Without the CSP functions it needs (stop counter, speed cap, lateral offset) or a known lateral direction (anything but `0 / 0`), the restart stays rolling and the log says why.
     - A new incident during the grid or the lights cancels the standing start: the holds are released and the usual yellow flags take over.
   - **Overtaking allowed after the restart** (Safety Car view): **at the control line** (default, the usual rule) or **as soon as the Safety Car pits**, for a red-flag restart lap and for an ordinary Safety Car deployment.
 - **Work in the pits.** With the F1 rules, tyres are changed under the red flag and the stop counts (**Red flag: tyres changed in the pits (stop counts)**), even before the pit window opens. With the GT and Endurance rules, no work is done, also for a car that entered the pit lane under the red flag and reaches its box after the restart. With a compulsory compound change, your own stop counts only if you changed compound.
@@ -1367,7 +1369,7 @@ With **Track memory** on (**SETTINGS › Global options**, off by default, Beta 
 **DIAGNOSTICS**, left column:
 - CSP version, track and spline length.
 - **Track light panels**: equipped track or not, and the colour shown (*Disabled* when the section is unticked for the profile in use).
-- **Sign calibration**: its state, *Offset / side sign*, and **Rerun sign calibration**.
+- **Sign calibration**: *Offset / side sign*, the state of the measurement, and **RERUN**.
 - **Headlight flashes**: the learned signal, and **Learn headlight flashes (6 s)**.
 - **Track zones**: **Mark start**, **Mark end (no manoeuvres)**, **COPY**, and the zone count.
 - **UPDATES**, at the top: installed and available versions, the state (for example *You have the latest version (checked at 14:32)*, *Downloading Beta <version> (1.0 MB)…*, *Beta <version> ready: it installs as soon as you stop*, *GitHub unreachable: check the connection*, *GitHub refuses for now (request limit)*), the first lines of the release notes with **Read everything on GitHub**, **Update** (greyed while you drive; **Cancel** until the copy starts; **Try again** after an error), **Check for updates at launch**, then **Check now** (once a minute at most) and **Roll back to Beta X** side by side.
@@ -1890,6 +1892,7 @@ Ticked by default in every profile, Hotlap included. See [Track light panels](#t
 **Rotation and size.**
 - Reloading the app within the same launch carries on in the same file.
 - At each new launch the previous files shift: the three previous launches are kept as `AdvancedIA.1.log` (the most recent) to `AdvancedIA.3.log`.
+- If a previous log cannot be moved at launch (held open by another program), no recent log is overwritten or emptied (at most the oldest one is dropped, as at every launch): the new launch carries on in `AdvancedIA.log`.
 - The file is capped at 4 MB per launch.
 - **Write the session log to disk** (Diagnostics, on by default) switches it off. **Detailed log** (Global options) adds every AI state change.
 
@@ -1908,7 +1911,7 @@ Ticked by default in every profile, Hotlap included. See [Track light panels](#t
 | `session:` | Detected session: index, CSP type, race.ini type, `(Track Day)`, track, number of cars, spline length |
 | `profil:` | Profile in use (`J` Track day, `P` Practice, `Q` Qualifying, `C` Race, `H` Hotlap), `(automatique)` or `(manuel)` |
 | `onglets:` … `; regles:` | Sections ticked in this profile, and the rule set recognised (`base`, `F1`, `F1_2026`, `GT`, `Endurance`, `personnalisees` = custom, `decochees` = off) |
-| `sens lateral:` | Lateral direction. `-1 / -1` is expected; `0 / 0 (en attente de mesure, aucun deplacement lateral)` means no lateral move is written yet |
+| `sens lateral:` | Lateral direction in use. `-1 / -1` is expected. With `provisoire (convention d AC, pas encore confirme par la mesure)` the usual direction is assumed and still being measured; lateral moves are written with it. `0 / 0 (en attente de mesure, aucun deplacement lateral)`: unknown, nothing lateral is written (no longer expected since Beta 2.0.4). Related lines: `sens lateral mesure: a / b`, `sens lateral provisoire confirme par la mesure: -1 / -1`, `sens lateral: mesure contraire a la convention d AC (a / b), n sur 3, non retenue`, `sens lateral repare: -1 / -1 (enregistre a / b ; …)`, `sens lateral retabli: -1 / -1` |
 | `repartition des IA` | AI distribution at session start: plan, cars placed (`posees en piste sur … prevues`), check after 3 s (`roulent normalement` / `en difficulte`); each car in trouble is named with its model and the reason (`aux stands` in the pits, `hors piste` off track, `lente` slow, `glissade` sliding) |
 | `depassement` / `depassement fini` | Each overtaking attempt the app starts (`depassement: A -> B (trigger, gap, speed difference)`; trigger `rapprochement` closing, `retenue` held up, `invitation`, `cession` the car ahead yields, `cible lente` an abnormally slow AI ahead) and how it ended (`reussi`, `cible plus rapide`, `cote ferme`, `sans rapprochement`, `suiveur rapide`, `cible perdue`, `drapeau jaune`…; also `rendue a AC` handed back to AC: pits, off track or not driven, `cede a son suiveur` yielded to its follower, `evitement d un obstacle`, `contact, reprise au calme`, `tete-a-queue`), after how long and the minimum gap. After a `cible plus rapide` the app leaves that target alone for 45 s, then 180 s, then 600 s, except for a real closing move or an abnormally slow target |
 | `tete-a-queue, contexte` | What the app was commanding an AI just before it spun: state and for how long, time since its last manoeuvre, lateral offset, caution and aggressiveness against their usual values, level, slipstream, app braking |
@@ -2017,7 +2020,7 @@ Summary counters: `tow` and `tow_end` (tows broken and ended), `dirtyAir` (dirty
 - **AI driving mistakes.** CSP does not document the exact effect of the wheelspin "severity" (`physics.setAITractionMistake`). Its value (1.4) and the default rate are still to be confirmed in game.
 - **The braking zone is emulated** through caution: the CSP SDK exposes no AI braking distance, and `setAIBrakeHint` is not a distance API.
 - **A level above 100%** is written natively in **Automatic** mode (`physics.setAILevel` accepts 0 to 2). CSP documents the value it reads back (`aiLevel`) from 0 to 1 only, so the 1.05 read-back may come back capped at 1.00; it is logged, and the effect beyond 100% then depends on how AC uses the value. The grip bonus (opt-in) replaces it only when the read-back proves a cap; **Native if confirmed** caps at 100% in that case.
-- **Without a measured left/right sign**, no lateral move is written (see [Troubleshooting](#troubleshooting)).
+- **Left/right sign.** Until it is measured, the app uses Assetto Corsa's usual direction (-1 / -1) provisionally, so lateral moves are written from the first session. The measurement confirms it, or corrects it only after three identical contrary measurements in a row (see [Troubleshooting](#troubleshooting)).
 - **Tyres.** A real compound is only changed in the pits (stopped, or driving in the pit lane) or on the grid before the start. The rain grip compensation is suspended when the native wet-tyre state cannot be confirmed.
 - **Spacing** needs `physics.setAITopSpeed` and only acts in the Track day profile.
 - **The Safety Car never leads the field through the pit lane**: the queue always stays on the track behind it.
@@ -2048,8 +2051,8 @@ Summary counters: `tow` and `tow_end` (tows broken and ended), `dirtyAir` (dirty
 **The status says "No section enabled: native AI".** The profile in use has no section ticked. On a Track day this happens when **Built-in preset for the session detected** is off or the profile is chosen by hand. Load a built-in preset on **HOME** (for example **Nordschleife Touristenfahrten**) or tick sections in **SETTINGS**.
 
 **The AI never move aside, pull out or avoid anything.**
-- Check **DIAGNOSTICS › Sign calibration**: *Offset / side sign* should read **-1 / -1**. The log line `sens lateral:` gives the same information.
-- With `0 / 0`, no lateral move is written until two isolated AI on a straight allow the measurement. Click **Rerun sign calibration** on a long straight.
+- Check **DIAGNOSTICS › Sign calibration**: *Offset / side sign* should read **-1 / -1**. The log line `sens lateral:` gives the same information; `provisoire` means it is assumed and still being measured, which blocks nothing.
+- Any other stored value is put back to -1 / -1 at the first launch after the update (`sens lateral repare:` in the log). If the AI still move to the wrong side, click **RERUN**: the app goes back to -1 / -1 at once and measures again; a different direction is kept only after three identical measurements in a row.
 - Also check that the sections concerned (**Yielding**, **Overtaking**, **Accidents**, **Lines**) are ticked for the profile in use.
 
 **On a track day, all the AI are bunched around me, or appear and disappear.**

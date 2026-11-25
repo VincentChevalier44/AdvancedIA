@@ -2308,7 +2308,9 @@ function M.step(e,i,dt,now)
         and target.long>0 and target.gap<=K.exitPassGap and (target.sa>=K.exitPassSa or mistakeAhead) and not s.alongside and ownBrake<K.ruleBrake and not braking
         and (mistakeAhead or now-(s.exitCornerAt or -math.huge)<=K.exitPassWindow)
         and (mistakeAhead or not H.towTooEarly(e,s,a,target,frame,profile)) then
-        local first=abs(target.lat)>=K.exitPassLatMin and (target.lat>0 and -1 or 1) or s.targetSide
+        -- 2.0.5 g (relecture, tour 5, O) : côté opposé à la cible (cible à lat>0 : côté interne -1, déboîtement vers +1,
+        -- comme passSide, towStart et l'évitement) ; avant : signe inversé, déboîtement vers la cible décalée de 0,3 à 1 m.
+        local first=abs(target.lat)>=K.exitPassLatMin and (target.lat>0 and 1 or -1) or s.targetSide
         for _,side in ipairs({first,-first}) do
          if s.state=='OVT_ARM' and -target.lat*side<K.pullOutTargetLat and sideFree(row,side) and P.corridor(frame.cars,frame.count,i,side,K.corridorMin,s.target,g.occLatMax) then
           s.targetSide=side; s.exitPassUntil=now+K.exitPassHold; transition(e,s,'OVT_IN','pull_out',now)

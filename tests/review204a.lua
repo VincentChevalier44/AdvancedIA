@@ -58,8 +58,13 @@ tests.LOCK_START_FRESH_SIGN_204=function()
  -- Installation existante jamais mesurée (sens 0 / 0, révision 22) : même chose ; sens déjà mesuré : intact.
  local old=C.validateGlobals(C.globalDefaults); old.dataRevision=22; old.presetsUsed=true
  local _,_,_,p2=C.migrate(old,profiles); assert(p2==true and old.offsetSign==-1 and old.signProvisional==true,'existing unmeasured install')
- local done=C.validateGlobals(C.globalDefaults); done.dataRevision=22; done.offsetSign=1; done.sideSign=1
- local _,_,_,p3=C.migrate(done,profiles); assert(p3==false and done.offsetSign==1 and not done.signProvisional,'measured sign kept')
+ -- Réécrit le 18 novembre (décision du pilote, 2.0.5 b « corriger et réparer », journal d'un joueur au sens 1 / -1) :
+ -- sens déjà mesuré conforme à la convention d'AC : intact ; sens enregistré contraire : réparé (avant : gardé tel
+ -- quel ; LOCK_SIGN_REPAIR_205).
+ local done=C.validateGlobals(C.globalDefaults); done.dataRevision=22; done.offsetSign=-1; done.sideSign=-1
+ local _,_,_,p3,r3=C.migrate(done,profiles); assert(p3==false and r3==nil and done.offsetSign==-1 and not done.signProvisional,'measured sign kept')
+ local wrong=C.validateGlobals(C.globalDefaults); wrong.dataRevision=22; wrong.offsetSign=1; wrong.sideSign=1
+ local _,_,_,p4,r4=C.migrate(wrong,profiles); assert(p4==false and r4=='1 / 1' and wrong.offsetSign==-1 and wrong.signProvisional==true,'stored sign against the convention: repaired')
  -- La mesure tourne tant que le sens est provisoire, plus ensuite.
  local cal=Calibration.new(); local _,f0=F.scene('C',3)
  Calibration.step(cal,f0,{},{offsetSign=-1,sideSign=-1,signProvisional=true},10)

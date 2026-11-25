@@ -4816,8 +4816,13 @@ tests.SIGNS_RESTORED=function()
  local g=C.validateGlobals({schemaVersion=3,dataRevision=13,presetsUsed=true,offsetSign=0,sideSign=0})
  local _,_,restored=C.migrate(g,weekend())
  assert(restored and g.offsetSign==-1 and g.sideSign==-1 and not g.signProvisional,'lost signs restored') -- 2.0.4 : rétabli (révision 14), pas provisoire (révision 23)
- local known=C.validateGlobals({schemaVersion=3,dataRevision=13,presetsUsed=true,offsetSign=1,sideSign=1})
- local _,_,again=C.migrate(known,weekend()); assert(not again and known.offsetSign==1,'a known sign is never changed')
+ -- 2.0.5 b (décision du pilote du 18 novembre, « corriger et réparer ») : sens connu conforme à la convention d'AC :
+ -- jamais changé ; sens enregistré contraire : jamais « rétabli », réparé (LOCK_SIGN_REPAIR_205 ; avant : gardé).
+ local known=C.validateGlobals({schemaVersion=3,dataRevision=13,presetsUsed=true,offsetSign=-1,sideSign=-1})
+ local _,_,again=C.migrate(known,weekend()); assert(not again and known.offsetSign==-1 and not known.signProvisional,'a known sign is never changed')
+ local wrong=C.validateGlobals({schemaVersion=3,dataRevision=13,presetsUsed=true,offsetSign=1,sideSign=1})
+ local _,_,wrongRestored,_,wrongRepaired=C.migrate(wrong,weekend())
+ assert(not wrongRestored and wrongRepaired=='1 / 1' and wrong.offsetSign==-1 and wrong.signProvisional==true,'a stored sign against the convention is repaired')
  -- 2.0.4 (décision du pilote du 16 novembre, départs de 60 IA) : première installation : jamais « rétabli », mais -1 / -1
  -- provisoire, toujours mesuré (src/calibration.lua) ; avant : 0 / 0, aucun déplacement latéral avant la mesure.
  local fresh=C.validateGlobals({}); local _,isFresh,firstRestored,provisional=C.migrate(fresh,weekend())
@@ -6418,6 +6423,8 @@ for name,test in pairs(require('tests/review204h')) do assert(tests[name]==nil,n
 for name,test in pairs(require('tests/review204rE')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 2 (E)
 for name,test in pairs(require('tests/review204rF')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 2 (F)
 for name,test in pairs(require('tests/review204rG')) do assert(tests[name]==nil,name); tests[name]=test end -- relecture 2.0.4, tour 2 (G)
+for name,test in pairs(require('tests/review205b')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.5 b (sens latéral enregistré à l'envers)
+for name,test in pairs(require('tests/review205f')) do assert(tests[name]==nil,name); tests[name]=test end -- 2.0.5 f (Beta 2.0.5 : mesure du sens latéral)
 for name,test in pairs(require('tests/review202h')) do assert(tests[name]==nil,name); tests[name]=test end -- Affinage 2.0.2 h (joueur hors piste ou lent : doublé)
 for name,test in pairs(require('tests/review164i1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 i1 (fenêtre ouverte en jeu)
 for name,test in pairs(require('tests/review164h1')) do assert(tests[name]==nil,name); tests[name]=test end -- Beta 1.64 h1 (overlay par bureau)

@@ -188,9 +188,13 @@ M.rules={
  {'niveau au-dessus de 100 %: mode {p} (mode demande {}, bonus de grip {p})','level above 100%: mode {1} (requested mode {2}, grip bonus {3})'},
  {'niveau au-dessus de 100 %: {n} relu {} apres {} ecrit (lecture ecretee) -> {p} (mode demande {}, bonus de grip {p})','level above 100%: {1} read back {2} after {3} written (read-back capped) -> {4} (requested mode {5}, grip bonus {6})'},
  {'sens lateral mesure: {} / {}','lateral direction measured: {1} / {2}'},
- -- 2.0.4 : sens provisoire (installation neuve)
+ -- 2.0.5 b : sens enregistré à l'envers réparé, mesure contraire non retenue
+ {'sens lateral repare: -1 / -1 (enregistre {} ; convention d AC, la mesure le confirmera)','lateral direction repaired: -1 / -1 (stored {1}; AC convention, the measurement will confirm it)'},
+ {'sens lateral: mesure contraire a la convention d AC ({}), {} sur {}, non retenue','lateral direction: measurement against the AC convention ({1}), {2} of {3}, not kept'},
+ -- 2.0.4 : sens provisoire (installation neuve) ; 2.0.5 d (relecture) : aussi après une réparation ou une nouvelle mesure
+ -- demandée : la ligne ne dit plus de raison
  {'sens lateral provisoire confirme par la mesure: {} / {}','provisional lateral direction confirmed by the measurement: {1} / {2}'},
- {'sens lateral: {} / {} provisoire (installation neuve ou jamais mesure), confirme par la mesure','lateral direction: {1} / {2} provisional (new installation or never measured), confirmed by the measurement'},
+ {'sens lateral: {} / {} provisoire (convention d AC, pas encore confirme par la mesure)','lateral direction: {1} / {2} provisional (AC convention, not yet confirmed by the measurement)'},
  {'sens lateral: {} / {} (en attente de mesure, aucun deplacement lateral)','lateral direction: {1} / {2} (waiting for the measurement, no lateral move)'},
  {'sens lateral: {} / {}','lateral direction: {1} / {2}'},
  {'mise a jour: module illisible, app chargee sans mise a jour ({})','update: module unreadable, app loaded without updates ({1})'},
